@@ -43,6 +43,7 @@ public class Plugin : IPlugin
         try
         {
             if (Sandbox.Game.World.MySession.Static == null) return;
+            SettingsScreen.CheckHotkey();
             PlayGuard.Update(Now);
             if (PlayGuard.Blocked) { SidePreview.Pause(); return; }
             FlipAndBurnLink.Search(Now);
@@ -56,16 +57,8 @@ public class Plugin : IPlugin
         try { harmony?.UnpatchAll(Id); } catch { }
     }
 
-    /// <summary>Pulsar's "Config" button opens the settings file.</summary>
-    public void OpenConfigDialog()
-    {
-        try
-        {
-            if (!File.Exists(SettingsPath)) Settings.Save(SettingsPath);
-            Process.Start(new ProcessStartInfo(SettingsPath) { UseShellExecute = true });
-        }
-        catch (Exception e) { Log("can't open settings: " + e.Message); }
-    }
+    /// <summary>Pulsar's "Config" button opens the settings window (Ctrl+Alt+/ in game does too).</summary>
+    public void OpenConfigDialog() => SettingsScreen.Open();
 
     public static void SaveSettings()
     {

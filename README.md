@@ -252,7 +252,12 @@ If a Flip and Burn update renames those internals, the preview stops finding a d
 
 ## Settings
 
-`%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini` (Pulsar's Config button opens it):
+**Settings window:** Pulsar's **Config** button for the plugin, or **Ctrl+Alt+/** in game. It covers the preview key,
+the map window (opens with the N list, keep the list open, side, size, theme), the pinned map (on, corner, size),
+detours and clearance, loading new plans into the autopilot, and the speed dial fix. Changes apply at once and are
+saved when it closes; **Defaults** puts them back.
+
+Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini`:
 - `PreviewKey`;
 - `ShowMapWithNav` (the map window opens with the N list), `KeepNavOpen` (the list stays open on a pick);
 - `ApMaxSpeed`, `ApBySignature`, `ApThrustPct`, `ApConeSignatureKm`, `ApBrakePct`, `ApBrakeConeSignatureKm` (the route
