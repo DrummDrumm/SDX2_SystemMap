@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compiles SDX2Autopilot.cs the way the game does (wrapped in a MyGridProgram, C# 6, game DLLs) and runs flight sims
+       of its guidance (Sim.cs). Run: dotnet run (wraps the script first). -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType><StartupObject>PbCheck.Sim</StartupObject><PlatformTarget>x64</PlatformTarget>
+    <LangVersion>6</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0162;CS0168;CS0169;CS0414;CS0649;CS0219</NoWarn>
+    <Bin64 Condition="'$(Bin64)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64</Bin64>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="obj\Wrapped.cs" /><Compile Include="Sim.cs" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="$(Bin64)\Sandbox.Common.dll" Private="false" />
+    <Reference Include="$(Bin64)\Sandbox.Game.dll" Private="false" />
+    <Reference Include="$(Bin64)\SpaceEngineers.Game.dll" Private="false" />
+    <Reference Include="$(Bin64)\SpaceEngineers.ObjectBuilders.dll" Private="false" />
+    <Reference Include="$(Bin64)\VRage.dll" Private="false" />
+    <Reference Include="$(Bin64)\VRage.Game.dll" Private="false" />
+    <Reference Include="$(Bin64)\VRage.Math.dll" Private="false" />
+    <Reference Include="$(Bin64)\VRage.Library.dll" Private="false" />
+    <Reference Include="$(Bin64)\System.Collections.Immutable.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="Wrap" BeforeTargets="CoreCompile">
+    <Exec Command="python &quot;$(MSBuildThisFileDirectory)wrap.py&quot;" />
+  </Target>
+</Project>

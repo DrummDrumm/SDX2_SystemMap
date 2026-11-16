@@ -1,0 +1,99 @@
+using System;
+using System.Collections.Generic;
+using Sandbox.Game.Entities;
+using Sandbox.ModAPI;
+using IngamePB = Sandbox.ModAPI.Ingame.IMyProgrammableBlock;
+
+namespace SDX2_SystemMap;
+
+/// <summary>
+/// The link to the programmable-block autopilot (PB Autopilot\Protogen Systems - Autopilot.cs) on your ship.
+///  - Orders go into the [SDX2 Route] section of its Custom Data (RouteExport format, the rest is kept). The game syncs
+///    Custom Data you set on your own blocks to the server, and the script reads it on its own update (no Run call).
+///  - The script answers in its [SDX2 Autopilot] section (state, the order id it acted on, distance, speed, ETA), which
+///    syncs back. A PB counts as an autopilot once its Custom Data has a [SDX2 Route] line; the script adds one.
+/// </summary>
+internal static class AutopilotLink
+{
+    private static readonly List<IngamePB> pbs = new List<IngamePB>();
+    private static readonly List<IMyTerminalBlock> autopilots = new List<IMyTerminalBlock>();
+    private static double nextScan;
+    private static long gridId;
+    private static int lastId;
+    private static string lastCommand;
+    private static double sentAt = -1;
+
+    /// <summary>Autopilot PBs on the ship you control (rescanned every 2 s).</summary>
+    public static int Count => autopilots.Count;
+    /// <summary>The first autopilot's own report, or null.</summary>
+    public static RouteExport.Status Status { get; private set; }
+    /// <summary>The last order we sent this session, and whether the PB has acted on it yet.</summary>
+    public static string LastCommand => lastCommand;
+    public static bool Pending => lastId != 0 && (Status == null || Status.Ack != lastId);
+
+    /// <summary>Flying (or just told to fly and not answered yet, for up to 10 s).</summary>
+    public static bool Engaged(double now) =>
+        Pending && (lastCommand == "engage" || lastCommand == "update") && now - sentAt < 10 ? true
+        : Pending && lastCommand == "stop" && now - sentAt < 10 ? false
+        : Status != null && Status.Flying;
+
+    public static void Reset()
+    {
+        autopilots.Clear(); Status = null; gridId = 0; lastId = 0; lastCommand = null; sentAt = -1; nextScan = 0;
+    }
+
+    private static MyCubeGrid ControlledGrid() =>
+        Sandbox.Game.World.MySession.Static?.ControlledEntity?.Entity?.GetTopMostParent() as MyCubeGrid;
+
+    public static void Update(double now)
+    {
+        if (now < nextScan) return;
+        nextScan = now + 2;
+        autopilots.Clear();
+        var grid = ControlledGrid();
+        if (grid == null) { Status = null; return; }
+        if (grid.EntityId != gridId) { gridId = grid.EntityId; lastId = 0; lastCommand = null; }
+        pbs.Clear();
+        try { MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid)?.GetBlocksOfType(pbs); }
+        catch { return; }
+        foreach (var pb in pbs)
+            if (pb is IMyTerminalBlock tb && tb.IsFunctional && RouteExport.HasSection(tb.CustomData) && pb.HasLocalPlayerAccess())
+                autopilots.Add(tb);
+        Status = autopilots.Count > 0 ? RouteExport.ParseStatus(autopilots[0].CustomData) : null;
+    }
+
+    /// <summary>Sends the route with a command (engage | update | load); returns how many PBs got it, -1 if there's no ship or route.</summary>
+    public static int Send(RoutePath path, string command, IList<V3> passes, double thrust, double brake, out string error)
+    {
+        error = null;
+        if (path == null) { error = "No route: pick a destination in Flip and Burn's list (N) first."; return -1; }
+        return Write(id => RouteExport.Build(path, id, command, passes, thrust, brake), command, out error);
+    }
+
+    public static int Stop(out string error) => Write(RouteExport.BuildStop, "stop", out error);
+
+    private static int Write(Func<int, string> section, string command, out string error)
+    {
+        error = null;
+        if (PlayGuard.Blocked) { error = SidePreview.Paused; return -1; }
+        if (ControlledGrid() == null) { error = "Sit in your ship's cockpit to use the autopilot."; return -1; }
+        nextScan = 0; Update(Plugin.Now);
+        int id = NewId();
+        string text = section(id);
+        int sent = 0;
+        foreach (var tb in autopilots)
+        {
+            try { tb.CustomData = RouteExport.Merge(tb.CustomData, text); sent++; }
+            catch (Exception e) { error = "Can't write to " + tb.CustomName + ": " + e.Message; }
+        }
+        if (sent == 0) error ??= "No autopilot PB on this ship: load the Protogen Systems - Autopilot script into a programmable block.";
+        else { lastId = id; lastCommand = command; sentAt = Plugin.Now; }
+        return sent;
+    }
+
+    private static int NewId()
+    {
+        int id = (int)((DateTime.UtcNow.Ticks / (TimeSpan.TicksPerSecond / 10)) % int.MaxValue);
+        return id <= lastId ? lastId + 1 : id;
+    }
+}

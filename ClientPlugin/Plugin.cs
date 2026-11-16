@@ -1,0 +1,119 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using HarmonyLib;
+using Sandbox.Game.Gui;
+using VRage.FileSystem;
+using VRage.Game.Components;
+using VRage.Plugins;
+using VRage.Utils;
+
+namespace SDX2_SystemMap;
+
+// ReSharper disable once UnusedType.Global
+public class Plugin : IPlugin
+{
+    private const string Id = "SDX2_SystemMap";
+    private static readonly Stopwatch clock = Stopwatch.StartNew();
+    private static DateTime nextThrottled;
+    private static Harmony harmony;
+    /// <summary>For patches made once a mod has loaded (Flip and Burn's N list).</summary>
+    public static Harmony Harmony => harmony;
+
+    public static double Now => clock.Elapsed.TotalSeconds;
+    public static MapSettings Settings { get; private set; } = new MapSettings();
+    private static string SettingsPath => Path.Combine(MyFileSystem.UserDataPath ?? "", "Storage", "SDX2_SystemMap.ini");
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public void Init(object gameInstance)
+    {
+        Settings = MapSettings.Load(SettingsPath);
+        MapTheme.Current = MapTheme.Find(Settings.Theme);
+        SidePreview.ApplySettings(Settings);
+        try
+        {
+            harmony = new Harmony(Id);
+            harmony.PatchAll(typeof(Plugin).Assembly);
+        }
+        catch (Exception e) { Log("patching failed, the map won't draw: " + e); }
+    }
+
+    public void Update()
+    {
+        try
+        {
+            if (Sandbox.Game.World.MySession.Static == null) return;
+            PlayGuard.Update(Now);
+            if (PlayGuard.Blocked) { SidePreview.Pause(); return; }
+            FlipAndBurnLink.Search(Now);
+            SidePreview.Update(Now);
+        }
+        catch (Exception e) { LogThrottled("update failed: " + e); }
+    }
+
+    public void Dispose()
+    {
+        try { harmony?.UnpatchAll(Id); } catch { }
+    }
+
+    /// <summary>Pulsar's "Config" button opens the settings file.</summary>
+    public void OpenConfigDialog()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) Settings.Save(SettingsPath);
+            Process.Start(new ProcessStartInfo(SettingsPath) { UseShellExecute = true });
+        }
+        catch (Exception e) { Log("can't open settings: " + e.Message); }
+    }
+
+    public static void SaveSettings()
+    {
+        try { Settings.Save(SettingsPath); } catch (Exception e) { Log("can't save settings: " + e.Message); }
+    }
+
+    public static void Log(string msg)
+    {
+        try { MyLog.Default?.WriteLineAndConsole(Id + ": " + msg); } catch { }
+    }
+
+    public static void LogThrottled(string msg)
+    {
+        if (DateTime.UtcNow < nextThrottled) return;
+        nextThrottled = DateTime.UtcNow.AddSeconds(10);
+        Log(msg);
+    }
+}
+
+/// <summary>Draws the side preview after the game screen, on the main thread (session components draw on a worker task).</summary>
+[HarmonyPatch(typeof(MyGuiScreenGamePlay), nameof(MyGuiScreenGamePlay.Draw))]
+internal static class GamePlayDrawPatch
+{
+    private static void Postfix(bool __result)
+    {
+        if (!__result) return;
+        try { SidePreview.Draw(); } catch (Exception e) { Plugin.LogThrottled("preview draw failed: " + e); }
+    }
+}
+
+/// <summary>Connects to Flip and Burn's API when a world loads and forgets it when the world closes.</summary>
+[MySessionComponentDescriptor(MyUpdateOrder.NoUpdate)]
+public class SystemMapSession : MySessionComponentBase
+{
+    public override void BeforeStart()
+    {
+        FlipAndBurnLink.Load();
+        PlayGuard.Reset();
+        ToolbarActions.Register();
+        SidePreview.Start();
+    }
+
+    protected override void UnloadData()
+    {
+        FlipAndBurnLink.Unload();
+        SpectrumLink.Reset();
+        SidePreview.Reset();
+        Plugin.SaveSettings();
+        base.UnloadData();
+    }
+}
