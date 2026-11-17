@@ -627,6 +627,25 @@ internal static class Program
             Check(scene.Picks.Exists(p => p.Kind == "F&B destination"), "full map: destination is pickable");
             bmp.Save(Path.Combine(outDir, "full-map" + sfx + ".png"), ImageFormat.Png);
         }
+        // the autopilot PB's script-browser thumbnail (512 x 512): the map on the route, with the autopilot status line
+        if (sfx == "-hud")
+            using (var bmp = new Bitmap(512, 512))
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Black);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var c = new GdiMapCanvas(g);
+                var scene = new MapScene { Snap = snap, Path = route, Compact = true, Mini = true, Help = "" };
+                scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
+                scene.Cam.Setup(0, 0, 512, 512);
+                scene.FrameDefault(true);
+                scene.MouseX = float.NaN;
+                scene.Draw(c, new Box(0, 0, 512, 512));
+                var st = new RouteExport.Status { State = "flying", Wp = 0, Count = 2, Dist = route.Distance * 0.9, Speed = 31200, Eta = 1860, Msg = "Flying to " + route.Waypoints[0].Name };
+                AutopilotPanel.StatusLine(c, 512, 30, 14, route.TargetName, st, "Ctrl+M");
+                bmp.Save(Path.Combine(outDir, "pb-autopilot-thumb.png"), ImageFormat.Png);
+            }
+
         // the whole inner system (the Tachi's reference view)
         using (var bmp = new Bitmap(1920, 1080))
         using (var g = Graphics.FromImage(bmp))

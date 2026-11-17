@@ -12,7 +12,7 @@
     <Bin64 Condition="'$(Bin64)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64</Bin64>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="obj\Wrapped.cs" /><Compile Include="Sim.cs" />
+    <Compile Include="obj\Wrapped.cs" /><Compile Include="Sim.cs" /><Compile Include="LoadSim.cs" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>

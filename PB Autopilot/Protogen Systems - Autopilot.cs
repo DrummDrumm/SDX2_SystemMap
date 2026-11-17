@@ -20,7 +20,13 @@
 //    The plugin then offers RESUME ROUTE (a pop-up, and a button under the N list).
 //  - Hotbar: drag this PB onto the cockpit's toolbar, pick Run, and type the argument  manual  - one key back to
 //    manual control. A second slot with  go  resumes the route already sent.
-//  - Arguments: manual (or stop) | go (fly the route already in Custom Data) | status
+//  - Hotbar turns (no route needed; they take over from a route being flown):
+//      prograde    turn the drives' push along your travel (the ship's forward pointing where you're going) and hold
+//      retrograde  turn it against your travel (ready to brake) and hold
+//      brake       retrograde full stop: turn retrograde, burn at full thrust until stopped, then dampeners on
+//    A hold lasts until you touch the controls or run manual; brake also ends when stopped. Running the same
+//    argument again turns it off.
+//  - Arguments: manual (or stop) | go (fly the route already in Custom Data) | prograde | retrograde | brake
 //  - Optional settings: a [SDX2 Autopilot Config] section in Custom Data, keys below (defaults shown):
 //      TurnRate=0.6      max turn rate, rad/s
 //      BrakeMargin=0.8   share of max acceleration planned for braking
@@ -41,6 +47,7 @@ string target = "", lastCd, state = "idle", msg = "", lastStatus;
 int lastId, idx, runs;
 double time, routeMax = 50000, startedAt, thrustCap = 1, brakeCap = 1;
 bool flying;
+string mode = "route"; // what Fly() does: route | prograde | retrograde | brake
 Nav.Cmd last;
 
 public Program()
@@ -58,7 +65,7 @@ public Program()
     Runtime.UpdateFrequency = flying ? UpdateFrequency.Update10 : UpdateFrequency.Update100;
 }
 
-public void Save() { Storage = lastId + "|" + (flying ? "1" : "0") + "|" + idx; }
+public void Save() { Storage = lastId + "|" + (flying && mode == "route" ? "1" : "0") + "|" + idx; } // hotbar turns aren't resumed
 
 public void Main(string arg, UpdateType source)
 {
@@ -68,6 +75,12 @@ public void Main(string arg, UpdateType source)
     if (arg == "manual") { if (flying) Release("override", "Manual control from the hotbar", false); }
     else if (arg == "stop" || arg == "off") Release("stopped", "Stopped by command", false);
     else if (arg == "go" || arg == "engage") Engage();
+    else if (arg == "prograde" || arg == "retrograde" || arg == "brake" || arg == "fullstop" || arg == "full stop")
+    {
+        var m = arg == "prograde" || arg == "retrograde" ? arg : "brake";
+        if (flying && mode == m) Release("override", "Turned off from the hotbar", false); // same key again: off
+        else Turn(m);
+    }
 
     var cd = Me.CustomData;
     if (!ReferenceEquals(cd, lastCd) && cd != lastCd) { lastCd = cd; ReadSettings(cd); Orders(cd); }
@@ -75,9 +88,10 @@ public void Main(string arg, UpdateType source)
     if (flying) Fly();
     if (flying && runs % 10 == 0 || lastStatus == null) WriteStatus();
     Echo("Protogen Systems - Autopilot\n" + state.ToUpperInvariant() + (target != "" ? " - " + target : "") + "\n" + msg
-         + (flying ? "\nPoint " + (idx + 1) + " of " + route.Count + "\n" + Nav.Km(last.Dist) + "  " + Nav.Speed(last.SpeedNow) : "")
+         + (flying && mode == "route" ? "\nPoint " + (idx + 1) + " of " + route.Count + "\n" + Nav.Km(last.Dist) + "  " + Nav.Speed(last.SpeedNow) : "")
+         + (flying && mode != "route" ? "\n" + Nav.Speed(last.SpeedNow) : "")
          + (thrustCap < 0.995 || brakeCap < 0.995 ? "\nThrust cap " + (thrustCap * 100).ToString("0") + "% burn, " + (brakeCap * 100).ToString("0") + "% brake" : "")
-         + "\n\nRun: manual | go\nLast run " + Runtime.LastRunTimeMs.ToString("0.000") + " ms");
+         + "\n\nRun: manual | go | prograde | retrograde | brake\nLast run " + Runtime.LastRunTimeMs.ToString("0.000") + " ms");
 }
 
 // ------------------------------------------------------------------ orders from the plugin
@@ -195,10 +209,27 @@ void Engage()
     if (!Blocks()) { Release("error", msg, true); return; }
     var c = Controller();
     c.DampenersOverride = false; // dampeners on = the pilot taking over
+    mode = "route";
     flying = true; state = "flying"; msg = "Flying to " + route[idx].Name; startedAt = time;
     velocity.Reset();
     settings.Observed = 0;
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
+}
+
+/// <summary>prograde / retrograde hold, or brake (retrograde full stop). Takes over from a route being flown.</summary>
+void Turn(string m)
+{
+    if (flying) Release("override", "", false);
+    if (!Blocks()) { Release("error", msg, true); return; }
+    var c = Controller();
+    if (m == "brake") c.DampenersOverride = false; // the drives do the braking; dampeners come back on when stopped
+    mode = m; flying = true; startedAt = time;
+    state = m == "brake" ? "braking" : m;
+    msg = m == "brake" ? "Retrograde full stop" : "Holding " + m;
+    velocity.Reset();
+    settings.Holding = false;
+    Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    WriteStatus();
 }
 
 void Fly()
@@ -210,7 +241,7 @@ void Fly()
         foreach (var s in controllers)
             if (s.IsUnderControl && (s.MoveIndicator.LengthSquared() > 0.01 || s.RotationIndicator.LengthSquared() > 0.01 || Math.Abs(s.RollIndicator) > 0.01))
             { Release("override", "Pilot took the controls", false); return; }
-    if (c.DampenersOverride && time - startedAt > 0.5) { Release("override", "Dampeners switched on: pilot has the controls", false); return; }
+    if (c.DampenersOverride && time - startedAt > 0.5 && mode != "prograde" && mode != "retrograde") { Release("override", "Dampeners switched on: pilot has the controls", false); return; }
 
     var p = c.CenterOfMass;
     var v = velocity.Update(p, c.GetShipVelocities().LinearVelocity, time);
@@ -224,17 +255,28 @@ void Fly()
     if (last.W.Length() >= settings.TurnRate * 0.99)
         settings.Observed = Math.Max(settings.Observed, c.GetShipVelocities().AngularVelocity.Length());
 
-    double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
-    last = Nav.Steer(p, v, g, drive, aFull, thrustCap, brakeCap, route, idx, cap * 0.98, settings);
-    if (last.Idx != idx) { idx = last.Idx; msg = idx < route.Count ? "Flying to " + route[idx].Name : ""; }
-    if (last.Arrived) { Release("arrived", "Arrived at " + target, true); return; }
+    if (mode != "route")
+    {
+        last = Nav.Face(mode, v, g, drive, aFull, settings);
+        if (last.Arrived) { Release("stopped", mode == "brake" ? "Stopped: dampeners on" : "Too slow to tell " + mode + " (under 1 m/s)", mode == "brake"); return; }
+    }
+    else
+    {
+        double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
+        last = Nav.Steer(p, v, g, drive, aFull, thrustCap, brakeCap, route, idx, cap * 0.98, settings);
+        if (last.Idx != idx) { idx = last.Idx; msg = idx < route.Count ? "Flying to " + route[idx].Name : ""; }
+        if (last.Arrived) { Release("arrived", "Arrived at " + target, true); return; }
+    }
 
-    foreach (var t in drives) t.ThrustOverridePercentage = (float)last.Throttle;
+    // Rounded (Nav.Throttle, Nav.Rate) so the values only change, and get synced to every client, when the guidance
+    // really changes: unrounded, nearly every run sent one update per drive and per gyro.
+    float thr = Nav.Throttle(last.Throttle);
+    foreach (var t in drives) t.ThrustOverridePercentage = thr;
     foreach (var gy in gyros)
     {
         var local = Vector3D.TransformNormal(last.W, MatrixD.Transpose(gy.WorldMatrix));
         gy.GyroOverride = true; gy.GyroPower = 1f;
-        gy.Pitch = -(float)local.X; gy.Yaw = -(float)local.Y; gy.Roll = -(float)local.Z;
+        gy.Pitch = -Nav.Rate(local.X); gy.Yaw = -Nav.Rate(local.Y); gy.Roll = -Nav.Rate(local.Z);
     }
 }
 
@@ -294,8 +336,14 @@ public static class Nav
     {
         public double TurnRate = 0.6, BrakeMargin = 0.8, MaxSpeed;
         public double Observed; // fastest turn seen while asking for full rate (0 = not yet)
+        public bool Holding;    // a hotbar turn has had a direction to hold
         public double FlipRate { get { return Observed > 0.02 ? Math.Min(TurnRate, Observed) : TurnRate; } }
     }
+
+    /// <summary>Throttle as written to the drives: whole percent, rounded down so it never goes over a burn or brake cap.</summary>
+    public static float Throttle(double t) { return (float)(Math.Floor(MathHelper.Clamp(t, 0, 1) * 100 + 1e-6) / 100); }
+    /// <summary>A gyro rate as written to the gyros: to 0.01 rad/s.</summary>
+    public static float Rate(double w) { return (float)(Math.Round(w * 100) / 100); }
 
     public struct Wp { public Vector3D Pos; public double Arrive; public string Kind, Name; }
 
@@ -393,6 +441,38 @@ public static class Nav
         eta += u > 1 && stopDist > stopping ? (stopDist - stopping) / Math.Max(u, Math.Min(cap, vStop)) + u / a : Trapezoid(stopDist, aMax * s.BrakeMargin, a, cap);
         for (int i = k; i < route.Count - 1; i++) eta += Trapezoid(Vector3D.Distance(route[i].Pos, route[i + 1].Pos), aMax * s.BrakeMargin, a, cap) + tFlip;
         cmd.Eta = eta;
+        return cmd;
+    }
+
+    /// <summary>
+    /// Hotbar turns. prograde / retrograde: point the drives' push along / against the velocity and hold (no thrust).
+    /// brake: push to cancel the velocity in about a second, plus hold against gravity (so in space it points straight
+    /// retrograde, and near a planet it doesn't settle into a fall at g m/s): full thrust once lined up, easing off over
+    /// the last second's worth of speed so it doesn't overshoot; Arrived under 2 m/s (the dampeners take the rest).
+    /// A hold reports Arrived only if there's no travel direction at the start (under 1 m/s); later it keeps its
+    /// attitude below that.
+    /// </summary>
+    public static Cmd Face(string mode, Vector3D v, Vector3D g, Vector3D drive, double aFull, Settings s)
+    {
+        var cmd = new Cmd { SpeedNow = v.Length() };
+        bool brake = mode == "brake";
+        aFull = Math.Max(aFull, 0.01);
+        if (brake ? cmd.SpeedNow < 2 : cmd.SpeedNow < 1) { cmd.Arrived = brake || !s.Holding; return cmd; }
+        s.Holding = true;
+        var want = (mode == "prograde" ? v : -v) / cmd.SpeedNow;
+        var acc = -v - g; // brake: lose the speed in about 1 s and hold against gravity
+        if (brake) want = Vector3D.Normalize(acc);
+        double cos = MathHelper.Clamp(Vector3D.Dot(drive, want), -1, 1), angle = Math.Acos(cos);
+        var axis = Vector3D.Cross(drive, want);
+        if (axis.LengthSquared() < 1e-10) axis = Vector3D.CalculatePerpendicularVector(drive);
+        cmd.W = angle < 0.002 ? Vector3D.Zero : Vector3D.Normalize(axis) * Math.Min(s.TurnRate, angle * 1.5);
+        if (brake)
+        {
+            double aim = angle < 0.05 ? 1 : angle < 0.26 ? (0.26 - angle) / 0.21 : 0;
+            cmd.Throttle = MathHelper.Clamp(acc.Length() / aFull, 0, 1) * aim * Math.Max(0, cos);
+            cmd.Remaining = cmd.SpeedNow * cmd.SpeedNow / (2 * aFull);
+            cmd.Eta = cmd.SpeedNow / aFull + angle / s.FlipRate;
+        }
         return cmd;
     }
 

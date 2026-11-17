@@ -174,7 +174,19 @@ It lets go of the thrusters and gyros at once. When you took over (controls, dam
 so and offers **RESUME ROUTE** or **STAY MANUAL**. The stopped route is kept: **RESUME ROUTE** also sits under the N
 list until you pick a different destination, and flies the rest of the route from where you are. A second hotbar
 slot running the PB with `go` resumes it too. PB arguments: `manual` (or `stop`), `go` (fly the route already
-loaded), `status`.
+loaded), `prograde`, `retrograde`, `brake`.
+
+**Hotbar turns.** These don't need a route. Put each on its own hotbar slot (the PB, **Run**, with the argument):
+- `prograde`: turns the ship so its drives push along your travel, then holds it there.
+- `retrograde`: turns them against your travel, ready to brake, then holds.
+- `brake` (or `fullstop`): retrograde full stop. It turns the dampeners off, turns retrograde, and burns at full thrust,
+  easing off near the end. Under 2 m/s it lets go and turns the dampeners back on. Near a planet it also pushes against
+  gravity, so it doesn't settle into a fall.
+
+A hold lasts until you touch the controls, run `manual`, or press the same slot again. The dampeners can stay on while
+holding. Any of the three takes over from a route being flown. The map then says the autopilot is turning and doesn't
+offer **RESUME ROUTE**; `go` from the hotbar flies the rest of the route. Turns aren't resumed after a reload or a
+sector transfer.
 
 Optional PB settings go in a `[SDX2 Autopilot Config]` section of its Custom Data:
 - `TurnRate=0.6`: maximum turn rate, rad/s.
