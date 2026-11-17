@@ -21,7 +21,7 @@ public static class Trajectory
     /// what the ship does from that point on (<see cref="Burn"/>, <see cref="Coast"/>, <see cref="Brake"/>).
     /// </summary>
     public static bool Predict(V3 pos, V3 vel, IList<V3> points, double accel, double maxSpeed, double arrive,
-        List<V3> output, double eta = 0, int maxSteps = 1500, List<byte> phases = null)
+        List<V3> output, double eta = 0, int maxSteps = 1500, List<byte> phases = null, bool stops = false)
     {
         output.Clear();
         phases?.Clear();
@@ -63,9 +63,11 @@ public static class Trajectory
                 // (constant thrust sideways: a parabola) instead of overshooting and doubling back
                 var prev = idx == 0 ? start : points[idx - 1];
                 var next = points[idx + 1];
+                // flip and burn legs: no faster than the ship can turn there and stay within the point's reach radius
                 double pass = CornerSpeed(prev, goal, next, accel, maxSpeed);
+                if (stops) pass = Math.Min(pass, RouteCurve.TurnSpeed(prev, goal, next, accel, RouteExport.ArriveFor(prev, goal, next), maxSpeed));
                 double s = vel.Length, sinHalf = SinHalfTurn(prev, goal, next);
-                double lead = Math.Max(arrive, s * s * sinHalf / accel);
+                double lead = Math.Max(stops ? Math.Min(arrive, StopReach) : arrive, s * s * sinHalf / accel);
                 if (d < lead) { idx++; continue; }
                 want = Math.Min(maxSpeed, Math.Sqrt(pass * pass + 2 * brakeA * Math.Max(0, d - lead)));
             }
@@ -112,6 +114,9 @@ public static class Trajectory
     }
 
     /// <summary>sin(half the turn) at corner b of a → b → c: 0 straight on, 1 for a U-turn.</summary>
+    /// <summary>How near a flip-and-burn stop counts as reached (the autopilot's detour reach radius).</summary>
+    public const double StopReach = 2000;
+
     public static double SinHalfTurn(V3 a, V3 b, V3 c)
     {
         var u = (b - a).Normalized; var w = (c - b).Normalized;

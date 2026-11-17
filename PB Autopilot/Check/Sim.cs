@@ -24,7 +24,7 @@ namespace PbCheck
         /// <summary>Game ticks between PB runs: 10 is Update10 (the script). SIM_RUN_TICKS=60 tries once a second.</summary>
         static readonly int RunTicks = int.Parse(Environment.GetEnvironmentVariable("SIM_RUN_TICKS") ?? "10");
 
-        class Result { public bool Arrived; public double Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, MaxBurn, MaxBrake; public Vector3D End; }
+        class Result { public bool Arrived; public double Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
 
         static Nav.Wp W(Vector3D p, double arrive, string kind) { return new Nav.Wp { Pos = p, Arrive = arrive, Kind = kind, Name = kind }; }
 
@@ -44,6 +44,7 @@ namespace PbCheck
                 if (cmd.W.Length() >= s.TurnRate * 0.99) s.Observed = Math.Max(s.Observed, w.Length());
                 cmd = Nav.Steer(p, vEst, g, drive, aMax, burnCap, brakeCap, route, idx, 50000 * 0.98, s); cmd = Written(cmd);
                 idx = cmd.Idx;
+                if (Environment.GetEnvironmentVariable("SIM_TRACE") != null && Vector3D.Distance(p, watch) < 40e3) Console.WriteLine("  t " + t.ToString("0") + " d " + Vector3D.Distance(p, watch).ToString("0") + " v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
                 if (cmd.Arrived) { r.Arrived = true; break; }
                 // gyros: reach the wanted rate at a limited angular acceleration, never past the ship's own limit
                 var want = cmd.W;
@@ -63,7 +64,7 @@ namespace PbCheck
                     v += (drive * cmd.Throttle * aMax + g) * h;
                     if (v.Length() > 50000) v = Vector3D.Normalize(v) * 50000;
                     p += v * h;
-                    r.ClosestTo = Math.Min(r.ClosestTo, Vector3D.Distance(p, watch));
+                    { double dc = Vector3D.Distance(p, watch); if (dc < r.ClosestTo) { r.ClosestTo = dc; r.SpeedAtClosest = v.Length(); } }
                 }
                 r.MaxSpeed = Math.Max(r.MaxSpeed, v.Length());
                 t += dt;
@@ -179,7 +180,40 @@ namespace PbCheck
             route = new List<Nav.Wp> { W(detour, 2000, "detour"), W(detour + new Vector3D(250e3, 433e3, 0), 500, "target") };
             r = Fly(route, Vector3D.Zero, new Vector3D(1, 0, 0), 10, 0.6, Vector3D.Zero, 6000, detour);
             Report("detour + target", r);
-            Check(r.Arrived && r.ClosestTo < 2000, "detour: passes within 2 km of the detour point and arrives");
+            Check(r.Arrived && r.ClosestTo < 2500 && r.SpeedAtClosest > 250, "detour: slows only to its turn speed at the detour point (" + r.SpeedAtClosest.ToString("0") + " m/s within " + r.ClosestTo.ToString("0") + " m), turns and arrives");
+
+            // 3b) undocking from a base 350 m ahead (82 m across, the destination beyond it): the plugin's detours lead
+            //     straight out 2 km, then round. The ship, at rest, must fly the first one, not count it as gone by.
+            var baseC = new Vector3D(346, 0, 0);
+            var outPt = baseC + new Vector3D(-2394, 0, 0);
+            var d2 = baseC + Vector3D.Normalize(new Vector3D(-0.3, 1.1, 0)) * 2400;
+            var d3 = baseC + Vector3D.Normalize(new Vector3D(0.8, 0.9, 0)) * 2400;
+            var dest = new Vector3D(400e3, 0, 0);
+            Func<Vector3D, Vector3D, Vector3D, double> arr = (a, b, c) => Math.Max(100, Math.Min(2000, 0.25 * Math.Min(Vector3D.Distance(a, b), Vector3D.Distance(b, c))));
+            route = new List<Nav.Wp> { W(outPt, arr(Vector3D.Zero, outPt, d2), "detour"), W(d2, arr(outPt, d2, d3), "detour"), W(d3, arr(d2, d3, dest), "detour"), W(dest, 500, "target") };
+            r = Fly(route, Vector3D.Zero, new Vector3D(1, 0, 0), 10, 0.6, Vector3D.Zero, 3000, baseC);
+            Report("undock from a base", r);
+            Check(r.Arrived && r.ClosestTo > 300, "undock: flies out first and round the base, never within 300 m of its centre (closest " + r.ClosestTo.ToString("0") + " m)");
+            route = new List<Nav.Wp> { W(outPt, 2000, "detour"), W(d2, 2000, "detour"), W(d3, 2000, "detour"), W(dest, 500, "target") };
+            var c0 = Nav.Steer(Vector3D.Zero, Vector3D.Zero, Vector3D.Zero, new Vector3D(1, 0, 0), 10, route, 0, 49000, new Nav.Settings());
+            Check(c0.Idx == 0, "undock: at rest by the base, the first detour isn't skipped as gone by (2 km reach radius)");
+
+            // 3c) a parabolic leg: 2,000 km with its middle bent 300 km sideways, sent as "curve" points like the plugin's
+            //     (a quadratic Bezier through the bend): flown without stopping at the bend, ending at the target
+            {
+                Vector3D a0 = Vector3D.Zero, b0 = new Vector3D(2000e3, 0, 0), bend = new Vector3D(1000e3, 300e3, 0);
+                var ctl = 2 * bend - (a0 + b0) / 2;
+                route = new List<Nav.Wp>();
+                for (int i = 1; i < 40; i++) { double u = i / 40.0; if (u > 0.93) break; route.Add(W((1 - u) * (1 - u) * a0 + 2 * u * (1 - u) * ctl + u * u * b0, 500, "curve")); }
+                route.Add(W(b0, 500, "target"));
+                r = Fly(route, a0, Vector3D.Normalize(ctl - a0), 10, 0.6, Vector3D.Zero, 6000, bend);
+                Report("parabolic leg", r);
+                var fb = Fly(new List<Nav.Wp> { W(bend, 2000, "detour"), W(b0, 500, "target") }, a0, Vector3D.Normalize(bend), 10, 0.6, Vector3D.Zero, 6000, bend);
+                Report("same bend, flip and burn", fb);
+                Check(r.Arrived && r.FinalDist < 500 && r.ClosestTo < 15e3 && r.SpeedAtClosest > 1000,
+                    "parabolic: curves past the bend (within " + (r.ClosestTo / 1000).ToString("0.0") + " km) at speed (" + r.SpeedAtClosest.ToString("0") + " m/s, no stop) and stops at the target");
+                Check(r.Time < fb.Time * 0.9, "parabolic: quicker than stopping at the bend (" + r.Time.ToString("0") + " s vs " + fb.Time.ToString("0") + " s)");
+            }
 
             // 4) asteroid dodge: a pass point 5 km beside a rock on the line, 600 km out, flown at speed
             var rock = new Vector3D(600e3, 0, 0);
@@ -276,7 +310,7 @@ namespace PbCheck
                     if (w.LengthSquared() > 0) drive = Vector3D.Normalize(drive + Vector3D.Cross(w, drive) * h);
                     v += drive * cmd.Throttle * 10 * h;
                     p += v * h;
-                    r.ClosestTo = Math.Min(r.ClosestTo, Vector3D.Distance(p, watch));
+                    { double dc = Vector3D.Distance(p, watch); if (dc < r.ClosestTo) { r.ClosestTo = dc; r.SpeedAtClosest = v.Length(); } }
                 }
                 r.MaxSpeed = Math.Max(r.MaxSpeed, v.Length());
                 t += dt;

@@ -12,7 +12,7 @@ internal static class GameState
     private static readonly List<IMyGps> gps = new List<IMyGps>();
     private static double nextSlow;
     private static double accel, maxSpeed = RoutePlan.DefaultMaxSpeed, driveWeight;
-    private static string state = "";
+    private static string state = "", shipClass = "", factionTag = "";
 
     private static V3 V(Vector3D v) => new V3(v.X, v.Y, v.Z);
 
@@ -43,8 +43,11 @@ internal static class GameState
                 state = grid != null ? FlipAndBurnLink.State(grid) : "";
                 maxSpeed = FlipAndBurnLink.MaxSpeed();
                 driveWeight = ReadSignature(grid, s.Signature);
+                shipClass = grid != null ? ReadCoreClass(grid) : "";
+                try { factionTag = session.Factions?.TryGetPlayerFaction(session.LocalPlayerId)?.Tag ?? ""; } catch { factionTag = ""; }
             }
         }
+        s.ShipClass = top != null ? shipClass : ""; s.FactionTag = factionTag;
         s.MaxAccel = accel; s.FnbState = state; s.MaxSpeed = maxSpeed; s.DriveWeight = driveWeight;
         SpectrumLink.Search(now);
         SpectrumLink.ReadLive(grid, s.Signature);
@@ -64,6 +67,21 @@ internal static class GameState
                 s.Gps.Add(new MapSnapshot.Marker { Name = g.Name, Pos = V(g.Coords), Color = new MapColor(g.GPSColor.R, g.GPSColor.G, g.GPSColor.B) });
             }
         }
+    }
+
+    /// <summary>The class of the grid's SDX2 core block; with no core it's a Skiff.</summary>
+    private static string ReadCoreClass(MyCubeGrid grid)
+    {
+        try
+        {
+            foreach (var b in grid.GetFatBlocks())
+            {
+                var c = MapSnapshot.CoreClass(b.BlockDefinition.Id.SubtypeName);
+                if (c.Length > 0) return c;
+            }
+        }
+        catch (System.Exception e) { Plugin.LogThrottled("core read failed: " + e.Message); }
+        return MapSnapshot.Skiff;
     }
 
     /// <summary>

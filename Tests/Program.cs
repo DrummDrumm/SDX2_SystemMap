@@ -50,6 +50,8 @@ internal static class Program
         PoiMatching();
         WaypointClicks();
         TurnWithShip();
+        ShipLabelSteady();
+        Curves();
 
         Console.WriteLine($"{checks - fails}/{checks} checks passed");
         return fails == 0 ? 0 : 1;
@@ -185,6 +187,27 @@ internal static class Program
         Check(DetourPlanner.Plan(earth.Pos + new V3(-800e3, 400e3, 0), earth.Pos + new V3(800e3, 400e3, 0), "C").Count == 0, "clear line: no detour");
         // flying to Earth or leaving it: never avoided
         Check(DetourPlanner.Plan(earth.Pos + new V3(-600e3, 0, 0), earth.Pos + new V3(0, 0, 130e3), "E").Count == 0, "flying to Earth: no detour");
+        var sol = SystemData.Worlds[0];
+        var acrossSol = DetourPlanner.Plan(sol.Pos + new V3(-1.5e6, 30e3, 0), sol.Pos + new V3(1.5e6, -20e3, 0), "X");
+        double solLow = LowestOver(sol.Pos + new V3(-1.5e6, 30e3, 0), acrossSol, sol.Pos + new V3(1.5e6, -20e3, 0), sol);
+        Check(sol.IsStar && acrossSol.Exists(w => w.Around == SystemData.SolZone) && solLow >= SystemData.SolNoFly - 1 && solLow < SystemData.SolNoFly * 1.3,
+              "Sol: gone round outside its 800 km no-fly sphere (" + Km(solLow) + " from its centre)");
+        var inSol = sol.Pos + new V3(20e3, 20e3, 20e3); var pastSol = sol.Pos + new V3(-3e6, 0, 0);
+        var outSol = DetourPlanner.Plan(inSol, pastSol, "X");
+        Check(outSol.Count >= 1 && V3.Distance(outSol[0].Pos, sol.Pos) >= SystemData.SolNoFly - 1
+              && LowestOver(outSol[0].Pos, outSol.GetRange(1, outSol.Count - 1), pastSol, sol) >= SystemData.SolNoFly - 1,
+              "starting inside Sol's no-fly: out first, then round it (" + outSol.Count + " points)");
+        var solBase = SystemData.Obstacle("Base", inSol + new V3(300, 0, 0), 500);
+        var fromBase = DetourPlanner.Plan(inSol, pastSol, "X", 100e3, new List<SystemData.World> { solBase });
+        Check(fromBase.Count >= 2 && fromBase[0].Around == solBase && fromBase[1].Around == SystemData.SolZone,
+              "base inside Sol's no-fly: out of the base, then out of Sol (" + string.Join(", ", fromBase.ConvertAll(w => w.Around?.Name)) + ")");
+        Check(DetourPlanner.Plan(sol.Pos + new V3(0, 0, 3e6), sol.Pos + new V3(0, 0, 100e3), "Sol").TrueForAll(w => w.Around != SystemData.SolZone), "flying to Sol: not gone round");
+        var solStop = RouteExport.StopNear(sol.Pos + new V3(0, 0, 3e6), sol.Pos, 100e3, out var solWhy);
+        Check(solWhy == "sol" && Near(V3.Distance(solStop, sol.Pos), SystemData.SolNoFly, 1) && solStop.Z > sol.Pos.Z, "a route to Sol stops at 800 km, your side");
+        var venus = Array.Find(SystemData.Worlds, w => w.Name == "Venus");
+        var acrossVenus = DetourPlanner.Plan(venus.Pos + new V3(-1.5e6, 0, 0), venus.Pos + new V3(1.5e6, 0, 0), "X");
+        double venusLow = LowestOver(venus.Pos + new V3(-1.5e6, 0, 0), acrossVenus, venus.Pos + new V3(1.5e6, 0, 0), venus);
+        Check(!venus.IsStar && venusLow >= venus.Radius + 100e3 - 1 && venusLow < venus.Radius + 150e3, "planets: still the usual clearance (" + Km(venusLow - venus.Radius) + " above Venus)");
         // starting close to a world (inside the clearance) used to skip it: the line went straight through
         double R = earth.Radius;
         var lowStart = earth.Pos + new V3(-150e3, 0, 0); var farSide = earth.Pos + new V3(600e3, 0, 0); // 50 km up, target behind Earth
@@ -248,6 +271,15 @@ internal static class Program
         Check(leave.Count >= 2 && leave[0].Around == home && Math.Abs(V3.Distance(leave[0].Pos, o1) - 2300 * DetourPlanner.Slack) < 1 && leave[0].Pos.X < o1.X, "leave your base, target behind: straight out of it first");
         Check(LowestOver(leave[0].Pos, leave.GetRange(1, leave.Count - 1), behind, home) >= 2300 - 1, "leave your base, target behind: then round it");
         Check(DetourPlanner.Plan(atHome, o1 + new V3(-60e3, 0, 0), "X", 100e3, homes).Count == 0, "leave your base, target ahead: straight away");
+        var lt = new RouteTracker { Avoid = true, Obstacles = homes };
+        lt.Update("X", behind, true, atHome, V3.Zero, 10, 0);
+        Check(RouteExport.Parse(RouteExport.Build(lt.Path, 11), out var lr) && lr.Points.Count >= 3 && lr.Points[0].Kind == "detour"
+              && lr.Points.TrueForAll(q => q.Kind == "target" || q.Arrive <= 2000)
+              && lr.Points[0].Arrive < V3.Distance(atHome, lr.Points[0].Pos) * 0.3,
+              "leave your base: the short detours' reach radius is well inside the 2 km legs (not reached where you start)");
+        Check(Math.Abs(RouteExport.ArriveFor(V3.Zero, new V3(1e6, 0, 0), new V3(2e6, 0, 0)) - RouteExport.DetourArrive) < 1e-9
+              && Math.Abs(RouteExport.ArriveFor(V3.Zero, new V3(2000, 0, 0), new V3(2000, 3000, 0)) - 500) < 1e-9
+              && RouteExport.ArriveFor(V3.Zero, new V3(10, 0, 0), new V3(20, 0, 0)) == 100, "reach radius: 2 km on long legs, a quarter of a short one, at least 100 m");
         Check(DetourPlanner.Plan(behind, o1 + new V3(-300, 0, 0), "Home", 100e3, homes).Count == 0, "fly home: your base isn't gone round");
         var mix = new List<SystemData.World> { SystemData.Obstacle("Home", V3.Zero, 3000), SystemData.Obstacle("Stn", new V3(4000, 0, 0), 8000, station: true), SystemData.Obstacle("Stn2", new V3(5000, 0, 0), 8000, station: true) };
         DetourPlanner.Merge(mix);
@@ -301,12 +333,43 @@ internal static class Program
         Check(last.Kind == "target" && last.Name == "Far (side)" && V3.Distance(r.Dest, earth + new V3(600e3, 0, 0)) < 0.01 && r.Command == "load", "last point is the target, dest and command kept");
         var stop = RouteExport.StopPoint(t.Path, out var why);
         Check(V3.Distance(last.Pos, stop) < 0.01 && r.Stop == why, "last point is the stop point");
+        // world load: the route comes back from the PB copy, with the points already flown passed
+        var back = new RouteTracker();
+        Check(back.Restore(r, 1, earth + new V3(-600e3, 0, 0), null, V3.Zero) && back.TargetName == "Far (side)" && back.Waypoints.Count == t.Waypoints.Count
+            && back.Next == Math.Min(1, t.Waypoints.Count) && V3.Distance(back.Target, r.Dest) < 0.01, "restore: route taken back from the PB");
+        back.Hold = true; back.Update(null, V3.Zero, true, earth + new V3(-600e3, 0, 0), V3.Zero, 12.5, 50000);
+        Check(back.Path != null && back.TargetName == "Far (side)", "restore: kept with nothing picked while flying");
+        // editing in flight: CANCEL goes back to the saved plan
+        var saved = back.Save(); int wps = back.Waypoints.Count, rev = back.Revision;
+        back.AddUser("Extra", earth + new V3(0, 900e3, 0)); back.Bend("Far (side)", earth + new V3(0, 0, 700e3));
+        back.Load(saved);
+        Check(back.UserPoints.Count == 0 && back.Waypoints.Count == wps && back.Bends.Count == 0 && back.TargetName == "Far (side)" && back.Revision > rev, "flight edit: cancel goes back");
+        RouteExport.Parse(RouteExport.BuildStop(8), out var sr);
+        Check(!new RouteTracker().Restore(sr, 0, V3.Zero, null, V3.Zero), "restore: a stop order isn't a route");
 
-        // stop points: 8 km short of a station, at the clearance above a world, the point itself in open space
+        // stop points: 3 km short of a station, at the clearance above a world, the point itself in open space
         var tycho = SystemData.Stations[3].Pos;
         var ps = RoutePath.Make("Tycho", tycho + new V3(3e6, 0, 0), tycho, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3);
         var sp = RouteExport.StopPoint(ps, out why);
-        Check(why == "station" && Near(V3.Distance(sp, tycho), RouteExport.StationStandoff, 1) && sp.X > tycho.X, "station stop 8 km short, on the near side");
+        Check(why == "station" && Near(V3.Distance(sp, tycho), RouteExport.StationStandoff, 1) && sp.X > tycho.X, "station stop 3 km short, on the near side");
+        // a station near or on a world: stop above it (away from the world), round to it if you come from the world's side
+        var low = Array.Find(SystemData.Stations, x => RouteExport.WorldUnder(x.Pos, 100e3) != null);
+        Check(low != null, "a station sits near a world (" + (low?.Name ?? "none") + ")");
+        if (low != null)
+        {
+            var lw = RouteExport.WorldUnder(low.Pos, 100e3); var lup = (low.Pos - lw.Pos).Normalized;
+            var under = low.Pos - lup * 50e3 + (lup.Cross(new V3(0, 1, 0)).Length > 0.1 ? lup.Cross(new V3(0, 1, 0)).Normalized : new V3(1, 0, 0)) * 1000;
+            var pl = RoutePath.Make(low.Name, under, low.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3);
+            var lsp = RouteExport.StopPoint(pl, out why);
+            Check(why == "station" && Near(V3.Distance(lsp, low.Pos), RouteExport.StationStandoff, 1) && (lsp - low.Pos).Normalized.Dot(lup) > 0.999,
+                  "station by a world: stop 3 km above it, away from " + lw.Name);
+            Check(RouteExport.Parse(RouteExport.Build(pl, 9), out var lr) && lr.Points.Count == 2 && lr.Points[0].Name.StartsWith("Approach")
+                  && LowestOver(under, new List<Waypoint> { new Waypoint { Pos = lr.Points[0].Pos } }, lsp, SystemData.Obstacle("s", low.Pos, 1)) >= RouteExport.StationStandoff * 0.9,
+                  "coming up from the world's side: round the station to the stop, not through it");
+            var above = low.Pos + lup * 400e3;
+            Check(RouteExport.Parse(RouteExport.Build(RoutePath.Make(low.Name, above, low.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3), 9), out lr) && lr.Points.Count == 1,
+                  "coming from above: straight to the stop");
+        }
         var mars = SystemData.FindWorld("Mars");
         var pm = RoutePath.Make("Mars", mars.Pos + new V3(0, 0, 2e6), mars.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3);
         sp = RouteExport.StopPoint(pm, out why);
@@ -356,11 +419,11 @@ internal static class Program
         Check(t.Path != null && t.TargetName == "Dest", "hold keeps the route with nothing picked");
         t.Update("Waypoint A", wpPos, true, ship, V3.Zero, 10, 50000);
         Check(t.UserPoints.Count == 1, "the same point isn't added twice");
-        // a station waypoint stops 8 km short
+        // a station waypoint stops 3 km short
         var tycho = SystemData.Stations[3];
         t.Update(tycho.Name, tycho.Pos, true, ship, V3.Zero, 10, 50000);
         var sw = t.Waypoints.Find(w => w.User && w.Name == tycho.Name);
-        Check(t.UserPoints.Count == 2 && Near(V3.Distance(sw.Pos, tycho.Pos), RouteExport.StationStandoff, 1), "a station waypoint stops 8 km short");
+        Check(t.UserPoints.Count == 2 && Near(V3.Distance(sw.Pos, tycho.Pos), RouteExport.StationStandoff, 1), "a station waypoint stops 3 km short");
         // the export marks them as waypoints, in order before the target
         RouteExport.Parse(RouteExport.Build(t.Path, 3, "engage", null, 0.6), out var r);
         int ka = r.Points.FindIndex(x => x.Kind == "waypoint" && x.Name == "Waypoint A"), kb = r.Points.FindIndex(x => x.Kind == "waypoint" && x.Name == tycho.Name);
@@ -556,6 +619,7 @@ internal static class Program
         Check(kc.Ctrl && kc.Shift && !kc.Alt && kc.Key == "m" && kc.ToString() == "Ctrl+Shift+m", "keys: parse any order and case");
         Check(KeyCombo.Parse("Ctrl+Alt+OemQuestion").Display == "Ctrl+Alt+/" && KeyCombo.Parse("Ctrl+Alt+/").Key == "OemQuestion", "keys: / shown and read back");
         Check(KeyCombo.Parse("Alt+5").Key == "D5" && KeyCombo.Parse("Alt+D5").Display == "Alt+5", "keys: digits");
+        Check(KeyCombo.Parse("ExtraButton1").Display == "Mouse 4" && KeyCombo.Parse("mouse5").Key == "ExtraButton2" && KeyCombo.Parse("Shift+Mouse 4").ToString() == "Shift+ExtraButton1", "keys: side mouse buttons");
         Check(KeyCombo.Parse("None").IsNone && KeyCombo.Parse("Ctrl+").IsNone && KeyCombo.Parse("").ToString() == "None" && KeyCombo.Parse("None").Display == "unbound", "keys: unbound");
         Check(KeyCombo.Parse("Shift+M").Equals(KeyCombo.Parse("shift+m")) && !KeyCombo.Parse("Shift+M").Equals(KeyCombo.Parse("Ctrl+Shift+M")), "keys: equality is exact on modifiers");
         var kd = new MapSettings();
@@ -592,9 +656,15 @@ internal static class Program
         maxOff = 0; foreach (var q in pts) maxOff = Math.Max(maxOff, q.Z);
         Check(ok && maxOff > 50e3 && maxOff < 400e3, "projection: sideways drift curves back to the route (" + (maxOff / 1e3).ToString("0") + " km out)");
         // through a waypoint first
+        var wpS0 = new V3(5e5, 3e5, 0);
         ok = Trajectory.Predict(V3.Zero, V3.Zero, new[] { new V3(5e5, 3e5, 0), new V3(1e6, 0, 0) }, 10, 50000, 25e3, pts);
         double nearWp = double.MaxValue; foreach (var q in pts) nearWp = Math.Min(nearWp, V3.Distance(q, new V3(5e5, 3e5, 0)));
         Check(ok && nearWp < 40e3, "projection: passes the waypoint, then arrives");
+        // flip and burn: stops at the waypoint (within the 2 km reach), then a straight leg on
+        ok = Trajectory.Predict(V3.Zero, V3.Zero, new[] { wpS0, new V3(1e6, 0, 0) }, 10, 50000, 25e3, pts, phases: new List<byte>(), stops: true);
+        nearWp = double.MaxValue; foreach (var q in pts) nearWp = Math.Min(nearWp, V3.Distance(q, wpS0));
+        double off2 = 0; foreach (var q in pts) if (q.X > wpS0.X + 1e3) off2 = Math.Max(off2, V3.SegmentDistance(wpS0, new V3(1e6, 0, 0), q, out _));
+        Check(ok && nearWp < 2500 && off2 < 5e3, "projection, flip and burn: stops at the waypoint (" + nearWp.ToString("0") + " m), then flies straight on (" + off2.ToString("0") + " m off)");
         // a sharp corner (the screenshot: past a waypoint, then most of the way back): arcs round it, no long overshoot
         var wpS = new V3(3e6, 0, 0); var destS = new V3(1.2e6, 1.2e6, 0);
         ok = Trajectory.Predict(V3.Zero, V3.Zero, new[] { wpS, destS }, 113, 50000, 25e3, pts);
@@ -625,6 +695,96 @@ internal static class Program
         snap.Track.Clear();
         snap.RecordTrack(V3.Zero, 0, 1e6); snap.RecordTrack(new V3(50, 0, 0), 5, 1e6); snap.RecordTrack(new V3(5000, 0, 0), 0.2, 1e6);
         Check(snap.Track.Count == 1, "track: skips short moves and too-soon samples");
+    }
+
+    /// <summary>The ship's label in the small pinned map: drawn every frame, in the same spot while the speed digits change.</summary>
+    private static void Curves()
+    {
+        var O = new V3(5e6, 0, 0);
+        var a = O; var b = O + new V3(2000e3, 0, 0); var bend = O + new V3(1000e3, 300e3, 0);
+
+        // one bend point: a parabola through it
+        var cv = RouteCurve.Build(a, new[] { bend }, b);
+        double near = double.MaxValue; foreach (var q in cv) near = Math.Min(near, V3.Distance(q, bend));
+        Check(V3.Distance(cv[0], a) < 1 && V3.Distance(cv[cv.Count - 1], b) < 1 && near < 1, "curve: starts, ends and passes through the bend (" + near.ToString("0") + " m)");
+
+        // a bent leg: longer than the chord, planned along the arc, no faster than its corner speed
+        var r = RoutePlan.Make("B", a, b, V3.Zero, 10, 50000, RoutePlan.DefaultClearance, 0, new[] { bend });
+        double arc = 0; for (int i = 1; i < r.Curve.Count; i++) arc += V3.Distance(r.Curve[i - 1], r.Curve[i]);
+        Check(r.Curved && Math.Abs(r.Distance - arc) < 1 && r.Distance > 2000e3 * 1.05, "curve: distance is the arc length (" + (r.Distance / 1000).ToString("0") + " km)");
+        Check(!double.IsInfinity(r.CornerSpeed) && r.MaxSpeed <= r.CornerSpeed + 1, "curve: top speed capped at the bend's corner speed (" + r.CornerSpeed.ToString("0") + " m/s)");
+        Check(V3.Distance(r.PointAt(0), a) < 1 && V3.Distance(r.PointAt(r.Distance), b) < 1, "curve: PointAt follows the arc end to end");
+
+        // flip and burn: a leg per waypoint; parabolic: one leg through them all
+        var wps = new List<Waypoint> { new Waypoint { Name = "W1", Pos = O + new V3(700e3, 200e3, 0), User = true }, new Waypoint { Name = "W2", Pos = O + new V3(1400e3, 100e3, 0), User = true } };
+        var fb = RoutePath.Make("Dest", a, b, V3.Zero, 10, 50000, wps, 0);
+        var pa = RoutePath.Make("Dest", a, b, V3.Zero, 10, 50000, wps, 0, RoutePlan.DefaultClearance, 0, true);
+        Check(fb.Legs.Count == 3 && !fb.Curved && pa.Legs.Count == 1 && pa.Curved && pa.Final.Curved, "legs: flip and burn stops at each point, parabolic is one leg");
+        Check(fb.Legs[0].ExitSpeed > 100 && fb.Legs[0].ExitSpeed < fb.Legs[0].PeakSpeed && fb.Legs[1].ClosingSpeed > 100 && fb.Final.ExitSpeed == 0,
+            "legs: flip and burn slows to a turn speed at each point (" + fb.Legs[0].ExitSpeed.ToString("0") + " m/s), not a stop, and stops at the end");
+        double tv = RouteCurve.TurnSpeed(a, O + new V3(700e3, 200e3, 0), O + new V3(1400e3, 100e3, 0), 10, 2000, 50000);
+        double sh0 = Trajectory.SinHalfTurn(a, O + new V3(700e3, 200e3, 0), O + new V3(1400e3, 100e3, 0));
+        Check(tv * tv * sh0 * sh0 / 20 <= 2000 + 1, "legs: the turn cuts the corner by no more than the 2 km reach (" + (tv * tv * sh0 * sh0 / 20).ToString("0") + " m)");
+        Check(RouteCurve.TurnSpeed(a, O + new V3(1e6, 0, 0), O + new V3(2e6, 0, 0), 10, 2000, 50000) == 50000 && RouteCurve.TurnSpeed(a, O + new V3(1e6, 0, 0), a, 10, 2000, 50000) < 250,
+            "legs: no slowing for a straight-on point, nearly a stop to double back");
+        Check(pa.Eta < fb.Eta, "legs: parabolic is quicker than stopping at each point (" + pa.Eta.ToString("0") + " s vs " + fb.Eta.ToString("0") + " s)");
+        Check(RouteExport.Parse(RouteExport.Build(pa, 5), out var ex) && ex.Points.Count > 10 && ex.Points.TrueForAll(q => q.Kind == "curve" || q.Equals(ex.Points[ex.Points.Count - 1])),
+            "legs: parabolic export is curve points, then the stop (" + ex.Points.Count + ")");
+        bool beyond = false; var stop = ex.Points[ex.Points.Count - 1].Pos;
+        for (int i = 0; i + 1 < ex.Points.Count; i++) if (V3.Distance(ex.Points[i].Pos, b) < V3.Distance(stop, b)) beyond = true;
+        Check(!beyond, "legs: no curve point lies beyond the stop");
+
+        // a bent leg in flip and burn mode
+        var bends = new Dictionary<string, V3> { ["Dest"] = bend };
+        var bp = RoutePath.Make("Dest", a, b, V3.Zero, 10, 50000, null, 0, RoutePlan.DefaultClearance, 0, false, bends);
+        Check(bp.Legs.Count == 1 && bp.Final.Curved, "bend: the dragged leg curves");
+        Check(RouteExport.Parse(RouteExport.Build(bp, 6), out ex) && ex.Points.Exists(q => q.Kind == "curve"), "bend: exported as curve points");
+        var past = RoutePath.Make("Dest", O + new V3(1500e3, 0, 0), b, V3.Zero, 10, 50000, null, 0, RoutePlan.DefaultClearance, 0, false, bends);
+        Check(!past.Final.Curved, "bend: dropped once the ship is past it");
+
+        // the tracker keeps bends across a replan and drops them on a new destination
+        var t = new RouteTracker { Avoid = false };
+        t.Update("Dest", b, true, a, V3.Zero, 10, 0);
+        t.Bend("Dest", bend);
+        t.Update("Dest", b, true, a, V3.Zero, 10, 0);
+        Check(t.Path != null && t.Path.Final.Curved, "bend: the tracker plans through it");
+        t.Update("Dest", b, true, a + new V3(1000, 0, 0), V3.Zero, 10, 0);
+        Check(t.Bends.ContainsKey("Dest"), "bend: kept as the ship moves");
+        t.Update("Other", O + new V3(0, 0, 900e3), true, a, V3.Zero, 10, 0);
+        Check(t.Bends.Count == 0, "bend: dropped on a new destination");
+        int rev = t.Revision; t.Curved = true;
+        Check(t.Revision > rev, "legs: switching mode replans");
+    }
+
+    private static void ShipLabelSteady()
+    {
+        Check(MapSnapshot.ShortShipName("Rocinante", "OPA", "Corvette") == "Rocinante"
+              && MapSnapshot.ShortShipName("SDX2- Comet Shuttle_testing", "OPA", "Hauler") == "OPA Hauler"
+              && MapSnapshot.ShortShipName("SDX2- Comet Shuttle_testing", "", "Hauler") == "Hauler"
+              && MapSnapshot.ShortShipName("SDX2- Comet Shuttle_testing", "OPA", MapSnapshot.Skiff) == "OPA Skiff"
+              && MapSnapshot.ShortShipName("SDX2- Comet Shuttle_testing", "OPA", "") == "SDX2- Comet Shutt..."
+              && MapSnapshot.ShortShipName("SDX2- Comet Shuttle_testing", "", "").Length <= MapSnapshot.MaxShipName,
+              "ship label: names up to 20 characters as they are; longer: faction tag + core class, or cut short when there's no class (not a ship)");
+        Check(MapSnapshot.CoreClass("sdx_shipcoreHauler") == "Hauler" && MapSnapshot.CoreClass("sdx_shipcoreStationAdmin") == "Station Admin"
+              && MapSnapshot.CoreClass("sdx_shipcoreNoCore") == "Skiff" && MapSnapshot.CoreClass("LargeBlockGyro") == "" && MapSnapshot.CoreClass(null) == "",
+              "ship class: from the SDX2 core block's subtype (NoCore: Skiff; not a core block: none)");
+        var snap = new MapSnapshot { HasShip = true, ShipName = "SDX2- Comet Shuttle_testing", FactionTag = "OPA", ShipClass = "Hauler", ShipPos = new V3(-1.2e6, 0, 9e6) };
+        var scene = new MapScene { Snap = snap, Compact = true, Mini = true, Help = "" };
+        scene.Cam.Setup(0, 0, 300, 260);
+        scene.Cam.Target = scene.Cam.GoalTarget = snap.ShipPos; scene.Cam.Distance = scene.Cam.GoalDistance = 2e6;
+        scene.MouseX = float.NaN;
+        var spots = new List<(float X, float Y)>();
+        double[] speeds = { 44690, 44740, 45110, 41111, 48888, 45110, 39999 };
+        foreach (var sp in speeds)
+        {
+            snap.ShipVel = new V3(0, 0, -sp);
+            var c = new PropCanvas();
+            scene.Draw(c, new Box(0, 0, 300, 260));
+            var t = c.Texts.Find(x => x.Text.StartsWith("OPA Hauler"));
+            spots.Add(t.Text == null ? (float.NaN, float.NaN) : (t.X, t.Y));
+        }
+        Check(spots.TrueForAll(q => !float.IsNaN(q.X)) && spots.TrueForAll(q => Math.Abs(q.X - spots[0].X) < 0.01f && Math.Abs(q.Y - spots[0].Y) < 0.01f),
+              "pinned map: the ship's name is drawn every frame in the same spot as the speed changes (" + string.Join(" ", spots.ConvertAll(q => q.X.ToString("0.0"))) + ")");
     }
 
     private static void TurnWithShip()
@@ -691,25 +851,26 @@ internal static class Program
         Check(RouteClick.InsertIndex(chain, new V3(150e3, -1e3, 0)) == 1, "waypoint: goes into the second leg");
 
         // the tracker keeps them in route order and names them
+        var O = new V3(5e6, 0, 0);
         var t = new RouteTracker { Avoid = false };
-        t.Update("Dest", new V3(300e3, 0, 0), true, new V3(0, 0, 0), new V3(0, 0, 0), 10, 0);
-        Check(t.InsertUser(t.NextUserName(), new V3(200e3, 0, 0)) && t.InsertUser(t.NextUserName(), new V3(100e3, 0, 0)), "waypoint: two added");
+        t.Update("Dest", O + new V3(300e3, 0, 0), true, O, new V3(0, 0, 0), 10, 0);
+        Check(t.InsertUser(t.NextUserName(), O + new V3(200e3, 0, 0)) && t.InsertUser(t.NextUserName(), O + new V3(100e3, 0, 0)), "waypoint: two added");
         Check(t.UserPoints.Count == 2 && t.UserPoints[0].Name == "Waypoint 2" && t.UserPoints[1].Name == "Waypoint 1", "waypoint: the nearer one is flown first");
-        Check(!t.InsertUser("dup", new V3(100e3, 50, 0)), "waypoint: no duplicate within 100 m");
+        Check(!t.InsertUser("dup", O + new V3(100e3, 50, 0)), "waypoint: no duplicate within 100 m");
         Check(t.Waypoints.Count == 2 && t.Waypoints[0].User && t.Path != null, "waypoint: route replanned through them");
 
         // raising one keeps its place and name, and the route goes through the new height
         int rev = t.Revision;
-        Check(t.MoveUser(0, new V3(100e3, 40e3, 0)) && t.UserPoints[0].Name == "Waypoint 2" && t.UserPoints[0].Pos.Y == 40e3 && t.Revision > rev, "waypoint height: moved up, same slot, replanned");
+        Check(t.MoveUser(0, O + new V3(100e3, 40e3, 0)) && t.UserPoints[0].Name == "Waypoint 2" && t.UserPoints[0].Pos.Y == 40e3 && t.Revision > rev, "waypoint height: moved up, same slot, replanned");
         Check(Math.Abs(t.Waypoints[0].Pos.Y - 40e3) < 1, "waypoint height: route goes through the new height");
-        Check(!t.MoveUser(0, new V3(200e3, 0, 0)) && !t.MoveUser(5, new V3(0, 1e3, 0)), "waypoint height: can't move onto another waypoint or a missing one");
+        Check(!t.MoveUser(0, O + new V3(200e3, 0, 0)) && !t.MoveUser(5, O + new V3(0, 1e3, 0)), "waypoint height: can't move onto another waypoint or a missing one");
 
         // leaving the seat drops the plan, and F&B's same pick doesn't bring it back; a new pick does
-        t.Cancel("Dest", new V3(300e3, 0, 0));
+        t.Cancel("Dest", O + new V3(300e3, 0, 0));
         Check(t.TargetName == null && t.UserPoints.Count == 0 && t.Path == null, "cancel: plan and waypoints dropped");
-        t.Update("Dest", new V3(300e3, 0, 0), true, new V3(0, 0, 0), new V3(0, 0, 0), 10, 0);
+        t.Update("Dest", O + new V3(300e3, 0, 0), true, O, new V3(0, 0, 0), 10, 0);
         Check(t.TargetName == null && t.Path == null, "cancel: F&B's unchanged pick isn't planned again");
-        t.Update("Other", new V3(0, 0, 400e3), true, new V3(0, 0, 0), new V3(0, 0, 0), 10, 0);
+        t.Update("Other", O + new V3(0, 0, 400e3), true, O, new V3(0, 0, 0), 10, 0);
         Check(t.TargetName == "Other" && t.Path != null, "cancel: a new pick plans a route again");
 
         var seat = new SeatWatch();
@@ -910,6 +1071,19 @@ internal static class Program
 
     /// <summary>Same layout rule as the plugin's SidePreview: right of centre, clear of F&amp;B's 600 px wide list.</summary>
     private static Box SideBox(float w, float h) => SideLayout.Box(w, h, 1f);
+}
+
+/// <summary>A canvas that draws nothing, with proportional digits ('1' narrow), remembering where text went.</summary>
+internal sealed class PropCanvas : IMapCanvas
+{
+    public readonly List<(string Text, float X, float Y)> Texts = new List<(string, float, float)>();
+    public void Rect(float x, float y, float w, float h, MapColor col, float rotation = 0) { }
+    public void Line(float x1, float y1, float x2, float y2, float width, MapColor col) { }
+    public void Disc(float cx, float cy, float r, MapColor col) { }
+    public void Text(string text, float x, float y, float px, MapColor col, TextAnchor anchor = TextAnchor.Left) => Texts.Add((text, x, y));
+    public float TextWidth(string text, float px) { float w = 0; foreach (char ch in text) w += (ch == '1' ? 0.3f : ch == '0' ? 0.6f : 0.55f) * px; return w; }
+    public void PushClip(float x, float y, float w, float h) { }
+    public void PopClip() { }
 }
 
 /// <summary>A canvas that draws nothing and remembers where text went (for clicking things by their label).</summary>

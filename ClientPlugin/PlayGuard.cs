@@ -9,9 +9,11 @@ namespace SDX2_SystemMap;
 
 /// <summary>
 /// SDX2's client-plugin rules: the plugin must switch itself off while you're in admin mode or AFK. While
-/// <see cref="Blocked"/> is set the map, preview and PiP are hidden, the full map closes, nothing is written to the
-/// autopilot PB, the asteroid watch and Flip and Burn helpers stop, and the speedometer fix steps aside. Everything comes
-/// back on the first input once the reason has gone.
+/// <see cref="Blocked"/> is set nothing is written to the autopilot PB or Flip and Burn, the asteroid watch stops, the
+/// speedometer fix steps aside and the keys and mouse do nothing. In admin mode the map, preview and PiP are hidden and
+/// the full map closes too; AFK (<see cref="ViewOnly"/>) leaves the full map and the pinned preview up as a read-only
+/// view (your ship and route keep moving on it; it only reads, like the game's own map). Everything comes back on the
+/// first input once the reason has gone.
 ///  - Admin mode: creative tools, any admin-menu toggle (invulnerable, show players, use terminals...), the admin menu
 ///    open, or the spectator camera.
 ///  - AFK: no key, mouse button, mouse movement, wheel or joystick input for 30 s (the game's own AFK rule,
@@ -25,6 +27,9 @@ internal static class PlayGuard
     /// <summary>Why the plugin is off right now ("admin mode", "spectator", "AFK"...), or null when it may run.</summary>
     public static string Reason { get; private set; }
     public static bool Blocked => Reason != null;
+    /// <summary>Paused for AFK only: the full map and the pinned preview may still be shown (read-only).</summary>
+    public static bool ViewOnly => Reason == Afk;
+    private const string Afk = "AFK";
 
     public static void Reset() { lastInput = -1; Reason = null; axisSeen = null; }
 
@@ -52,7 +57,7 @@ internal static class PlayGuard
             if (s.AdminSettings != AdminSettingsEnum.None) return "admin mode";
             if (MyScreenManager.IsScreenOfTypeOpen(typeof(MyGuiScreenAdminMenu))) return "admin menu";
             if (s.IsCameraUserAnySpectator()) return "spectator camera";
-            if (now - lastInput > AfkSeconds) return "AFK";
+            if (now - lastInput > AfkSeconds) return Afk;
             return null;
         }
         catch (Exception e)

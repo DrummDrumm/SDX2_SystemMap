@@ -12,6 +12,37 @@ public sealed class MapSnapshot
     /// <summary>The way your cockpit (or you) face.</summary>
     public V3 ShipFwd;
     public bool InCockpit;
+    /// <summary>Your faction's tag ("" = none) and the ship's SDX2 core class (Skiff with no core; "" = not a grid): the map's short name.</summary>
+    public string FactionTag = "", ShipClass = "";
+
+    /// <summary>Longest ship name the map labels; a longer one is shown as faction tag and core class.</summary>
+    public const int MaxShipName = 20;
+    /// <summary>On SDX2 a ship without a core is classed (and called) a Skiff.</summary>
+    public const string Skiff = "Skiff";
+
+    /// <summary>The ship's name for the map's label: as it is up to <see cref="MaxShipName"/> characters, else the faction
+    /// tag and core class ("OPA Hauler", "OPA Skiff"); with no class (not a ship), the name cut short with "...".</summary>
+    public static string ShortShipName(string name, string tag, string cls, int max = MaxShipName)
+    {
+        name = (name ?? "").Trim();
+        if (name.Length <= max) return name;
+        string s = ((tag ?? "").Trim() + " " + (cls ?? "").Trim()).Trim();
+        if (s.Length > 0 && (cls ?? "").Trim().Length > 0) return s.Length <= max ? s : s.Substring(0, max - 3).TrimEnd() + "...";
+        return name.Substring(0, max - 3).TrimEnd() + "...";
+    }
+
+    /// <summary>The class an SDX2 core block gives ("sdx_shipcoreHauler" → "Hauler", "…StationAdmin" → "Station Admin");
+    /// the NoCore block is a Skiff; "" for a block that isn't a core.</summary>
+    public static string CoreClass(string subtype)
+    {
+        const string p = "sdx_shipcore";
+        if (subtype == null || !subtype.StartsWith(p, StringComparison.OrdinalIgnoreCase) || subtype.Length == p.Length) return "";
+        var raw = subtype.Substring(p.Length);
+        if (raw.Equals("NoCore", StringComparison.OrdinalIgnoreCase)) return Skiff;
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < raw.Length; i++) { if (i > 0 && char.IsUpper(raw[i]) && char.IsLower(raw[i - 1])) sb.Append(' '); sb.Append(raw[i]); }
+        return sb.ToString();
+    }
     /// <summary>Your character's entity id (0 = none) and whether it's dead: a change means you respawned.</summary>
     public long CharacterId;
     public bool Dead;
@@ -77,4 +108,6 @@ public sealed class MapOptions
 public struct Pick
 {
     public string Name, Kind, Detail; public V3 Pos; public float X, Y, R;
+    /// <summary>For a flip point or a bend: the leg's end name (which leg it belongs to).</summary>
+    public string Leg;
 }

@@ -106,9 +106,10 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         bindList = new List<Bind>
         {
             new Bind { Name = "Map", Tip = "Map window, then the full map, then off.", Get = () => s.KeyMap, Set = v => s.KeyMap = v },
-            new Bind { Name = "Autopilot", Tip = "Open the autopilot route panel; while it flies, stop it (asks first).", Get = () => s.KeyAutopilot, Set = v => s.KeyAutopilot = v },
+            new Bind { Name = "Autopilot", Tip = "Open the autopilot route panel; while it flies, change the route (APPLY sends, CANCEL drops the changes).", Get = () => s.KeyAutopilot, Set = v => s.KeyAutopilot = v },
             new Bind { Name = "Pin the map", Tip = "Pin the small map on screen, or unpin it.", Get = () => s.KeyPin, Set = v => s.KeyPin = v },
             new Bind { Name = "Steer round asteroid", Tip = "While the autopilot flies: send the route with the suggested way round an asteroid.", Get = () => s.KeySteer, Set = v => s.KeySteer = v },
+            new Bind { Name = "Free the mouse (hold)", Tip = "Hold to use the mouse on the map without turning the ship, so the autopilot keeps flying (needs Rich HUD, as on SDX2).", Get = () => s.KeyCursor, Set = v => s.KeyCursor = v },
             new Bind { Name = "This window", Tip = "Opens these settings in game (Pulsar's Config button always works).", Get = () => s.KeySettings, Set = v => s.KeySettings = v },
         };
         foreach (var b in bindList) KeyRow(b);
@@ -142,7 +143,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         s.PreviewSize = d.PreviewSize; s.DefaultGridKm = d.DefaultGridKm; MapScene.DefaultGridKm = d.DefaultGridKm; s.Theme = d.Theme; MapTheme.Current = MapTheme.Find(d.Theme);
         s.PipCorner = d.PipCorner; s.PipSize = d.PipSize; SidePreview.SetPip(d.Pip);
         s.AvoidBodies = d.AvoidBodies; s.ClearanceKm = d.ClearanceKm; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer;
-        s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings;
+        s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings; s.KeyCursor = d.KeyCursor;
         Replan();
         RecreateControls(false);
     }
@@ -167,7 +168,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
             allKeys ??= (MyKeys[])Enum.GetValues(typeof(MyKeys));
             foreach (var k in allKeys)
             {
-                if (!Binds.Bindable(k) || !input.IsNewKeyPressed(k)) continue;
+                if (!Binds.Bindable(k) || !Binds.IsNew(input, k)) continue;
                 Assign(capturing, new KeyCombo(k.ToString(), input.IsAnyCtrlKeyPressed(), input.IsAnyShiftKeyPressed(), input.IsAnyAltKeyPressed()));
                 return;
             }
@@ -218,14 +219,14 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         MyGuiControlButton btn = null;
         var combo = KeyCombo.Parse(b.Get());
         string game = Binds.GameConflict(combo, out bool exact);
-        string tip = b.Tip + " Click, then press the keys.";
+        string tip = b.Tip + " Click, then press the keys (a side mouse button works too).";
         if (game != null) tip += exact ? "\nAlso the game's \"" + game + "\" key: both happen." : "\nThe game's \"" + game + "\" key (" + KeyCombo.KeyName(combo.Key) + ") also fires on this.";
         btn = new MyGuiControlButton(new Vector2(controlX, y), text: new StringBuilder(combo.Display + (exact ? "  (!)" : "")), toolTip: tip,
             originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER, onButtonClick: x =>
             {
                 if (capturing != null) return;
                 capturing = b; captureButton = btn;
-                btn.Text = "Press keys... (Esc cancels, Backspace unbinds)";
+                btn.Text = "Press keys or a side button... (Esc cancels, Backspace unbinds)";
             })
             { VisualStyle = MyGuiControlButtonStyleEnum.Rectangular, Size = new Vector2(SliderW + 0.06f, 0.038f) };
         Controls.Add(btn);

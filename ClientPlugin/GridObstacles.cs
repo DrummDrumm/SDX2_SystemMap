@@ -18,7 +18,7 @@ internal static class GridObstacles
     /// <summary>Kept this far outside a grid's own size.</summary>
     public const double Margin = 2000;
     /// <summary>Kept this far from a known station's centre (as far as a route to one stops short).</summary>
-    public const double StationRadius = RouteExport.StationStandoff;
+    public const double StationRadius = RouteExport.StationAvoid;
     /// <summary>Smaller grids are ignored (SDX2 deletes them anyway).</summary>
     private const int MinBlocks = 20;
     /// <summary>Whether a grid has a base core, by entity id; looked at again when its block count changes.</summary>

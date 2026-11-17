@@ -7,7 +7,7 @@ namespace SDX2_SystemMap;
 
 /// <summary>
 /// Toolbar actions on every cockpit, seat and remote control (drag them from the G menu onto the ship's toolbar):
-///   "System Map: pin preview on/off" (picture-in-picture) and "System Map: full map".
+///   "System Map: pin preview on/off" (picture-in-picture), "System Map: full map" and "System Map: stop autopilot".
 /// They run only on this client; the server just stores the toolbar slot. Registered each world load (the game
 /// clears terminal actions when a world closes).
 /// </summary>
@@ -26,7 +26,7 @@ internal static class ToolbarActions
             pip.Icon = Icon;
             pip.ValidForGroups = false;
             pip.Action = b => SidePreview.Notify(SidePreview.TogglePip(), true);
-            pip.Writer = (b, sb) => sb.Append(Plugin.Settings.Pip && SidePreview.Visible ? "Map On" : "Map Off");
+            pip.Writer = (b, sb) => sb.Append(SidePreview.PinnedNow && SidePreview.Visible ? "Map On" : "Map Off");
             tc.AddAction<IMyShipController>(pip);
 
             var map = tc.CreateAction<IMyShipController>("SDX2Map_Full");
@@ -36,6 +36,14 @@ internal static class ToolbarActions
             map.Action = b => MapScreen.Open(); // says "paused" itself in admin mode
             map.Writer = (b, sb) => sb.Append("Map");
             tc.AddAction<IMyShipController>(map);
+
+            var stop = tc.CreateAction<IMyShipController>("SDX2Map_StopAutopilot");
+            stop.Name = new StringBuilder("System Map: stop autopilot");
+            stop.Icon = @"Textures\GUI\Icons\Actions\SwitchOff.dds";
+            stop.ValidForGroups = false;
+            stop.Action = b => SidePreview.HotbarStop(); // at once, no pop-up: you have the controls
+            stop.Writer = (b, sb) => sb.Append("Stop AP");
+            tc.AddAction<IMyShipController>(stop);
         }
         catch (Exception e) { Plugin.Log("toolbar actions not added: " + e.Message); }
     }

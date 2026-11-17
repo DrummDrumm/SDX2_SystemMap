@@ -10,7 +10,7 @@ public sealed class MapSettings
 {
     /// <summary>Key bindings (<see cref="KeyCombo"/>; "None" unbinds). The map key cycles map window → full map → off.
     /// M alone is left to the game (its symmetry key).</summary>
-    public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion";
+    public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion", KeyCursor = "F2";
     /// <summary>Show the map, preview, pinned map and HUD lines only while you sit in a cockpit, seat or remote control.</summary>
     public bool OnlyInCockpit = false;
     /// <summary>Default zoom with no route: the grid size round your ship, km (one of <see cref="GridChoicesKm"/>).</summary>
@@ -70,6 +70,7 @@ public sealed class MapSettings
                     case "KeyPin": s.KeyPin = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "KeySteer": s.KeySteer = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
+                    case "KeyCursor": s.KeyCursor = KeyCombo.Parse(v).ToString(); break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
                     case "OnlyInCockpit": s.OnlyInCockpit = B(v, false); break;
                     case "FollowHeading": s.FollowHeading = B(v, true); break;
@@ -77,6 +78,7 @@ public sealed class MapSettings
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
                     case "ApBySignature": s.Limits.BySignature = B(v, false); break;
+                    case "ApParabolic": s.Limits.Parabolic = B(v, false); break;
                     case "ApThrustPct": s.Limits.ThrustPct = Math.Max(RouteLimits.MinThrustPct, Math.Min(100, D(v, 100))); break;
                     // the signature caps are the Weak exhaust-cone range; older files had the Strong all-round range
                     // (x2 for Weak, x4 for the cone) or, briefly, the Weak all-round range (x4)
@@ -129,11 +131,11 @@ public sealed class MapSettings
         var sb = new StringBuilder();
         sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
-        L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings);
+        L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings); L("KeyCursor", KeyCursor);
         L("OnlyInCockpit", OnlyInCockpit); L("FollowHeading", FollowHeading); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
         L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
         L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
-        L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
+        L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApParabolic", Limits.Parabolic); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
         L("ApBrakePct", Limits.BrakePct); L("ApBrakeConeSignatureKm", Limits.BrakeSignatureKm);
         L("Yaw", Yaw); L("Pitch", Pitch);
         L("Grid", Options.Grid); L("Orbits", Options.Orbits); L("Sectors", Options.Sectors); L("Stations", Options.Stations);

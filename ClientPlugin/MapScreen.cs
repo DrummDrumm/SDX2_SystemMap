@@ -25,8 +25,8 @@ internal sealed class MapScreen : MyGuiScreenBase
     private readonly MapScene scene = new MapScene();
     private readonly GameCanvas canvas = new GameCanvas();
     private double lastDraw;
-    private bool framed, leftDown, rightDown, moved, rMoved;
-    private float lastX, lastY, downX, downY, rDownX, rDownY;
+    private bool framed;
+    private readonly MapMouse mouse = new MapMouse();
     private string toast; private double toastUntil;
     /// <summary>The view stays centred on your ship (S); kept while the game runs.</summary>
     private static bool follow;
@@ -60,6 +60,12 @@ internal sealed class MapScreen : MyGuiScreenBase
         scene.Opt = Plugin.Settings.Options;
         var c = SidePreview.Camera;
         scene.Cam.Yaw = c.Yaw; scene.Cam.Pitch = c.Pitch;
+        mouse.Toast = Toast;
+        mouse.Following = () => follow;
+        mouse.Unfollow = () => follow = false;
+        mouse.Heading = heading;
+        mouse.Turning = () => Turning;
+        mouse.Destination = _ => showControls = true;
     }
 
     public override string GetFriendlyName() => "SDX2SystemMap";
@@ -84,7 +90,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             const string s = MapScene.Sep;
             var o = scene.Opt;
             return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system" + "\n"
-                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint up / down" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
+                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint up / down" + s + "Drag a flip point: bend the leg" + s + "Shift+right-click a bend: straighten" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
                 + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
@@ -113,7 +119,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             Plugin.Settings.FollowHeading = !Plugin.Settings.FollowHeading; heading.Offset = 0; Plugin.SaveSettings();
             Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (your travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
         }
-        if (input.IsNewKeyPressed(MyKeys.C)) CopyFlip();
+        if (input.IsNewKeyPressed(MyKeys.C)) Toast(CopyFlip());
         if (input.IsNewKeyPressed(MyKeys.A)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
         if (input.IsNewKeyPressed(MyKeys.R)) { SidePreview.Replan(); Toast("Route planned again from here."); }
         if (input.IsNewKeyPressed(MyKeys.V))
@@ -133,116 +139,28 @@ internal sealed class MapScreen : MyGuiScreenBase
         if (input.IsNewKeyPressed(MyKeys.Q)) Toast(SidePreview.NextPipCorner());
 
         var m = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(MyGuiManager.MouseCursorPosition);
-        float dx = m.X - lastX, dy = m.Y - lastY;
-        bool left = input.IsLeftMousePressed(), right = input.IsRightMousePressed();
+        bool left = input.IsLeftMousePressed();
         bool overPanel = controls.W > 0 && controls.Contains(m.X, m.Y);
         if (input.IsNewLeftMousePressed()) panelGrab = overPanel;
         if (overPanel || panelGrab)
         {
             // the controls window has the mouse: no orbit, pick or zoom underneath
             if (!left) panelGrab = false;
-            if (hMode != 0 && !(hRight ? right : left)) { hMode = 0; scene.Ghost = null; } // let go over the controls: cancelled
-            leftDown = false; rightDown = right && rightDown;
-            lastX = m.X; lastY = m.Y;
+            mouse.Handle(scene, input, m.X, m.Y, false);
             return;
         }
-        bool shift = input.IsAnyShiftKeyPressed();
-        if (input.IsNewRightMousePressed()) { rDownX = m.X; rDownY = m.Y; rMoved = false; }
-        if (right && Math.Abs(m.X - rDownX) + Math.Abs(m.Y - rDownY) > 6) rMoved = true;
-        if (input.IsNewLeftMousePressed()) { downX = m.X; downY = m.Y; moved = false; }
-        if (left && Math.Abs(m.X - downX) + Math.Abs(m.Y - downY) > 6) moved = true;
-
-        // height drags: a press on one of your waypoints (drag, or Shift+right-drag), or Shift+right on empty space (a new one)
-        if (hMode == 0 && input.IsNewLeftMousePressed() && scene.Hovered is Pick hp && hp.Kind == "Your waypoint" && SidePreview.UserWaypoint(hp.Name, out var hb))
-            StartHeight(2, false, hp.Name, hb);
-        else if (hMode == 0 && input.IsNewRightMousePressed() && shift)
-        {
-            if (scene.Hovered is Pick rp && rp.Kind == "Your waypoint" && SidePreview.UserWaypoint(rp.Name, out var rb)) StartHeight(2, true, rp.Name, rb);
-            else if (SidePreview.Path is RoutePath path && RouteClick.Place(scene.Cam, path.Points(), m.X, m.Y, 12 * scene.Unit, out var nb, out _)) StartHeight(1, true, null, nb);
-        }
-        if (hMode != 0)
-        {
-            bool held = hRight ? right : left, dragging = hRight ? rMoved : moved;
-            if (dragging)
-            {
-                if (RouteClick.HeightOnVertical(scene.Cam.Eye, scene.Cam.Ray(m.X, m.Y), hBase, out var hp2)) hPos = hp2;
-                else if (!hWarned) { hWarned = true; Toast("Tilt the view to set height"); }
-                scene.Ghost = hPos; scene.GhostBase = hBase;
-            }
-            if (!held)
-            {
-                if (dragging)
-                {
-                    double rise = hPos.Y - hBase.Y;
-                    Toast(hMode == 2 ? SidePreview.MoveWaypoint(hName, hPos, rise) : SidePreview.InsertWaypoint(null, hPos));
-                    hMode = 0; scene.Ghost = null;
-                    leftDown = left; rightDown = right; lastX = m.X; lastY = m.Y;
-                    return; // the release is used up
-                }
-                hMode = 0; scene.Ghost = null; // a plain click: handled as before below
-            }
-        }
-        bool hDrag = hMode != 0;
-
-        if (left && leftDown && !hDrag) { scene.Cam.Orbit(-dx * 0.005, dy * 0.005); if (Turning) heading.Turned(-dx * 0.005); }
-        if (input.IsNewRightMouseReleased() && !rMoved && shift) AddWaypointAt(m.X, m.Y);
-        if (right && rightDown && !shift && !hDrag && Math.Abs(dx) + Math.Abs(dy) > 0) { scene.Cam.Pan(dx, dy); if (follow) { follow = false; Toast("Follow ship: off (panned)"); } }
-        if (input.IsNewLeftMouseReleased() && !moved && scene.Hovered is Pick p)
-        {
-            if (input.IsAnyShiftKeyPressed()) { Toast(SidePreview.SetDestination(p.Name, p.Kind, p.Pos, p.Detail)); if (p.Kind != "Your ship") showControls = true; }
-            else { if (p.Kind != "Your ship") follow = false; scene.Cam.FlyTo(p.Pos, FlyDistance(p)); }
-        }
-        leftDown = left; rightDown = right;
-        lastX = m.X; lastY = m.Y;
-        int wheel = input.DeltaMouseScrollWheelValue();
-        if (wheel != 0) scene.Cam.Zoom(wheel / 120.0);
+        mouse.Handle(scene, input, m.X, m.Y, true);
     }
 
-    // a height drag: 0 none, 1 placing a new waypoint (Shift+right-drag), 2 raising / lowering one of yours
-    private int hMode;
-    private bool hRight, hWarned;
-    private string hName;
-    private V3 hBase, hPos;
-
-    private void StartHeight(int mode, bool rightButton, string name, V3 basePos)
-    {
-        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false;
-    }
-
-    /// <summary>
-    /// Shift+right-click: a waypoint at the click (or, on one of your waypoints, removes it). On a world, station or GPS point it's that point; near the route's
-    /// line it's on the line; elsewhere it's level with the nearest part of the route. It goes into the leg it's
-    /// nearest, so you can build a route of several stages.
-    /// </summary>
-    private void AddWaypointAt(float x, float y)
-    {
-        var path = SidePreview.Path;
-        if (path == null) { Toast("Set a destination first (Shift+click a point)"); return; }
-        if (scene.Hovered is Pick p && p.Kind != "Your ship")
-        {
-            // one of your waypoints already: take it out again
-            Toast(SidePreview.RemoveWaypoint(p.Name, p.Pos) ?? SidePreview.InsertWaypoint(p.Name, p.Pos));
-            return;
-        }
-        if (!RouteClick.Place(scene.Cam, path.Points(), x, y, 12 * scene.Unit, out var pos, out _)) { Toast("Can't place a waypoint there: tilt the view"); return; }
-        Toast(SidePreview.InsertWaypoint(null, pos));
-    }
-
-    /// <summary>A view that fits the picked thing: worlds by their size, everything else close up.</summary>
-    private static double FlyDistance(Pick p)
-    {
-        var w = SystemData.FindWorld(p.Name);
-        return w != null ? Math.Max(w.Radius * 6, 2e5) : 1e5;
-    }
-
-    private void CopyFlip()
+    /// <summary>C: the first leg's flip point to the clipboard as a GPS line. Returns what happened.</summary>
+    public static string CopyFlip()
     {
         var r = SidePreview.Path?.First;
-        if (r == null || !r.HasBurnPlan) { Toast("No route to copy: pick a destination in F&B's list (N) first."); return; }
+        if (r == null || !r.HasBurnPlan) return "No route to copy: pick a destination in F&B's list (N) first.";
         var f = r.FlipPoint;
         string gps = string.Format(System.Globalization.CultureInfo.InvariantCulture, "GPS:Flip - {0}:{1:0.##}:{2:0.##}:{3:0.##}:#FF7CFC9A:", r.TargetName.Replace(":", " "), f.X, f.Y, f.Z);
-        try { MyClipboardHelper.SetClipboard(gps); Toast("Flip point copied. Paste it in the GPS tab (G)."); }
-        catch (Exception e) { Toast("Copy failed: " + e.Message); }
+        try { MyClipboardHelper.SetClipboard(gps); return "Flip point copied. Paste it in the GPS tab (G)."; }
+        catch (Exception e) { return "Copy failed: " + e.Message; }
     }
 
     private void Toast(string text) { toast = text; toastUntil = Plugin.Now + 4; }
@@ -255,7 +173,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             lastDraw = now;
             var full = MyGuiManager.GetFullscreenRectangle();
             var box = new Box(0, 0, full.Width, full.Height);
-            scene.Snap = SidePreview.Snap; scene.Path = SidePreview.Path;
+            scene.Snap = SidePreview.Snap; scene.Path = SidePreview.Path; scene.Bends = SidePreview.Tracker.Bends;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
             if (!framed) { scene.FrameDefault(true); framed = true; }
             if (follow && scene.Snap.HasShip) { scene.Cam.GoalTarget = scene.Snap.ShipPos; scene.Cam.Target = scene.Snap.ShipPos; }
@@ -292,6 +210,7 @@ internal sealed class MapScreen : MyGuiScreenBase
     public override bool CloseScreen(bool isUnloading = false)
     {
         Plugin.Settings.Yaw = scene.Cam.Yaw; Plugin.Settings.Pitch = scene.Cam.Pitch;
+        if (!isUnloading) SidePreview.FullMapClosed();
         return base.CloseScreen(isUnloading);
     }
 }

@@ -27,6 +27,9 @@ public static class AutopilotPanel
         return b;
     }
 
+    /// <summary>The Steer round asteroid key, as shown (empty: none set). The plugin keeps it current.</summary>
+    public static string SteerKey = "Ctrl+Shift+M";
+
     /// <summary>What the confirmation says about the route.</summary>
     public static List<(string Text, MapColor Col)> ConfirmLines(RoutePath p, string stopKey)
     {
@@ -36,16 +39,27 @@ public static class AutopilotPanel
         l.Add((Fmt.Dist(p.Distance) + "   ETA " + (double.IsNaN(p.Eta) ? "unknown" : Fmt.Time(p.Eta)) + via, Text));
         RouteExport.StopPoint(p, out var why);
         var station = SystemData.StationNear(p.Target, RouteExport.StationRange);
-        string stop = why == "station" ? "Stops " + Fmt.Dist(RouteExport.StationStandoff) + " short of " + (station?.Name ?? "the station")
+        var under = why == "station" ? RouteExport.WorldUnder(p.Target, p.Clearance) : null;
+        string stop = why == "station" ? "Stops " + Fmt.Dist(RouteExport.StationStandoff) + (under != null ? " above " : " short of ") + (station?.Name ?? "the station")
+                + (under != null ? ", on the side away from " + under.Name : "")
+            : why == "sol" ? "Stops at Sol's " + Fmt.Dist(SystemData.SolNoFly) + " no-fly sphere"
             : why == "world" ? "Stops " + Fmt.Dist(p.Clearance) + " above the surface, then you take it down"
             : "Stops on the point";
         l.Add((stop, Text));
+        int bent = 0; double corner = double.PositiveInfinity;
+        foreach (var leg in p.Legs) if (leg.Curved) { bent++; corner = Math.Min(corner, leg.CornerSpeed); }
+        if (p.Curved && p.DetoursAhead > 0)
+            l.Add(("Parabolic: curves through each point without stopping, one flip" + (double.IsInfinity(corner) ? "" : ", bends at up to " + Fmt.Speed(corner)), Text));
+        else if (p.Legs.Count > 1)
+            l.Add(("Flip and burn: slows at each point just enough to turn onto the next leg" + (bent > 0 ? ", " + bent + (bent == 1 ? " leg bent" : " legs bent") : ""), Text));
+        else if (bent > 0)
+            l.Add(("Bent: curves up / down without stopping" + (double.IsInfinity(corner) ? "" : ", bend at up to " + Fmt.Speed(corner)), Text));
         int borders = 0;
         foreach (var leg in p.Legs) borders += leg.Crossings.Count;
         if (borders > 0) l.Add(("Crosses " + borders + (borders == 1 ? " sector border" : " sector borders") + " (server transfers): stay in the seat", Warn));
         if (p.MaxAccel <= 0) l.Add(("Max acceleration unknown: the ship's own thrust is used", Warn));
-        l.Add(("Asteroids found on the line are flown round", Dim));
-        l.Add(("Move, turn, or press " + stopKey + " at any time to take over", Dim));
+        l.Add(("Asteroids on the line are flagged, not avoided by themselves: " + (string.IsNullOrEmpty(SteerKey) ? "set a Steer round asteroid key" : SteerKey) + " sends a way round", Dim));
+        l.Add(("Move or turn at any time to take over", Dim));
         return l;
     }
 
@@ -71,11 +85,12 @@ public static class AutopilotPanel
 
     /// <summary>
     /// The autopilot's route panel: top speed, a thrust cap (as thrust % or as the largest drive signature), your own
-    /// waypoints (added by picking them in F&amp;B's list), the route summary, and ENGAGE / CANCEL. Edits
+    /// waypoints (added by picking them in F&amp;B's list), the route summary, and ENGAGE / CANCEL (while it flies,
+    /// <paramref name="flying"/>: APPLY sends the changes, CANCEL drops them). Edits
     /// <paramref name="lim"/> in place. x, y = top-left (moved up to stay on screen), w = width.
     /// </summary>
     public static RouteHit RoutePanel(PanelUi ui, float x, float y, float w, float screenH, float px, RoutePath p, RouteLimits lim,
-        double fnbCap, double fullAccel, SignatureInfo sig, IList<string> waypoints, bool adding, string stopKey, double now = 0, string addHint = null)
+        double fnbCap, double fullAccel, SignatureInfo sig, IList<string> waypoints, bool adding, string stopKey, double now = 0, string addHint = null, bool flying = false)
     {
         var c = ui.C;
         var hit = new RouteHit { Remove = -1 };
@@ -89,12 +104,12 @@ public static class AutopilotPanel
         bool floorWins = weight > 0 && sig.Floor > sig.DriveStrength(frac0), live = sig.LiveAllRound >= 0;
         int infoN = 3 + (sig.Floor > 0 ? 1 : 0) + (live ? 1 : 0);
         float sp = px * 0.9f, pad = px * 1.1f, row = px * 2.0f, lh = px * 1.3f;
-        float h = px * 2.4f + row * 4 + lh * (infoN + 0.2f) + px * 0.8f + px * 1.6f + Math.Max(1, waypoints.Count) * lh * 1.15f + row + px * 0.8f + lines.Count * lh + px * 3.4f;
+        float h = px * 2.4f + row * 5 + lh * (infoN + 0.2f) + px * 0.8f + px * 1.6f + Math.Max(1, waypoints.Count) * lh * 1.15f + row + px * 0.8f + lines.Count * lh + px * 3.4f;
         y = Math.Max(px, Math.Min(y, screenH - h - px));
         var panel = hit.Panel = new Box(x, y, w, h);
         c.Rect(panel.X, panel.Y, panel.W, panel.H, Panel);
         c.Rect(panel.X, panel.Y, panel.W, 2, Go);
-        c.Text("AUTOPILOT  to " + p.TargetName, x + pad, y + px * 0.55f, px * 1.1f, Text);
+        c.Text((flying ? "CHANGE FLIGHT  to " : "AUTOPILOT  to ") + p.TargetName, x + pad, y + px * 0.55f, px * 1.1f, Text);
         float labelW = c.TextWidth("Signature", sp) + px * 1.4f, valueW = c.TextWidth("50.00 km/s max", sp) + px * 0.6f;
         float sx = x + pad + labelW, sw = w - pad * 2 - labelW - valueW, ty = y + px * 2.4f;
 
@@ -117,6 +132,12 @@ public static class AutopilotPanel
             if (lim.SignatureKm <= 0 || lim.SignatureKm > max) lim.SignatureKm = Math.Round(DriveSignature.WeakCone(weight, lim.ThrustPct / 100, gain));
             if (lim.BrakeSignatureKm <= 0 || lim.BrakeSignatureKm > max) lim.BrakeSignatureKm = Math.Round(DriveSignature.WeakCone(weight, lim.BrakePct / 100, gain));
         }
+        ty += row;
+
+        // how the legs meet at each direction change: stop there (flip and burn), or curve through it (parabolic)
+        c.Text("Legs", x + pad, ty + (row - sp) / 2, sp, Dim);
+        if (ui.Button(new Box(sx, ty + row * 0.1f, bw, row * 0.8f), "FLIP & BURN", sp, Go, !lim.Parabolic) && lim.Parabolic) { lim.Parabolic = false; hit.Changed = true; }
+        if (ui.Button(new Box(sx + bw + px * 0.6f, ty + row * 0.1f, bw, row * 0.8f), "PARABOLIC", sp, Go, lim.Parabolic) && !lim.Parabolic) { lim.Parabolic = true; hit.Changed = true; }
         ty += row;
 
         // the caps: one for burning toward a point, one for braking
@@ -200,7 +221,7 @@ public static class AutopilotPanel
         c.Rect(x + pad, ty - px * 0.4f, w - pad * 2, 1, Dim.WithAlpha(0.4f));
         foreach (var (t, col) in lines) { c.Text(t, x + pad, ty, sp, col); ty += lh; }
         float by = panel.Bottom - px * 2.6f, bwid = (w - pad * 2 - px) / 2;
-        hit.Engage = ui.Button(new Box(x + pad, by, bwid, px * 1.9f), "ENGAGE", px, Go);
+        hit.Engage = ui.Button(new Box(x + pad, by, bwid, px * 1.9f), flying ? "APPLY" : "ENGAGE", px, Go);
         hit.Cancel = ui.Button(new Box(x + pad + bwid + px, by, bwid, px * 1.9f), "CANCEL", px, Dim);
         return hit;
     }
@@ -215,7 +236,7 @@ public static class AutopilotPanel
             if (s.Count > 1) text += "    point " + Math.Min(s.Wp + 1, s.Count) + " of " + s.Count;
         }
         else text += "    starting...";
-        string sub = (s != null && !string.IsNullOrEmpty(s.Msg) ? s.Msg + "    " : "") + "Move or turn to take over    " + stopKey + ": stop";
+        string sub = (s != null && !string.IsNullOrEmpty(s.Msg) ? s.Msg + "    " : "") + "Move or turn to take over    " + stopKey + ": change the route";
         float w = Math.Max(c.TextWidth(text, px), c.TextWidth(sub, px * 0.8f)) + px * 2, h = px * 2.6f;
         var b = new Box((screenW - w) / 2, y, w, h);
         c.Rect(b.X, b.Y, b.W, b.H, Panel);

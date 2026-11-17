@@ -36,6 +36,8 @@ public sealed class MapScene
     public MapSnapshot Snap = new MapSnapshot();
     /// <summary>The planned route: ship → detours → destination (null = none).</summary>
     public RoutePath Path;
+    /// <summary>The legs you bent: the point each curves through, by the leg's end name.</summary>
+    public IDictionary<string, V3> Bends;
     private RoutePlan Route => Path?.Final;
     public MapOptions Opt = new MapOptions();
     public bool Compact;
@@ -71,8 +73,11 @@ public sealed class MapScene
 
     private struct LabelReq
     {
-        public string Text; public float X, Y, R, Px; public MapColor Col; public int Prio; public bool Boxed;
+        public string Text, Key; public float X, Y, R, Px; public MapColor Col; public int Prio, Order; public bool Boxed;
     }
+    /// <summary>The spot (0 right, 1 left, 2 above, 3 below) each keyed label took last frame: tried first, so it doesn't hop.</summary>
+    private readonly Dictionary<string, int> lastSpot = new Dictionary<string, int>();
+    private readonly System.Text.StringBuilder widthText = new System.Text.StringBuilder();
 
     public void Draw(IMapCanvas canvas, Box box)
     {
@@ -212,11 +217,20 @@ public sealed class MapScene
         Label(Math.Abs(h) < 1 ? "level" : Fmt.Dist(Math.Abs(h)) + (h > 0 ? " up" : " down"), x, y, 11 * u, col, 0, 11 * u, true);
     }
 
-    private void Label(string text, float x, float y, float r, MapColor col, int prio, float px = 0, bool boxed = false) =>
-        labels.Add(new LabelReq { Text = text, X = x, Y = y, R = r, Col = col, Prio = prio, Px = px > 0 ? px : 11 * u, Boxed = boxed });
+    private void Label(string text, float x, float y, float r, MapColor col, int prio, float px = 0, bool boxed = false, string key = null) =>
+        labels.Add(new LabelReq { Text = text, Key = key, X = x, Y = y, R = r, Col = col, Prio = prio, Order = labels.Count, Px = px > 0 ? px : 11 * u, Boxed = boxed });
 
-    private void AddPick(string name, string kind, string detail, V3 pos, float x, float y, float r) =>
-        Picks.Add(new Pick { Name = name, Kind = kind, Detail = detail, Pos = pos, X = x, Y = y, R = r });
+    /// <summary>The text's width with every digit as 0, so a label with a changing number (speed, distance) keeps its size
+    /// and doesn't shift about as the digits change.</summary>
+    private float StableWidth(string text, float px)
+    {
+        widthText.Clear();
+        foreach (char ch in text) widthText.Append(ch >= '0' && ch <= '9' ? '0' : ch);
+        return Math.Max(c.TextWidth(text, px), c.TextWidth(widthText.ToString(), px));
+    }
+
+    private void AddPick(string name, string kind, string detail, V3 pos, float x, float y, float r, string leg = null) =>
+        Picks.Add(new Pick { Name = name, Kind = kind, Detail = detail, Pos = pos, X = x, Y = y, R = r, Leg = leg });
 
     // ------------------------------------------------------------------ layers
 
@@ -467,7 +481,7 @@ public sealed class MapScene
         ScreenCircle(x, y, 7 * u, Math.Max(1f, 1.4f * u), ShipCol, 24);
         c.Disc(x, y, 3 * u, ShipCol);
         AddPick(Snap.ShipName, "Your ship", SystemData.SectorAt(Snap.ShipPos).Dx, Snap.ShipPos, x, y, 8 * u);
-        Label(Snap.ShipName + (speed > 1 ? "  " + Fmt.Speed(speed) : ""), x, y, 9 * u, ShipCol, 1, 11 * u, true);
+        Label(MapSnapshot.ShortShipName(Snap.ShipName, Snap.FactionTag, Snap.ShipClass) + (speed > 1 ? "  " + Fmt.Speed(speed) : ""), x, y, 9 * u, ShipCol, 1, 11 * u, true, "ship");
     }
 
     public static MapColor TrackCol => T.Track;
@@ -555,6 +569,8 @@ public sealed class MapScene
     {
         curved = Snap.HasShip && Snap.Prediction.Count > 1 && Snap.PredictionPhases.Count == Snap.Prediction.Count;
         for (int i = 0; i < Path.Legs.Count; i++) RouteLines(Path.Legs[i], Path.LegStartTime(i), i == Path.Legs.Count - 1, i);
+        // parabolic: one leg through all the points, so their markers aren't leg ends
+        if (Path.Legs.Count == 1) for (int n = Path.Next; n < Path.Waypoints.Count; n++) WaypointMark(n, n == Path.Next);
         if (curved) CurvedRoute();
     }
 
@@ -584,12 +600,11 @@ public sealed class MapScene
         void Leg(double a, double b, MapColor col)
         {
             if (b - a < 1) return;
-            var pa = r.PointAt(a); var pb = r.PointAt(b);
-            // split long legs so the near-plane clip and perspective stay right
-            const int n = 24;
+            // split long legs so the near-plane clip and perspective stay right (and a bent leg follows its curve)
+            int n = r.Curved ? 64 : 24;
             for (int i = 0; i < n; i++)
             {
-                var q0 = V3.Lerp(pa, pb, i / (double)n); var q1 = V3.Lerp(pa, pb, (i + 1) / (double)n);
+                var q0 = r.PointAt(a + (b - a) * i / n); var q1 = r.PointAt(a + (b - a) * (i + 1) / n);
                 if (curved) { Seg(q0, q1, Math.Max(1f, 1.1f * u), col.WithAlpha(0.35f)); continue; }
                 Seg(q0, q1, w + 2.5f * u, MapColor.Black.WithAlpha(0.55f));
                 Seg(q0, q1, w, col);
@@ -620,8 +635,17 @@ public sealed class MapScene
         {
             Diamond(fx, fy, 10 * u, BrakeCol);
             Diamond(fx, fy, 5 * u, Bg);
-            AddPick("Flip point", "Route", "T+" + Fmt.Time(t0 + r.BurnTime + r.CoastTime), r.FlipPoint, fx, fy, 6 * u);
+            AddPick("Flip point", "Route", "T+" + Fmt.Time(t0 + r.BurnTime + r.CoastTime) + "  drag: bend the leg up / down", r.FlipPoint, fx, fy, 6 * u, r.TargetName);
             Label("FLIP  T+" + Fmt.Time(t0 + r.BurnTime + r.CoastTime), fx, fy, 7 * u, BrakeCol, 3, 10.5f * u, true);
+        }
+        // the point a bent leg curves through
+        if (Bends != null && Bends.TryGetValue(r.TargetName, out var bend) && r.Curved && P(bend, out var bx0, out var by0))
+        {
+            var chordPt = V3.Lerp(r.Start, r.Target, Math.Max(0, Math.Min(1, (bend - r.Start).Dot(r.Target - r.Start) / Math.Max(1, (r.Target - r.Start).LengthSq))));
+            Stalk(bend, WaypointCol.WithAlpha(0.5f));
+            Diamond(bx0, by0, 7 * u, WaypointCol); Diamond(bx0, by0, 3.5f * u, Bg);
+            AddPick("Bend", "Bend", Fmt.Dist(V3.Distance(bend, chordPt)) + " off the line  drag: move up / down, Shift+right-click: straighten", bend, bx0, by0, 7 * u, r.TargetName);
+            Label("BEND", bx0, by0, 8 * u, WaypointCol, 1, 9.5f * u);
         }
         if (r.HasBurnPlan && r.CoastTime > 1 && P(r.CoastPoint, out var cx2, out var cy2))
         {
@@ -649,16 +673,7 @@ public sealed class MapScene
         }
 
         // a detour waypoint
-        if (!final && P(r.Target, out var wx, out var wy))
-        {
-            int n = Path.Next + legIndex;
-            var wp = Path.Waypoints[n];
-            var wc = wp.User ? WaypointCol : DetourCol;
-            ScreenCircle(wx, wy, 7 * u, 2 * u, wc, 20);
-            c.Disc(wx, wy, 2.5f * u, wc);
-            AddPick(wp.Name, wp.User ? "Your waypoint" : "Detour around " + (wp.Around?.Name ?? "?"), wp.User ? "drag: raise / lower" : "pick it in F&B's list (N)", wp.Pos, wx, wy, 8 * u);
-            Label((wp.User ? wp.Name : "D" + (n + 1)) + (legIndex == 0 ? "  next pick" : ""), wx, wy, 9 * u, wc, legIndex == 0 ? 1 : 3, 10.5f * u, true);
-        }
+        if (!final) WaypointMark(Path.Next + legIndex, legIndex == 0);
 
         // destination
         if (final && P(r.Target, out var dx, out var dy))
@@ -671,6 +686,17 @@ public sealed class MapScene
             AddPick(r.TargetName, "F&B destination", r.TargetSector.Dx, r.Target, dx, dy, 10 * u);
             Label(r.TargetName, dx, dy, 13 * u, BrakeCol, 0, 12 * u, true);
         }
+    }
+
+    private void WaypointMark(int n, bool nextPick)
+    {
+        var wp = Path.Waypoints[n];
+        if (!P(wp.Pos, out var wx, out var wy)) return;
+        var wc = wp.User ? WaypointCol : DetourCol;
+        ScreenCircle(wx, wy, 7 * u, 2 * u, wc, 20);
+        c.Disc(wx, wy, 2.5f * u, wc);
+        AddPick(wp.Name, wp.User ? "Your waypoint" : "Detour around " + (wp.Around?.Name ?? "?"), wp.User ? "drag: raise / lower" : "flying by hand: pick it in F&B's list (N)", wp.Pos, wx, wy, 8 * u);
+        Label((wp.User ? wp.Name : "D" + (n + 1)) + (nextPick ? "  next pick" : ""), wx, wy, 9 * u, wc, nextPick ? 1 : 3, 10.5f * u, true);
     }
 
     private static double NiceTime(double s)
@@ -701,27 +727,37 @@ public sealed class MapScene
 
     private void PlaceLabels()
     {
-        labels.Sort((a, b) => a.Prio.CompareTo(b.Prio));
+        // by priority, then in the order asked (a stable order: equal ones don't swap from frame to frame)
+        labels.Sort((a, b) => a.Prio != b.Prio ? a.Prio.CompareTo(b.Prio) : a.Order.CompareTo(b.Order));
+        var tries = new Box[4];
         foreach (var l in labels)
         {
-            float tw = c.TextWidth(l.Text, l.Px), th = l.Px, pad = 2 * u, gap = l.R + 3 * u;
-            Box[] tries =
-            {
-                new Box(l.X + gap, l.Y - th / 2, tw, th), new Box(l.X - gap - tw, l.Y - th / 2, tw, th),
-                new Box(l.X - tw / 2, l.Y - gap - th, tw, th), new Box(l.X - tw / 2, l.Y + gap, tw, th),
-            };
-            foreach (var t in tries)
-            {
-                var tb = t.Inflate(pad);
-                if (!view.Contains(tb.X, tb.Y) || !view.Contains(tb.Right, tb.Bottom)) continue;
-                bool free = true;
-                foreach (var o in taken) if (o.Overlaps(tb)) { free = false; break; }
-                if (!free) continue;
-                taken.Add(tb);
-                if (l.Boxed) c.Rect(tb.X, tb.Y, tb.W, tb.H, MapColor.Black.WithAlpha(0.6f));
-                c.Text(l.Text, t.X, t.Y, l.Px, l.Col);
-                break;
-            }
+            float tw = StableWidth(l.Text, l.Px), th = l.Px, pad = 2 * u, gap = l.R + 3 * u;
+            tries[0] = new Box(l.X + gap, l.Y - th / 2, tw, th); tries[1] = new Box(l.X - gap - tw, l.Y - th / 2, tw, th);
+            tries[2] = new Box(l.X - tw / 2, l.Y - gap - th, tw, th); tries[3] = new Box(l.X - tw / 2, l.Y + gap, tw, th);
+            int first = l.Key != null && lastSpot.TryGetValue(l.Key, out var ls) ? ls : 0, placed = -1;
+            // each spot as it is, then (for a label on the view) pushed in from the view's edge, last spot first
+            for (int pass = 0; pass < 2 && placed < 0; pass++)
+                for (int k = 0; k < 4 && placed < 0; k++)
+                {
+                    int i = (first + k) % 4;
+                    var t = tries[i];
+                    if (pass == 1)
+                    {
+                        if (!view.Contains(l.X, l.Y)) break;
+                        t = new Box(Math.Max(view.X + pad, Math.Min(view.Right - pad - t.W, t.X)), Math.Max(view.Y + pad, Math.Min(view.Bottom - pad - t.H, t.Y)), t.W, t.H);
+                    }
+                    var tb = t.Inflate(pad);
+                    if (!view.Contains(tb.X, tb.Y) || !view.Contains(tb.Right, tb.Bottom)) continue;
+                    bool free = true;
+                    foreach (var o in taken) if (o.Overlaps(tb)) { free = false; break; }
+                    if (!free) continue;
+                    taken.Add(tb);
+                    if (l.Boxed) c.Rect(tb.X, tb.Y, tb.W, tb.H, MapColor.Black.WithAlpha(0.6f));
+                    c.Text(l.Text, t.X, t.Y, l.Px, l.Col);
+                    placed = i;
+                }
+            if (l.Key != null) { if (placed >= 0) lastSpot[l.Key] = placed; else lastSpot.Remove(l.Key); }
         }
     }
 
@@ -864,13 +900,18 @@ public sealed class MapScene
         {
             l.Add(("Pick next in N:  " + Path.Waypoints[Path.Next].Name, DetourCol));
             var names = new List<string>();
-            for (int i = Path.Next; i < Path.Waypoints.Count; i++) { var n = Path.Waypoints[i].Around?.Name; if (n != null && !names.Contains(n)) names.Add(n); }
+            for (int i = Path.Next; i < Path.Waypoints.Count; i++)
+            {
+                var w = Path.Waypoints[i].Around; if (w == null) continue;
+                var n = w == SystemData.SolZone ? "Sol " + Fmt.Dist(SystemData.SolNoFly) + " no-fly" : w.Name;
+                if (!names.Contains(n)) names.Add(n);
+            }
             if (names.Count > 0) l.Add(("Avoids  " + string.Join(", ", names) + "  (" + Fmt.Dist(Path.Clearance) + " clear)", DetourCol));
         }
         if (r.HasBurnPlan)
         {
             bool over = false; foreach (var g in Path.Legs) over |= g.TooFastToStop;
-            l.Add(("ETA  " + Fmt.Time(Path.Eta) + (over ? "  (overshoot)" : "") + (Path.Legs.Count > 1 ? "  (stops at each point)" : ""), over ? WarnCol : BrakeCol));
+            l.Add(("ETA  " + Fmt.Time(Path.Eta) + (over ? "  (overshoot)" : "") + (Path.Legs.Count > 1 ? "  (slows to turn at each point)" : Path.Curved && Path.DetoursAhead > 0 ? "  (curves through the points)" : ""), over ? WarnCol : BrakeCol));
             string leg = Path.Legs.Count > 1 ? "Leg 1:  " : "";
             l.Add((leg + "Peak  " + Fmt.Speed(r.PeakSpeed) + (r.CoastTime > 1 ? "  coast " + Fmt.Time(r.CoastTime) : ""), CoastCol));
             l.Add(("Burn  " + Fmt.Time(r.BurnTime) + "   brake " + Fmt.Time(r.BrakeTime), BurnCol));

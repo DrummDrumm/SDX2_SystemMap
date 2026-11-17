@@ -15,8 +15,9 @@ namespace SDX2_SystemMap;
 ///  - Once a destination is picked, AUTOPILOT and MANUAL sit under the list. MANUAL closes the list: fly it with
 ///    Flip and Burn. AUTOPILOT opens the route panel beside the list: top speed, a thrust or signature cap, your own
 ///    waypoints (picked in the list while adding), then ENGAGE; the PB flies the route.
-///  - While it flies, a status line shows at the top and STOP AUTOPILOT sits under the list; it and Ctrl+M ask
-///    before they stop it. Touching the controls (or the PB's "manual" hotbar action) lets go at once, with a pop-up
+///  - While it flies, a status line shows at the top and STOP AUTOPILOT sits under the list (it asks first; the
+///    "System Map: stop autopilot" hotbar action doesn't). Ctrl+M opens the route panel to change the flight: edits
+///    are held until APPLY sends them, CANCEL drops them. Touching the controls (or the PB's "manual" hotbar action) lets go at once, with a pop-up
 ///    offering RESUME ROUTE. Flip and Burn's destination follows the route: each detour and waypoint in turn.
 ///  - After the route was stopped part-way, RESUME ROUTE sits under the list until you pick something else.
 ///  - The full map's Shift+click sets Flip and Burn's destination (SetDestination).
@@ -38,8 +39,7 @@ internal static class SidePreview
     private static double nextRoute, promptUntil, lastDraw;
     private static int publishedRevision = -1, lastNext = -1;
     private static string lastTarget, prevSel;
-    private static bool reframe, dragging, navOpen, autoShown;
-    private static float lastMx, lastMy;
+    private static bool reframe, navOpen, autoShown;
     private static Box followBox; // the preview's FOLLOW button (last frame)
     private static bool routePanel, adding, closingSelf;
     private static double panelGrace; // Ctrl+M opens the N list: give F&B a moment before "list closed" closes the panel
@@ -51,6 +51,10 @@ internal static class SidePreview
     /// <summary>The route panel is open in the full map (not beside the N list): it stays open while the map is.</summary>
     private static bool mapPanel;
     private static string steeredTo; // the route point last made F&B's destination while flying
+    /// <summary>The route panel opened while flying: the plan and limits as the autopilot has them (CANCEL goes back).</summary>
+    private static RouteTracker.State flightEdit;
+    private static RouteLimits flightLimits;
+    private static int restoredId = -1; // the PB route last taken back (once per route, seat and session)
 
     private static RouteLimits Limits => Plugin.Settings.Limits;
 
@@ -60,7 +64,8 @@ internal static class SidePreview
         Tracker.Clear(); Tracker.Hold = Tracker.Adding = false;
         publishedRevision = -1; lastNext = -1;
         routePanel = adding = false; lastState = null; flyingTarget = null; flyingThrust = flyingBrake = 1;
-        resumeTarget = null; stoppingSelf = asking = mapPanel = false; steeredTo = null;
+        resumeTarget = null; stoppingSelf = asking = mapPanel = routePin = false; steeredTo = null; restoredId = -1;
+        flightEdit = null; flightLimits = null; listHidden = false;
         AutopilotLink.Reset(); AsteroidWatch.Reset(); Seat.Reset(); GridObstacles.Reset();
     }
 
@@ -83,7 +88,8 @@ internal static class SidePreview
         KeepNavOpen.Intercept = null;
         if (MapScreen.IsOpen) MapScreen.Close();
         routePanel = adding = mapPanel = false;
-        dragging = false;
+        mouse.Reset(scene);
+        FlipAndBurnLink.BlockSearch(false);
     }
 
     private static double dodgeNoteAt;
@@ -95,26 +101,47 @@ internal static class SidePreview
         if (Send("update", quiet: false)) Notify("Autopilot: steering round the asteroid.");
     }
 
+    /// <summary>
+    /// Every frame while AFK: the full map and the pinned preview stay up as a read-only view. Your ship, the route
+    /// and the autopilot's status keep updating; nothing is written to the PB or Flip and Burn, and no input is taken.
+    /// </summary>
+    public static void ViewUpdate(double now)
+    {
+        cursorFree = false;
+        mouse.Reset(scene);
+        FlipAndBurnLink.BlockSearch(false);
+        KeepNavOpen.Intercept = null;
+        GameState.Fill(Snap, now);
+        AutopilotLink.Update(now);
+        if (now >= nextRoute)
+        {
+            nextRoute = now + 0.5;
+            Tracker.Update(Snap.FnbTargetName, Snap.FnbTarget, Snap.HasShip, Snap.ShipPos, Snap.ShipVel, Snap.MaxAccel, Snap.MaxSpeed);
+            Project();
+        }
+        if (Path != null && Snap.HasShip) Snap.RecordTrack(Snap.ShipPos, now, Path.Distance);
+    }
+
     /// <summary>Every frame, from Plugin.Update.</summary>
     public static void Update(double now)
     {
         GameState.Fill(Snap, now);
         var leftWhy = Seat.Update(Snap.InCockpit, Snap.CharacterId, Snap.Dead);
-        if (leftWhy != null) CancelRoute(leftWhy);
+        if (leftWhy != null) { CancelRoute(leftWhy); restoredId = -1; }
         bool was = navOpen;
         navOpen = FlipAndBurnLink.IsNavMenuOpen();
         if (navOpen && !was)
         {
             if (Plugin.Settings.ShowMapWithNav && !Visible) { Visible = true; autoShown = true; reframe = true; }
         }
-        else if (!navOpen && was)
+        else if (!navOpen && was && !listHidden) // (hidden under a pop-up: nothing closes with it)
         {
             // F&B closed the list on a pick (our patch missing or bypassed): open it again
             if (Plugin.Settings.KeepNavOpen && !closingSelf && Snap.FnbTargetName != null && Snap.FnbTargetName != prevSel)
             { FlipAndBurnLink.OpenNavMenu(); navOpen = true; }
             else
             {
-                if (autoShown && !Plugin.Settings.Pip) Visible = false;
+                if (autoShown && !Pinned) Visible = false;
                 autoShown = false;
                 adding = false;
                 if (now > panelGrace && !mapPanel) routePanel = false;
@@ -124,7 +151,7 @@ internal static class SidePreview
         closingSelf = false;
         KeepNavOpen.Intercept = PickWaypoint;
         if (mapPanel && !MapScreen.IsOpen) { mapPanel = false; if (!navOpen) routePanel = adding = false; }
-        if (!navOpen && !mapPanel && now > panelGrace) { routePanel = false; adding = false; }
+        if (!navOpen && !mapPanel && now > panelGrace && !listHidden) { routePanel = false; adding = false; }
 
         AutopilotLink.Update(now);
         GridObstacles.Update(now);
@@ -139,6 +166,8 @@ internal static class SidePreview
             Tracker.SpeedCap = limited ? Limits.MaxSpeed : 0;
             Tracker.Hold = routePanel || engaged;
             Tracker.Adding = routePanel && adding;
+            Tracker.Curved = Limits.Parabolic;
+            if (Tracker.TargetName == null && engaged) RestoreRoute();
             Tracker.Update(Snap.FnbTargetName, Snap.FnbTarget, Snap.HasShip, Snap.ShipPos, Snap.ShipVel, Snap.MaxAccel, Snap.MaxSpeed);
             Project();
         }
@@ -153,7 +182,12 @@ internal static class SidePreview
         if (Path == null) { Snap.Track.Clear(); Snap.Prediction.Clear(); Snap.PredictionPhases.Clear(); }
         else if (Snap.HasShip) Snap.RecordTrack(Snap.ShipPos, now, Path.Distance);
         // the points changed: update F&B's list, and the autopilot (new points while it flies, or on request)
-        if (Tracker.Revision != publishedRevision)
+        if (flightEdit != null && (!routePanel || !engaged))
+        {
+            if (engaged) DiscardFlightEdit(); // the list or map closed: the changes go
+            else { flightEdit = null; flightLimits = null; } // the flight ended meanwhile: keep them as a plan
+        }
+        if (Tracker.Revision != publishedRevision && flightEdit == null)
         {
             publishedRevision = Tracker.Revision;
             FlipAndBurnLink.SetDetours(Tracker.Waypoints);
@@ -161,6 +195,7 @@ internal static class SidePreview
             else if (Path != null && !engaged && Plugin.Settings.AutopilotAutoSend) Send("load", quiet: true);
         }
         AsteroidWatch.Update(now, Snap, Tracker, engaged);
+        AutopilotPanel.SteerKey = Binds.Steer.IsNone ? "" : Binds.Steer.Display;
         if (engaged && AsteroidWatch.Changed && Path != null && now >= dodgeNoteAt)
         {
             if (!Binds.Steer.IsNone) Notify("Asteroid on the route: " + Binds.Steer.Display + " steers round it.", false);
@@ -174,14 +209,39 @@ internal static class SidePreview
             lastNext = Tracker.Next;
         }
         if (Path == null) { routePanel = false; adding = false; }
+        if (routePin && Tracker.TargetName == null) { routePin = false; if (!Plugin.Settings.Pip && !navOpen && !MapScreen.IsOpen) Visible = false; }
         if (resumeTarget != null && Tracker.TargetName != resumeTarget) resumeTarget = null; // picked somewhere else
-        if (engaged && flyingTarget != null && Tracker.TargetName == flyingTarget) SteerSelection(); else steeredTo = null;
+        if (engaged && flightEdit == null && flyingTarget != null && Tracker.TargetName == flyingTarget) SteerSelection(); else steeredTo = null;
 
-        if (OutOfCockpit) { if (MapScreen.IsOpen) MapScreen.Close(); dragging = false; return; }
+        if (OutOfCockpit) { if (MapScreen.IsOpen) MapScreen.Close(); mouse.Reset(scene); FlipAndBurnLink.BlockSearch(false); return; }
         HandleKeys();
-        if (Visible && navOpen) HandleMouse();
-        else dragging = false;
+        HoldCursor(now);
+        // F&B's search box takes no typing while the mouse is over the map, so the map's keys work there
+        cursorFree = InGame && (navOpen || RichHudCursor.Shown);
+        FlipAndBurnLink.BlockSearch(navOpen && OverMap());
+        if (Visible && cursorFree) { HandleMouse(); if (navOpen) MapKeys(); }
+        else mouse.Reset(scene);
+        if (pendingAsk != null && InGame) { var a = pendingAsk; pendingAsk = null; a(); }
     }
+
+    private static double noRichHudNote;
+
+    /// <summary>
+    /// The free-mouse key (F2), held: Rich HUD's cursor comes up and takes the mouse off the ship, so you can use the map
+    /// while the autopilot flies without turning the ship (which would take the controls from it).
+    /// </summary>
+    private static void HoldCursor(double now)
+    {
+        if (!KeysFree() || !Binds.Cursor.Held()) return;
+        if (RichHudCursor.Request()) return;
+        if (now >= noRichHudNote) { Notify("Freeing the mouse needs the Rich HUD Master mod (it's on SDX2; not in this world).", false); noRichHudNote = now + 10; }
+    }
+
+    /// <summary>The mouse cursor is free on the game screen: F&amp;B's N list or another Rich HUD menu is open.</summary>
+    private static bool cursorFree;
+
+    /// <summary>The game screen has focus (no menu, terminal or pop-up over it).</summary>
+    private static bool InGame => MyScreenManager.GetScreenWithFocus() is MyGuiScreenGamePlay;
 
     /// <summary>Our keys fire only on the plain game screen, with chat and F&amp;B's search box closed.</summary>
     public static bool KeysFree() =>
@@ -217,7 +277,7 @@ internal static class SidePreview
     {
         var sb = new System.Text.StringBuilder("KEYS|");
         void Add(KeyCombo b, string what) { if (b.IsNone) return; if (sb.Length > 5) sb.Append(MapScene.Sep); sb.Append(b.Display).Append(' ').Append(what); }
-        Add(Binds.Map, "map, full map, off"); Add(Binds.Autopilot, "autopilot"); Add(Binds.Pin, "pin on screen");
+        Add(Binds.Map, "map, full map, off"); Add(Binds.Autopilot, "autopilot"); Add(Binds.Pin, "pin on screen"); Add(Binds.Cursor, "(hold) mouse");
         return sb.ToString();
     }
 
@@ -228,10 +288,17 @@ internal static class SidePreview
         autoShown = false;
     }
 
-    /// <summary>Ctrl+M (and A in the full map): stop if flying (after asking), else open the N list with the route panel.</summary>
+    /// <summary>Ctrl+M: open the N list with the route panel (while flying, to change the route: APPLY or CANCEL).</summary>
     public static void AutopilotKey()
     {
-        if (AutopilotLink.Engaged(Plugin.Now)) { ConfirmStop(); return; }
+        if (AutopilotLink.Engaged(Plugin.Now))
+        {
+            if (Path == null) { Notify("The autopilot is flying a route the map doesn't have yet: try again in a moment.", false); return; }
+            if (!navOpen) FlipAndBurnLink.OpenNavMenu();
+            panelGrace = Plugin.Now + 1.5;
+            OpenFlightEdit(false);
+            return;
+        }
         if (Path == null) { Notify("No route: pick a destination in Flip and Burn's list (N) first.", false); return; }
         if (AutopilotLink.Count == 0) { Notify(NoPb, false); return; }
         if (!navOpen) FlipAndBurnLink.OpenNavMenu();
@@ -239,6 +306,53 @@ internal static class SidePreview
     }
 
     private const string NoPb = "No autopilot PB on this ship: load the Protogen Systems - Autopilot script into a programmable block.";
+
+    /// <summary>The route panel while flying: edits are held (not sent) until APPLY; CANCEL goes back to these.</summary>
+    private static void OpenFlightEdit(bool inMap)
+    {
+        if (flightEdit == null) { flightEdit = Tracker.Save(); flightLimits = Limits.Clone(); }
+        routePanel = true; mapPanel = inMap; adding = false;
+    }
+
+    /// <summary>APPLY while flying: the changed route and limits go to the autopilot, which flies on.</summary>
+    private static void ApplyFlightEdit()
+    {
+        flightEdit = null; flightLimits = null;
+        routePanel = adding = mapPanel = false;
+        Plugin.SaveSettings();
+        if (Path == null) return;
+        flyingThrust = Limits.ThrustFraction(Snap.DriveWeight, Snap.Signature?.Gain ?? 4);
+        flyingBrake = Limits.BrakeFraction(Snap.DriveWeight, Snap.Signature?.Gain ?? 4);
+        flyingTarget = Path.TargetName; steeredTo = null;
+        publishedRevision = Tracker.Revision;
+        FlipAndBurnLink.SetDetours(Tracker.Waypoints);
+        if (Send("update", quiet: false)) Notify("Autopilot route updated: flying to " + Path.TargetName + ".");
+    }
+
+    /// <summary>CANCEL while flying (or the list closed): back to the route and limits the autopilot is flying.</summary>
+    private static void DiscardFlightEdit()
+    {
+        var st = flightEdit; var lim = flightLimits;
+        flightEdit = null; flightLimits = null;
+        if (st == null) return;
+        bool changed = Tracker.Revision != publishedRevision;
+        Tracker.Load(st);
+        if (lim != null) Plugin.Settings.Limits = lim;
+        publishedRevision = Tracker.Revision;
+        FlipAndBurnLink.SetDetours(Tracker.Waypoints);
+        steeredTo = null; nextRoute = 0;
+        if (changed) Notify("Changes dropped: the autopilot flies on as before.");
+    }
+
+    /// <summary>The "System Map: stop autopilot" hotbar action: stops the flight at once (you have the controls).</summary>
+    public static void HotbarStop()
+    {
+        if (PlayGuard.Blocked) { Notify("System Map is paused (" + PlayGuard.Reason + ")", false); return; }
+        if (!AutopilotLink.Engaged(Plugin.Now)) { Notify("The autopilot isn't flying.", false); return; }
+        if (flightEdit != null) DiscardFlightEdit();
+        routePanel = adding = mapPanel = false;
+        StopAutopilot();
+    }
 
     private static void OpenRoutePanel()
     {
@@ -266,7 +380,36 @@ internal static class SidePreview
         Notify(p.DetoursAhead > 0 ? "Manual: pick \"" + Tracker.NextPick + "\" in N first, then each point in turn" : "Manual: fly to " + p.TargetName + " with Flip and Burn");
     }
 
-    public static void Engage()
+    public static void Engage() { if (DrivesReady(Engage)) EngageNow(); }
+
+    private static readonly List<Sandbox.Game.Entities.MyThrust> drivesOff = new List<Sandbox.Game.Entities.MyThrust>();
+
+    /// <summary>
+    /// Before a route starts: if fusion drives are switched off, a pop-up offers to turn them on and go on
+    /// (<paramref name="then"/> runs again after). True when they're all on (or there's no ship to check).
+    /// </summary>
+    private static bool DrivesReady(Action then)
+    {
+        DriveCheck.Read(DriveCheck.Ship, drivesOff, out int total);
+        if (drivesOff.Count == 0) return true;
+        if (asking) return false;
+        asking = true;
+        string n = drivesOff.Count == total ? (total == 1 ? "The fusion drive is" : "All " + total + " fusion drives are") : drivesOff.Count + " of " + total + " fusion drives are";
+        Ask("Main drives off", n + " switched off, so the autopilot can't push the ship" + (drivesOff.Count < total ? " at full thrust" : "") + ". Turn them on and start the route?",
+            "TURN ON & ENGAGE", "CANCEL", yes =>
+            {
+                asking = false;
+                if (!yes) return;
+                int on = DriveCheck.TurnOn(drivesOff);
+                Notify(on == 1 ? "Fusion drive switched on" : on + " fusion drives switched on", false);
+                DriveCheck.Read(DriveCheck.Ship, drivesOff, out _);
+                if (drivesOff.Count == 0) then();
+                else Notify("Some drives are still off: switch them on in the terminal", false);
+            });
+        return false;
+    }
+
+    private static void EngageNow()
     {
         AsteroidWatch.Reset();
         Snap.Track.Clear(); // the flown track starts with the flight
@@ -293,7 +436,7 @@ internal static class SidePreview
         Notify(n > 0 ? "Autopilot stopped: you have the controls." + (was != null ? " RESUME ROUTE is under the N list." : "") : error, n > 0);
     }
 
-    /// <summary>STOP AUTOPILOT, Ctrl+M or A: ask first, since it hands the ship back mid-route.</summary>
+    /// <summary>STOP AUTOPILOT: ask first, since it hands the ship back mid-route.</summary>
     public static void ConfirmStop()
     {
         if (asking) return;
@@ -307,6 +450,7 @@ internal static class SidePreview
     {
         if (resumeTarget == null || Path == null || Path.TargetName != resumeTarget) { Notify("Nothing to resume: the route has changed.", false); resumeTarget = null; return; }
         if (AutopilotLink.Count == 0) { Notify(NoPb, false); return; }
+        if (!DrivesReady(Resume)) return;
         AsteroidWatch.Reset();
         stoppingSelf = false;
         if (!Send("engage", quiet: false)) return;
@@ -316,21 +460,57 @@ internal static class SidePreview
         Notify("Autopilot resumed: flying to " + flyingTarget + ". Move or turn to take over.");
     }
 
+    private static Action pendingAsk;
+    private static bool listHidden; // F&B's list closed while a pop-up asks
+
     /// <summary>A yes/no pop-up (the game's own message box, so it has a mouse cursor).</summary>
     private static void Ask(string caption, string text, string yes, string no, Action<bool> done)
     {
+        // a menu or other screen is open (the pause menu, say): asked when you're back in the game
+        if (!InGame) { pendingAsk = () => Ask(caption, text, yes, no, done); return; }
+        // F&B's list (Rich HUD) still takes clicks under the game's pop-up, so a click on a button would pick in the
+        // list too: it closes while asking and comes back after, unless the answer started the autopilot
+        bool hid = navOpen;
+        if (hid) { listHidden = true; closingSelf = true; FlipAndBurnLink.CloseNavMenu(); }
+        void Answer(bool y)
+        {
+            listHidden = false;
+            done(y);
+            if (hid && (!y || !AutopilotLink.Engaged(Plugin.Now)) && !FlipAndBurnLink.IsNavMenuOpen())
+            { FlipAndBurnLink.OpenNavMenu(); panelGrace = Plugin.Now + 1.5; }
+        }
         try
         {
             MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(MyMessageBoxStyleEnum.Info, MyMessageBoxButtonsType.YES_NO,
                 new System.Text.StringBuilder(text), new System.Text.StringBuilder(caption),
                 yesButtonText: VRage.Utils.MyStringId.GetOrCompute(yes), noButtonText: VRage.Utils.MyStringId.GetOrCompute(no),
-                callback: r => done(r == MyGuiScreenMessageBox.ResultEnum.YES), focusedResult: MyGuiScreenMessageBox.ResultEnum.NO));
+                callback: r => Answer(r == MyGuiScreenMessageBox.ResultEnum.YES), focusedResult: MyGuiScreenMessageBox.ResultEnum.NO));
         }
-        catch (Exception e) { Plugin.LogThrottled("pop-up failed: " + e.Message); done(false); }
+        catch (Exception e) { Plugin.LogThrottled("pop-up failed: " + e.Message); Answer(false); }
     }
 
     /// <summary>While the autopilot flies: Flip and Burn's destination is the point it's flying to now (each detour and
     /// waypoint in turn, then the destination), so F&amp;B's HUD marker and figures follow the route.</summary>
+    /// <summary>
+    /// The autopilot flies a route the plugin doesn't know (the world was loaded, or you changed sector): show it on the
+    /// maps again from the PB's copy, as if it had been sent this session. Nothing is sent back to the PB.
+    /// </summary>
+    private static void RestoreRoute()
+    {
+        var r = AutopilotLink.Route; var st = AutopilotLink.Status;
+        if (r == null || st == null || !st.Flying || r.Id == restoredId || !Snap.HasShip) return;
+        restoredId = r.Id;
+        if (!Tracker.Restore(r, st.Wp, Snap.ShipPos, Snap.FnbTargetName, Snap.FnbTarget)) return;
+        flyingTarget = r.Target;
+        flyingThrust = Math.Max(0.01, Math.Min(1, r.Thrust));
+        flyingBrake = r.Brake > 0 ? Math.Max(0.01, Math.Min(1, r.Brake)) : flyingThrust;
+        resumeTarget = null; steeredTo = null;
+        publishedRevision = Tracker.Revision; // the PB has it already
+        FlipAndBurnLink.SetDetours(Tracker.Waypoints);
+        Plugin.Log("route taken back from the autopilot PB: " + r.Target + " (" + Tracker.Waypoints.Count + " points, next " + Tracker.Next + ")");
+        Notify("Autopilot route back on the map: flying to " + r.Target + ".");
+    }
+
     private static void SteerSelection()
     {
         int next = Tracker.Next;
@@ -374,6 +554,36 @@ internal static class SidePreview
         return name + " moved " + Fmt.Dist(Math.Abs(rise)) + (rise >= 0 ? " up" : " down");
     }
 
+    /// <summary>
+    /// Dragging a flip point (or a bend) up or down in the full map: the leg ending at <paramref name="leg"/> curves
+    /// through the new point without stopping. Back near the straight line, it's straight again.
+    /// </summary>
+    public static string BendLeg(string leg, V3 pos)
+    {
+        var p = Path;
+        int i = p?.LegTo(leg) ?? -1;
+        if (i < 0) return "That leg is gone";
+        var r = p.Legs[i];
+        double len = V3.Distance(r.Start, r.Target);
+        double off = V3.SegmentDistance(r.Start, r.Target, pos, out _);
+        nextRoute = 0;
+        if (off < Math.Max(1000, len * 0.005)) { Tracker.Bend(leg, null); return "Leg straightened"; }
+        Tracker.Bend(leg, pos);
+        return "Leg bent " + Fmt.Dist(off) + " off the line: curves through it without stopping";
+    }
+
+    /// <summary>Shift+right-click on a bend: the leg is straight again.</summary>
+    public static string StraightenLeg(string leg)
+    {
+        if (leg == null || !Tracker.Bends.ContainsKey(leg)) return "That leg isn't bent";
+        Tracker.Bend(leg, null);
+        nextRoute = 0;
+        return "Leg straightened";
+    }
+
+    /// <summary>Where a leg's flip point drag starts from: its bend, if it has one.</summary>
+    public static bool LegBend(string leg, out V3 pos) => Tracker.Bends.TryGetValue(leg ?? "", out pos);
+
     /// <summary>Shift+right-click in the full map: a waypoint into the route where it fits (name null = "Waypoint n").</summary>
     public static string InsertWaypoint(string name, V3 pos)
     {
@@ -383,7 +593,7 @@ internal static class SidePreview
         if (!Tracker.InsertUser(name, pos)) return "Can't add " + name + ": it's in the route already";
         nextRoute = 0;
         int i = Tracker.UserPoints.FindIndex(u => u.Name == name);
-        return "Waypoint added: " + name + " (stop " + (i + 1) + " of " + (Tracker.UserPoints.Count + 1) + ")";
+        return "Waypoint added: " + name + " (point " + (i + 1) + " of " + (Tracker.UserPoints.Count + 1) + ")";
     }
 
     /// <summary>Shift+click in the full map: make the point Flip and Burn's destination (a waypoint while adding).</summary>
@@ -482,11 +692,12 @@ internal static class SidePreview
     private static void Project()
     {
         var p = Path;
-        if (p == null || !Snap.HasShip) { Snap.Prediction.Clear(); Snap.PredictionPhases.Clear(); return; }
+        // a curved route is drawn as planned (the autopilot holds to it): the projection steers point to point like
+        // flip and burn, so on a curve's many points it overshoots and draws a fan of straight burns
+        if (p == null || !Snap.HasShip || p.Legs.Exists(l => l.Curved)) { Snap.Prediction.Clear(); Snap.PredictionPhases.Clear(); Snap.PredictionArrives = true; return; }
         ahead.Clear();
-        for (int i = p.Next; i < p.Waypoints.Count; i++) ahead.Add(p.Waypoints[i].Pos);
-        ahead.Add(p.Target);
-        Snap.PredictionArrives = Trajectory.Predict(Snap.ShipPos, Snap.ShipVel, ahead, p.MaxAccel, p.MaxSpeed, Tracker.ArriveRadius, Snap.Prediction, p.Eta, phases: Snap.PredictionPhases);
+        ahead.AddRange(p.Ahead());
+        Snap.PredictionArrives = Trajectory.Predict(Snap.ShipPos, Snap.ShipVel, ahead, p.MaxAccel, p.MaxSpeed, Tracker.ArriveRadius, Snap.Prediction, p.Eta, phases: Snap.PredictionPhases, stops: true);
     }
 
     /// <summary>Mouse in screen pixels (works under RichHud's cursor, where the GUI cursor isn't updated).</summary>
@@ -501,7 +712,22 @@ internal static class SidePreview
     }
 
     /// <summary>Picture-in-picture: the preview in a screen corner while F&amp;B's list is closed.</summary>
-    private static bool InPip => Plugin.Settings.Pip && !navOpen;
+    private static bool InPip => Pinned && !navOpen;
+    /// <summary>Pinned by the setting, or for this route only (<see cref="FullMapClosed"/>).</summary>
+    private static bool Pinned => Plugin.Settings.Pip || routePin;
+    public static bool PinnedNow => Pinned;
+    private static bool routePin;
+
+    /// <summary>
+    /// The full map closed (Esc, the map key, N): a preview that was pinned stays pinned, and with a route picked it's
+    /// pinned for that route (unpinned again when the route is cleared). Otherwise the map key's "off" stands.
+    /// </summary>
+    public static void FullMapClosed()
+    {
+        if (!Plugin.Settings.Pip && Tracker.TargetName == null) return;
+        if (!Plugin.Settings.Pip) routePin = true;
+        Visible = true; autoShown = false; reframe = true;
+    }
     private static bool wasPip;
 
     private static Box WindowBox()
@@ -517,6 +743,7 @@ internal static class SidePreview
     {
         if (PlayGuard.Blocked) return Paused;
         Plugin.Settings.Pip = on;
+        if (!on) routePin = false;
         if (on) { Visible = true; autoShown = false; }
         else if (!navOpen) Visible = false;
         reframe = true;
@@ -525,7 +752,7 @@ internal static class SidePreview
                   : "Map preview unpinned.";
     }
 
-    public static string TogglePip() => SetPip(!(Plugin.Settings.Pip && Visible));
+    public static string TogglePip() => SetPip(!(Pinned && Visible));
 
     public static string Paused => "System Map is paused (" + PlayGuard.Reason + ").";
 
@@ -546,36 +773,116 @@ internal static class SidePreview
         if (Plugin.Settings.Pip) { Visible = true; reframe = true; }
     }
 
+    /// <summary>The full map's mouse controls, in the preview while the N list is open and the mouse is over it.</summary>
+    private static readonly MapMouse mouse = new MapMouse
+    {
+        Toast = t => Notify(t),
+        Following = () => Plugin.Settings.PreviewFollow,
+        Unfollow = () => Plugin.Settings.PreviewFollow = false,
+        Turning = () => Plugin.Settings.PreviewFollow && Plugin.Settings.FollowHeading,
+        Heading = previewHeading,
+    };
+
+    /// <summary>The mouse is over the preview's map (not its FOLLOW button or F&amp;B's list), with the cursor free.</summary>
+    private static bool OverMap()
+    {
+        if (!Visible || !cursorFree || MapScreen.IsOpen || OutOfCockpit) return false;
+        Mouse(out float mx, out float my);
+        var full = MyGuiManager.GetFullscreenRectangle();
+        return WindowBox().Contains(mx, my) && !followBox.Contains(mx, my) && !SideLayout.FnbList(full.Width, full.Height).Contains(mx, my);
+    }
+
     private static void HandleMouse()
     {
         var input = MyInput.Static;
         Mouse(out float mx, out float my);
-        var box = WindowBox();
-        bool over = box.Contains(mx, my);
-        bool right = input.IsRightMousePressed();
-        if (right && dragging)
+        bool over = OverMap();
+        mouse.Handle(scene, input, mx, my, over || mouse.Busy);
+        if (over && input.IsNewMiddleMousePressed()) { reframe = true; Plugin.Settings.PreviewFollow = false; }
+    }
+
+    /// <summary>The preview's help with the N list open: the full map's mouse controls and keys (keys while the mouse is over it).</summary>
+    private static string PreviewHelp(string keys)
+    {
+        const string s = MapScene.Sep;
+        var o = Plugin.Settings.Options;
+        string On(bool b) => b ? "on" : "off";
+        return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "Middle-click re-frame" + s + "S follow ship" + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system\n"
+            + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint up / down" + s + "Drag a flip point: bend the leg" + s + "Shift+right-click a bend: straighten" + s + "A autopilot" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS\n"
+            + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Keys work while the mouse is over the map (F&B's search waits)\n"
+            + keys;
+    }
+
+    /// <summary>The full map's keys, while the mouse is over the preview (F&amp;B's search box is shut meanwhile).</summary>
+    private static void MapKeys()
+    {
+        var input = MyInput.Static;
+        if (input == null || !navOpen || !OverMap() || !KeysFree() || input.IsAnyCtrlKeyPressed() || input.IsAnyAltKeyPressed()) return;
+        var s = Plugin.Settings; var o = s.Options;
+        bool save = true;
+        if (input.IsNewKeyPressed(MyKeys.F)) { s.PreviewFollow = false; scene.FrameDefault(false); }
+        else if (input.IsNewKeyPressed(MyKeys.H)) { s.PreviewFollow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }
+        else if (input.IsNewKeyPressed(MyKeys.S))
         {
-            scene.Cam.Orbit(-(mx - lastMx) * 0.006, (my - lastMy) * 0.006);
-            if (Plugin.Settings.PreviewFollow && Plugin.Settings.FollowHeading) previewHeading.Turned(-(mx - lastMx) * 0.006);
+            s.PreviewFollow = !s.PreviewFollow;
+            if (s.PreviewFollow && Snap.HasShip) scene.Cam.FlyTo(Snap.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
+            Notify(!s.PreviewFollow ? "Follow ship: off" : Snap.HasShip ? "Follow ship: on" : "Follow ship: on (no ship yet: sit in a cockpit)");
         }
-        dragging = right && (dragging || over);
-        lastMx = mx; lastMy = my;
-        if (!over) return;
-        int wheel = input.DeltaMouseScrollWheelValue();
-        if (wheel != 0) scene.Cam.Zoom(wheel / 120.0);
-        if (input.IsNewMiddleMousePressed()) { reframe = true; Plugin.Settings.PreviewFollow = false; }
+        else if (input.IsNewKeyPressed(MyKeys.U))
+        {
+            s.FollowHeading = !s.FollowHeading; previewHeading.Offset = 0;
+            Notify(s.FollowHeading ? (s.PreviewFollow ? "Turn with ship: on (your travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
+        }
+        else if (input.IsNewKeyPressed(MyKeys.C)) Notify(MapScreen.CopyFlip());
+        else if (input.IsNewKeyPressed(MyKeys.A))
+        {
+            if (AutopilotLink.Engaged(Plugin.Now)) ConfirmStop();
+            else if (Path == null) Notify("No route: Shift+click a destination first.", false);
+            else if (AutopilotLink.Count == 0) Notify(NoPb, false);
+            else OpenRoutePanel();
+        }
+        else if (input.IsNewKeyPressed(MyKeys.R)) { Replan(); Notify("Route planned again from here."); }
+        else if (input.IsNewKeyPressed(MyKeys.V))
+        {
+            s.AvoidBodies = !s.AvoidBodies; Replan();
+            Notify(s.AvoidBodies ? "Detours round worlds: on" : "Detours off: straight line");
+        }
+        else if (input.IsNewKeyPressed(MyKeys.G)) o.Grid = !o.Grid;
+        else if (input.IsNewKeyPressed(MyKeys.O)) o.Orbits = !o.Orbits;
+        else if (input.IsNewKeyPressed(MyKeys.X)) o.Sectors = !o.Sectors;
+        else if (input.IsNewKeyPressed(MyKeys.T)) o.Stations = !o.Stations;
+        else if (input.IsNewKeyPressed(MyKeys.P)) o.Gps = !o.Gps;
+        else if (input.IsNewKeyPressed(MyKeys.L)) o.Labels = !o.Labels;
+        else if (input.IsNewKeyPressed(MyKeys.J)) o.Moons = !o.Moons;
+        else if (input.IsNewKeyPressed(MyKeys.K)) Notify(MapScreen.NextTheme());
+        else save = false;
+        if (save) Plugin.SaveSettings();
     }
 
     /// <summary>OnlyInCockpit is on and you're not in a ship controller: nothing drawn, no keys. Visible and the pin are
     /// kept, so it all comes back when you sit down.</summary>
     public static bool OutOfCockpit => Plugin.Settings.OnlyInCockpit && !Snap.InCockpit;
 
-    /// <summary>Drawn after the game screen (GamePlayDrawPatch), on the main thread.</summary>
+    /// <summary>Drawn after the game screen (GamePlayDrawPatch), on the main thread. Not over the pause menu, the
+    /// terminal or a pop-up. While Rich HUD's cursor shows, a cursor is drawn over the map too (its own goes under).</summary>
     public static void Draw()
     {
         double now = Plugin.Now, dt = Math.Min(0.1, Math.Max(0, now - lastDraw));
         lastDraw = now;
-        if (MapScreen.IsOpen || PlayGuard.Blocked || OutOfCockpit) return;
+        if (MapScreen.IsOpen || OutOfCockpit || !InGame) return;
+        if (PlayGuard.Blocked && !(PlayGuard.ViewOnly && Visible && Pinned)) return; // AFK: only the pinned preview
+        panelBox = default;
+        DrawAll(now, dt);
+        if (!cursorFree || !RichHudCursor.Shown) return;
+        Mouse(out float cx, out float cy);
+        if ((Visible && WindowBox().Contains(cx, cy)) || panelBox.Contains(cx, cy))
+            RichHudCursor.Draw(cx, cy, MyGuiManager.GetFullscreenRectangle().Height);
+    }
+
+    private static Box panelBox; // the route panel this frame
+
+    private static void DrawAll(double now, double dt)
+    {
         var full = MyGuiManager.GetFullscreenRectangle();
         float sw = full.Width, sh = full.Height;
         float px = Math.Max(14f, sh / 52f);
@@ -584,13 +891,13 @@ internal static class SidePreview
         bool engaged = AutopilotLink.Engaged(now);
         var input = MyInput.Static;
         float mx = float.NaN, my = float.NaN;
-        if (navOpen) Mouse(out mx, out my);
-        ui.Input(canvas, mx, my, navOpen && input.IsLeftMousePressed(), navOpen && input.IsNewLeftMousePressed(), navOpen && input.IsNewLeftMouseReleased());
+        if (cursorFree) Mouse(out mx, out my);
+        ui.Input(canvas, mx, my, cursorFree && input.IsLeftMousePressed(), cursorFree && input.IsNewLeftMousePressed(), cursorFree && input.IsNewLeftMouseReleased());
 
         // HUD: autopilot status and asteroid warning
         float hudY = sh * 0.05f;
         if (engaged) hudY = AutopilotPanel.StatusLine(canvas, sw, hudY, px * 0.9f, flyingTarget ?? NonEmpty(AutopilotLink.Status?.Target) ?? "route", AutopilotLink.Status, stop).Bottom + px * 0.5f;
-        if (!double.IsNaN(AsteroidWatch.NearestDistance))
+        if (!double.IsNaN(AsteroidWatch.NearestDistance) && !PlayGuard.Blocked)
             AutopilotPanel.AsteroidWarning(canvas, sw, Math.Max(hudY, sh * 0.12f), px, AsteroidWatch.NearestDistance, Snap.ShipVel.Length,
                 AsteroidWatch.NearestOnRoute, AsteroidWatch.NearestDodged, engaged, now, Binds.Steer.Display);
 
@@ -599,7 +906,7 @@ internal static class SidePreview
             var box = WindowBox();
             bool pip = InPip;
             if (pip != wasPip) { wasPip = pip; reframe = true; }
-            scene.Snap = Snap; scene.Path = path; scene.Mini = pip;
+            scene.Snap = Snap; scene.Path = path; scene.Mini = pip; scene.Bends = Tracker.Bends;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
             if (reframe) { scene.FrameDefault(true); reframe = false; }
             bool follow = Plugin.Settings.PreviewFollow;
@@ -607,16 +914,16 @@ internal static class SidePreview
             if (follow && Snap.HasShip && Plugin.Settings.FollowHeading) previewHeading.Update(scene.Cam, Snap.ShipVel, Snap.ShipFwd, dt);
             scene.Cam.Tick(dt);
             string keys = KeysHelp();
-            if (pip) { scene.MouseX = scene.MouseY = float.NaN; scene.Help = ""; }
-            else if (navOpen) { scene.MouseX = mx; scene.MouseY = my; scene.Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\n" + keys; }
+            if (pip) { scene.MouseX = mx; scene.MouseY = my; scene.Help = ""; }
+            else if (navOpen) { scene.MouseX = mx; scene.MouseY = my; scene.Help = PreviewHelp(keys); }
             else { scene.MouseX = scene.MouseY = float.NaN; scene.Help = keys; }
             scene.Draw(canvas, box);
-            // FOLLOW toggle, top right of the preview (clickable while the N list is open)
+            // FOLLOW toggle, top right of the preview (clickable while the cursor is free)
             float fpx = px * 0.75f;
             string ft = "FOLLOW SHIP";
             float fw = canvas.TextWidth(ft, fpx) + fpx * 1.6f, fh = fpx * 1.7f;
             followBox = new Box(box.Right - fw - fpx * 0.6f, scene.TitleBottom + fpx * 0.5f, fw, fh);
-            if (navOpen)
+            if (cursorFree)
             {
                 if (ui.Button(followBox, ft, fpx, MapScene.ShipColor, follow))
                 {
@@ -633,7 +940,7 @@ internal static class SidePreview
         }
         else followBox = default;
 
-        if (path == null) return;
+        if (path == null || PlayGuard.Blocked) return; // AFK: no prompts or buttons
         var list = SideLayout.FnbList(sw, sh);
         float y = navOpen ? list.Bottom + px * 0.8f : sh * 0.72f;
 
@@ -661,7 +968,8 @@ internal static class SidePreview
         {
             float w = canvas.TextWidth("STOP AUTOPILOT", px) + px * 2.4f;
             if (ui.Button(new Box(sw / 2 - w / 2, y, w, px * 1.9f), "STOP AUTOPILOT", px, AutopilotPanel.Stop)) ConfirmStop();
-            return;
+            if (!routePanel) return;
+            y += px * 2.6f;
         }
         if (!routePanel && resumeTarget != null && path.TargetName == resumeTarget)
         {
@@ -686,7 +994,8 @@ internal static class SidePreview
         float px0 = left ? list.X - margin - pw : list.Right + margin;
         userNames.Clear();
         foreach (var u in Tracker.UserPoints) userNames.Add(u.Name);
-        var hit = AutopilotPanel.RoutePanel(ui, px0, list.Y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding, Binds.Autopilot.Display, now);
+        var hit = AutopilotPanel.RoutePanel(ui, px0, list.Y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding, Binds.Autopilot.Display, now, null, engaged);
+        panelBox = hit.Panel;
         RouteHit(hit);
     }
 
@@ -695,14 +1004,23 @@ internal static class SidePreview
         if (hit.Changed) nextRoute = 0;
         if (hit.Remove >= 0) { Tracker.RemoveUser(hit.Remove); nextRoute = 0; }
         if (hit.ToggleAdd) adding = !adding;
-        if (hit.Cancel) { routePanel = adding = mapPanel = false; Plugin.SaveSettings(); }
-        else if (hit.Engage) Engage();
+        if (hit.Cancel)
+        {
+            if (flightEdit != null) DiscardFlightEdit(); // while flying: drop the changes
+            routePanel = adding = mapPanel = false; Plugin.SaveSettings();
+        }
+        else if (hit.Engage) { if (flightEdit != null) ApplyFlightEdit(); else Engage(); }
     }
 
-    /// <summary>A in the full map: the route panel in the map (or, while flying, ask to stop).</summary>
+    /// <summary>A in the full map: the route panel in the map (while flying, to change the route).</summary>
     public static string MapAutopilotKey()
     {
-        if (AutopilotLink.Engaged(Plugin.Now)) { ConfirmStop(); return null; }
+        if (AutopilotLink.Engaged(Plugin.Now))
+        {
+            if (Path == null) return "The autopilot is flying a route the map doesn't have yet.";
+            OpenFlightEdit(true);
+            return null;
+        }
         if (Path == null) return "No route: Shift+click a destination first.";
         if (AutopilotLink.Count == 0) return NoPb;
         routePanel = mapPanel = true; adding = false;
@@ -722,12 +1040,12 @@ internal static class SidePreview
         double now = Plugin.Now;
         bool engaged = AutopilotLink.Engaged(now);
         float pw = px * 30;
-        if (routePanel && mapPanel && !engaged)
+        if (routePanel && mapPanel)
         {
             userNames.Clear();
             foreach (var u in Tracker.UserPoints) userNames.Add(u.Name);
             var hit = AutopilotPanel.RoutePanel(ui, x, y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding,
-                Binds.Autopilot.Display, now, "Shift+click a point on the map");
+                Binds.Autopilot.Display, now, "Shift+click a point on the map", engaged);
             RouteHit(hit);
             return hit.Panel;
         }

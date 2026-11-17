@@ -26,6 +26,8 @@ public static class SystemData
         public bool IsObstacle => Parent == ObstacleParent || Parent == StationParent;
         /// <summary>A known station (kept apart from your grids when nearby spheres are merged).</summary>
         public bool IsStation => Parent == StationParent;
+        /// <summary>The star. Routes don't use its own clearance: it's the fixed no-fly sphere <see cref="SolZone"/>.</summary>
+        public bool IsStar => Name == "Sol" && Parent == "";
     }
 
     public sealed class Station
@@ -79,6 +81,24 @@ public static class SystemData
     /// </summary>
     public static bool IsBaseCore(string subtype) =>
         subtype != null && (subtype.IndexOf("shipcoreOutpost", StringComparison.OrdinalIgnoreCase) >= 0 || subtype.IndexOf("shipcoreInstallation", StringComparison.OrdinalIgnoreCase) >= 0);
+
+    /// <summary>Routes keep this far from Sol's centre (a fixed no-fly sphere, whatever the clearance).</summary>
+    public const double SolNoFly = 800e3;
+
+    /// <summary>Sol's no-fly sphere, gone round like a station: left straight outward first when you start inside it.</summary>
+    public static World SolZone => solZone ?? (solZone = Obstacle("Sol", Worlds[0].Pos, SolNoFly));
+    private static World solZone;
+
+    /// <summary>What routes go round: the worlds, with Sol as its fixed no-fly sphere.</summary>
+    public static World[] RouteWorlds => routeWorlds ?? (routeWorlds = BuildRouteWorlds());
+    private static World[] routeWorlds;
+
+    private static World[] BuildRouteWorlds()
+    {
+        var r = (World[])Worlds.Clone();
+        for (int i = 0; i < r.Length; i++) if (r[i].IsStar) r[i] = SolZone;
+        return r;
+    }
 
     /// <summary>A grid or station for the route to keep out of: a sphere of radius r round pos.</summary>
     public static World Obstacle(string name, V3 pos, double r, bool station = false) =>

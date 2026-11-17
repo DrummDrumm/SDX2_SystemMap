@@ -4,7 +4,8 @@ using System.Text;
 namespace SDX2_SystemMap;
 
 /// <summary>
-/// A key binding as the settings file stores it: "Ctrl+Shift+M", "Alt+F8", "Ctrl+Alt+OemQuestion", or "None" (unbound).
+/// A key binding as the settings file stores it: "Ctrl+Shift+M", "Alt+F8", "Ctrl+Alt+OemQuestion", "ExtraButton1" (the side
+/// mouse buttons, shown as Mouse 4 / Mouse 5), or "None" (unbound).
 /// The key part is a game key name (MyKeys); the modifiers must match exactly when it fires. Game-free so it can be tested.
 /// </summary>
 public readonly struct KeyCombo : IEquatable<KeyCombo>
@@ -57,7 +58,7 @@ public readonly struct KeyCombo : IEquatable<KeyCombo>
     {
         { "OemQuestion", "/" }, { "OemPipe", "\\" }, { "OemBackslash", "\\ (ISO)" }, { "OemTilde", "`" }, { "OemPlus", "=" },
         { "OemMinus", "-" }, { "OemComma", "," }, { "OemPeriod", "." }, { "OemSemicolon", ";" }, { "OemQuotes", "'" },
-        { "OemOpenBrackets", "[" }, { "OemCloseBrackets", "]" },
+        { "OemOpenBrackets", "[" }, { "OemCloseBrackets", "]" }, { "ExtraButton1", "Mouse 4" }, { "ExtraButton2", "Mouse 5" },
     };
 
     /// <summary>A game key name as players know it: OemQuestion → "/", D5 → "5".</summary>
@@ -71,7 +72,8 @@ public readonly struct KeyCombo : IEquatable<KeyCombo>
 
     private static string FromDisplay(string s)
     {
-        for (int i = 0; i < Names.GetLength(0); i++) if (Names[i, 1] == s) return Names[i, 0];
+        for (int i = 0; i < Names.GetLength(0); i++)
+            if (Names[i, 1] == s || Names[i, 1].Replace(" ", "").Equals(s.Replace(" ", ""), StringComparison.OrdinalIgnoreCase)) return Names[i, 0];
         if (s.Length == 1 && char.IsDigit(s[0])) return "D" + s;
         return s;
     }

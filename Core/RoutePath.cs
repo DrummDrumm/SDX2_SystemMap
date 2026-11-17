@@ -73,14 +73,19 @@ public static class DetourPlanner
     /// </summary>
     public static List<Waypoint> Plan(V3 start, V3 target, string targetName, double clearance = RoutePlan.DefaultClearance, IList<SystemData.World> obstacles = null)
     {
-        var all = new List<SystemData.World>(SystemData.Worlds);
+        var all = new List<SystemData.World>(SystemData.RouteWorlds);
         if (obstacles != null) all.AddRange(obstacles);
         var pts = new List<(V3 Pos, SystemData.World Around)>();
         var skip = new HashSet<SystemData.World>();
         // a world picked itself is never gone round; one you take off from or land on is, from a point above the ground
         V3 s = start, e = target; SystemData.World upFrom = null, downTo = null, outOf = null;
+        var sol = SystemData.SolZone;
+        // inside Sol's no-fly sphere (and not flying to Sol): straight out of it, after any base you start at
+        bool outOfSol = V3.Distance(start, sol.Pos) < sol.Radius && V3.Distance(target, sol.Pos) >= sol.Radius;
+        if (V3.Distance(target, sol.Pos) < sol.Radius) skip.Add(sol);
         foreach (var w in all)
         {
+            if (w == sol) continue;
             if (w.IsObstacle)
             {
                 bool atStart = V3.Distance(start, w.Pos) < Top(w), atEnd = V3.Distance(target, w.Pos) < Top(w);
@@ -93,7 +98,9 @@ public static class DetourPlanner
             if (OnGround(w, start)) { upFrom = w; s = Lift(w, start, clearance); }
             if (OnGround(w, target)) { downTo = w; e = Lift(w, target, clearance); }
         }
-        Solve(all, s, e, clearance, skip, 0, pts);
+        V3 solOut = outOfSol ? Out(sol, s, target) : s;
+        Solve(all, solOut, e, clearance, skip, 0, pts);
+        if (outOfSol) pts.Insert(0, (solOut, sol));
         // climb / come down straight when the way goes round that world, or the direct line would graze it
         // leaving a station or base: straight out of it first when the way goes round it or the direct line heads in through it
         if (outOf != null && (pts.Exists(q => q.Around == outOf) || V3.SegmentDistance(start, pts.Count > 0 ? pts[0].Pos : e, outOf.Pos, out _) < Math.Min(V3.Distance(start, outOf.Pos), outOf.Radius) * 0.95))
@@ -201,8 +208,11 @@ public static class DetourPlanner
 }
 
 /// <summary>
-/// The whole route: ship → the detour waypoints still ahead → destination, as Flip and Burn legs. Each leg after the
-/// first starts from rest (F&amp;B stops at each point you pick; an autopilot may do better).
+/// The whole route: ship → the detour waypoints still ahead → destination. Flip and burn (the default): a leg per
+/// point, each ending at the speed the next turn allows (the ship slows at each direction change just enough to turn). Parabolic (<see cref="Curved"/>):
+/// one leg that curves through all the points, flown without stopping. Either way a leg can be bent through a point of
+/// your own (by dragging its flip point in the full map): bends, keyed by the leg's end (a waypoint's or the
+/// destination's name).
 /// </summary>
 public sealed class RoutePath
 {
@@ -213,6 +223,8 @@ public sealed class RoutePath
     public int Next;
     public readonly List<RoutePlan> Legs = new List<RoutePlan>();
     public double Distance, Eta, MaxAccel, MaxSpeed, Clearance;
+    /// <summary>Parabolic: the points are flown through on one curved leg, not stopped at.</summary>
+    public bool Curved;
 
     public RoutePlan First => Legs[0];
     public RoutePlan Final => Legs[Legs.Count - 1];
@@ -223,24 +235,70 @@ public sealed class RoutePath
     public bool HasDetours => Waypoints.Count > 0;
 
     public static RoutePath Make(string name, V3 start, V3 target, V3 velocity, double maxAccel, double maxSpeed,
-        IList<Waypoint> waypoints, int next, double clearance = RoutePlan.DefaultClearance, double brakeAccel = 0)
+        IList<Waypoint> waypoints, int next, double clearance = RoutePlan.DefaultClearance, double brakeAccel = 0,
+        bool curved = false, IDictionary<string, V3> bends = null)
     {
         var p = new RoutePath { TargetName = name, Start = start, Target = target, Next = Math.Max(0, next), MaxAccel = maxAccel, MaxSpeed = maxSpeed, Clearance = clearance };
         if (waypoints != null) p.Waypoints.AddRange(waypoints);
         p.Next = Math.Min(p.Next, p.Waypoints.Count);
         var from = start;
         var v = velocity;
-        for (int i = p.Next; i < p.Waypoints.Count; i++)
+        if (curved)
         {
-            p.Legs.Add(RoutePlan.Make(p.Waypoints[i].Name, from, p.Waypoints[i].Pos, v, maxAccel, maxSpeed, clearance, brakeAccel));
-            from = p.Waypoints[i].Pos;
-            v = V3.Zero;
+            var through = new List<V3>();
+            for (int i = p.Next; i < p.Waypoints.Count; i++) through.Add(p.Waypoints[i].Pos);
+            if (BendAhead(bends, name, from, target, out var bend))
+            {
+                var chain = new List<V3> { from }; chain.AddRange(through); chain.Add(target);
+                through.Insert(RouteClick.InsertIndex(chain, bend), bend);
+            }
+            p.Curved = true;
+            p.Legs.Add(RoutePlan.Make(name, from, target, v, maxAccel, maxSpeed, clearance, brakeAccel, through));
         }
-        p.Legs.Add(RoutePlan.Make(name, from, target, v, maxAccel, maxSpeed, clearance, brakeAccel));
+        else
+        {
+            for (int i = p.Next; i < p.Waypoints.Count; i++)
+            {
+                var to = p.Waypoints[i].Pos;
+                var after = i + 1 < p.Waypoints.Count ? p.Waypoints[i + 1].Pos : target;
+                bool bent = BendAhead(bends, p.Waypoints[i].Name, from, to, out var b);
+                // slow only enough to turn onto the next leg there (within the point's reach radius)
+                double turn = RouteCurve.TurnSpeed(bent ? b : from, to, after, maxAccel, RouteExport.ArriveFor(from, to, after), maxSpeed);
+                var leg = RoutePlan.Make(p.Waypoints[i].Name, from, to, v, maxAccel, maxSpeed, clearance, brakeAccel, bent ? new[] { b } : null, turn);
+                p.Legs.Add(leg);
+                from = to;
+                v = (after - to).Normalized * leg.ExitSpeed;
+            }
+            p.Legs.Add(RoutePlan.Make(name, from, target, v, maxAccel, maxSpeed, clearance, brakeAccel,
+                BendAhead(bends, name, from, target, out var bt) ? new[] { bt } : null));
+        }
         double eta = 0;
         foreach (var l in p.Legs) { p.Distance += l.Distance; eta += l.Eta; }
         p.Eta = eta;
         return p;
+    }
+
+    /// <summary>The bend of the leg ending at <paramref name="end"/>, while it's still ahead of <paramref name="from"/>.</summary>
+    private static bool BendAhead(IDictionary<string, V3> bends, string end, V3 from, V3 to, out V3 bend)
+    {
+        bend = default;
+        if (bends == null || end == null || !bends.TryGetValue(end, out bend)) return false;
+        return V3.Distance(from, to) > V3.Distance(bend, to) && V3.Distance(from, bend) > 1;
+    }
+
+    /// <summary>The leg ending at <paramref name="end"/> (a waypoint's or the destination's name), or -1.</summary>
+    public int LegTo(string end) => Legs.FindIndex(l => l.TargetName == end);
+
+    /// <summary>The points the ship flies through ahead: each leg's curve (when bent) and its end. The last is the destination.</summary>
+    public List<V3> Ahead()
+    {
+        var res = new List<V3>();
+        foreach (var l in Legs)
+        {
+            if (l.Curved) res.AddRange(l.Curve.GetRange(1, l.Curve.Count - 2));
+            res.Add(l.Target);
+        }
+        return res;
     }
 
     /// <summary>The leg start times from now (seconds), for T+ marks along later legs.</summary>

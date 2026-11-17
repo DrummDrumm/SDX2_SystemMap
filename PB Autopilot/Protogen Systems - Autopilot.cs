@@ -4,7 +4,8 @@
 //  1. Put this script in a programmable block on the ship (SDX2: script access needs a #sigma-support ticket).
 //     It adds a [SDX2 Route] section to the PB's Custom Data; that is how the plugin finds it.
 //  2. The ship needs a cockpit or remote control, gyros (RCS Control Computer or braced gyros) and its fusion drives
-//     (sdx_drive*) all facing one way, as SDX2 requires anyway.
+//     (sdx_drive*) all facing one way, as SDX2 requires anyway. Only the drives push the ship along: it turns them
+//     the way it needs to go, and leaves RCS thrusters to the turning and the dampeners.
 //  3. In game: pick a destination in the N list, click AUTOPILOT under the list (or Ctrl+M), set the route panel
 //     (top speed, thrust or signature cap, waypoints) and click ENGAGE.
 //  - The route panel's top speed and thrust caps come in the route (maxspeed=, thrust= for burning toward a point,
@@ -12,9 +13,12 @@
 //    signature. Braking is planned with the brake cap, so a low one starts the flip earlier.
 //
 // FLYING
-//  - It turns the drives toward where it needs to push, burns, flips and brakes, and stops at each detour round a
-//    world and each waypoint you added in the route panel, flies by asteroid dodge points without slowing, and stops 8 km short of a station (Flip and Burn's
-//    exclusion) or at the clearance above a planet or moon.
+//  - It turns the drives toward where it needs to push, burns, flips and brakes, and turns at each detour round a
+//    world and each waypoint you added in the route panel, flies by asteroid dodge points without slowing, and stops 3 km short of a station
+//    (at a detour or waypoint it slows only enough to turn onto the next leg within the point's reach radius;
+//    a parabolic or bent leg comes as "curve" points: it flies through them without stopping, slowing for each bend
+//    only as far as a sideways push of 60% of the thrust can turn it)
+//    (above it when it's on or near a world), 800 km from Sol, or at the clearance above a planet or moon.
 //  - Taking over: touch any movement or turn control in a seat, switch the dampeners on, press STOP AUTOPILOT /
 //    Ctrl+M in the plugin, or run this PB with the argument "manual". It lets go of thrusters and gyros at once.
 //    The plugin then offers RESUME ROUTE (a pop-up, and a button under the N list).
@@ -46,6 +50,7 @@ readonly Nav.Settings settings = new Nav.Settings();
 string target = "", lastCd, state = "idle", msg = "", lastStatus;
 int lastId, idx, runs;
 double time, routeMax = 50000, startedAt, thrustCap = 1, brakeCap = 1;
+int turnTicks; // runs in a row with turn input (a lone mouse jump, as when a menu opens, isn't a takeover)
 bool flying;
 string mode = "route"; // what Fly() does: route | prograde | retrograde | brake
 Nav.Cmd last;
@@ -192,7 +197,11 @@ bool Blocks()
     if (sum.Count == 0) { msg = "No thrusters"; return false; }
     var best = Base6Directions.Direction.Forward; double bestThrust = -1;
     foreach (var kv in sum) if (kv.Value > bestThrust) { bestThrust = kv.Value; best = kv.Key; }
-    foreach (var t in thrusters) if (t.Orientation.Forward == best) drives.Add(t); // every thruster pushing that way helps
+    // with fusion drives, only they push the ship along (RCS stays free for turning and the dampeners);
+    // without any, every thruster pushing the strongest way helps
+    foreach (var t in thrusters)
+        if (t.Orientation.Forward == best && (!anyDrive || t.BlockDefinition.SubtypeId.StartsWith("sdx_drive"))) drives.Add(t);
+        else if (anyDrive && t.Orientation.Forward == best && t.ThrustOverridePercentage > 0) t.ThrustOverridePercentage = 0f; // left by an older version
     return true;
 }
 
@@ -210,7 +219,7 @@ void Engage()
     var c = Controller();
     c.DampenersOverride = false; // dampeners on = the pilot taking over
     mode = "route";
-    flying = true; state = "flying"; msg = "Flying to " + route[idx].Name; startedAt = time;
+    flying = true; state = "flying"; msg = Heading(route[idx]); startedAt = time;
     velocity.Reset();
     settings.Observed = 0;
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
@@ -236,11 +245,21 @@ void Fly()
 {
     var c = Controller();
     if (c == null || drives.Count == 0) { Release("error", "Lost the cockpit or the drives", true); return; }
-    // manual override: any movement or turn input in a seat, or the dampeners switched on
+    // manual override: movement or roll input in a seat, turn input on two runs in a row (a lone mouse jump, as when
+    // a menu opens, isn't one), or the dampeners switched on
     if (time - startedAt > 0.5)
+    {
+        bool turning = false;
         foreach (var s in controllers)
-            if (s.IsUnderControl && (s.MoveIndicator.LengthSquared() > 0.01 || s.RotationIndicator.LengthSquared() > 0.01 || Math.Abs(s.RollIndicator) > 0.01))
-            { Release("override", "Pilot took the controls", false); return; }
+        {
+            if (!s.IsUnderControl) continue;
+            if (s.MoveIndicator.LengthSquared() > 0.01 || Math.Abs(s.RollIndicator) > 0.01) { Release("override", "Pilot took the controls", false); return; }
+            if (s.RotationIndicator.LengthSquared() > 0.01) turning = true;
+        }
+        turnTicks = turning ? turnTicks + 1 : 0;
+        if (turnTicks >= 2) { turnTicks = 0; Release("override", "Pilot took the controls", false); return; }
+    }
+    else turnTicks = 0;
     if (c.DampenersOverride && time - startedAt > 0.5 && mode != "prograde" && mode != "retrograde") { Release("override", "Dampeners switched on: pilot has the controls", false); return; }
 
     var p = c.CenterOfMass;
@@ -264,7 +283,7 @@ void Fly()
     {
         double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
         last = Nav.Steer(p, v, g, drive, aFull, thrustCap, brakeCap, route, idx, cap * 0.98, settings);
-        if (last.Idx != idx) { idx = last.Idx; msg = idx < route.Count ? "Flying to " + route[idx].Name : ""; }
+        if (last.Idx != idx) { idx = last.Idx; msg = idx < route.Count ? Heading(route[idx]) : ""; }
         if (last.Arrived) { Release("arrived", "Arrived at " + target, true); return; }
     }
 
@@ -281,6 +300,9 @@ void Fly()
 }
 
 /// <summary>Lets go of everything; dampeners back on when it stopped by itself (arrived or an error).</summary>
+// what the PB says it's doing ("Curving to X" for a curve point, else "Flying to X")
+string Heading(Nav.Wp w) { return w.Kind == "curve" ? w.Name : "Flying to " + w.Name; }
+
 void Release(string newState, string why, bool dampeners)
 {
     bool was = flying;
@@ -379,8 +401,19 @@ public static class Nav
             var w = route[cmd.Idx];
             double dw = Vector3D.Distance(p, w.Pos);
             var outDir = Vector3D.Normalize(route[cmd.Idx + 1].Pos - w.Pos);
-            bool beyond = Vector3D.Dot(p - w.Pos, outDir) > 0;
-            if (dw < w.Arrive || w.Kind == "pass" && beyond || w.Kind != "pass" && beyond && dw < w.Arrive * 10) cmd.Idx++;
+            // gone by: past it toward the next point, and moving away from it (so not where you start, e.g. undocking)
+            bool beyond = Vector3D.Dot(p - w.Pos, outDir) > 0 && Vector3D.Dot(p - w.Pos, v) > 0;
+            bool through = w.Kind == "pass" || w.Kind == "curve";
+            // a corner: start turning for the next leg early enough to swing the drives round and burn the
+            // velocity change, centred on the point
+            double lead = 0;
+            if (Corner(w))
+            {
+                var prev = Before(route, cmd.Idx, p);
+                double sh = SinHalf(prev, w.Pos, route[cmd.Idx + 1].Pos), sp = cmd.SpeedNow;
+                lead = sp * sp * sh / aMax + sp * TurnLag(sh, s);
+            }
+            if (dw < w.Arrive || dw < lead || through && beyond || !through && beyond && dw < w.Arrive * 10) cmd.Idx++;
             else break;
         }
         var wp = route[cmd.Idx];
@@ -391,7 +424,7 @@ public static class Nav
 
         // distance to the next point we must stop at, through pass points
         double stopDist = d; int k = cmd.Idx;
-        while (route[k].Kind == "pass" && k < route.Count - 1) { stopDist += Vector3D.Distance(route[k].Pos, route[k + 1].Pos); k++; }
+        while ((route[k].Kind == "pass" || route[k].Kind == "curve" || Corner(route[k])) && k < route.Count - 1) { stopDist += Vector3D.Distance(route[k].Pos, route[k + 1].Pos); k++; }
         var stopWp = route[k];
         double remaining = stopDist;
         for (int i = k; i < route.Count - 1; i++) remaining += Vector3D.Distance(route[i].Pos, route[i + 1].Pos);
@@ -407,6 +440,29 @@ public static class Nav
         double sAvail = Math.Max(0, stopDist - stopWp.Arrive * 0.4);
         double vStop = a * (-tFlip + Math.Sqrt(tFlip * tFlip + 2 * sAvail / a));
         double speed = Math.Min(cap, vStop);
+        // a curved leg: no faster at each bend ahead than a sideways burn of TurnShare of the thrust can turn it
+        // (v^2 / r), and slowing for one only as much as it needs (flip and brake only when it's a sharp one)
+        double along2 = d;
+        for (int j = cmd.Idx; j < k && j < cmd.Idx + 60; j++)
+        {
+            if (j > cmd.Idx) along2 += Vector3D.Distance(route[j - 1].Pos, route[j].Pos);
+            bool corner = Corner(route[j]);
+            if (route[j].Kind != "curve" && !corner) continue;
+            var q = j > 0 ? route[j - 1].Pos : p;
+            double vL, D = along2;
+            if (corner) q = Before(route, j, p);
+            if (corner)
+            {
+                // flip and burn: slow only enough to turn onto the next leg within the point's reach radius, by
+                // the time the turn starts
+                double sh = SinHalf(q, route[j].Pos, route[j + 1].Pos);
+                vL = TurnSpeed(q, route[j].Pos, route[j + 1].Pos, aMax, route[j].Arrive, cap);
+                D = Math.Max(0, along2 - (vL * vL * sh / aMax + vL * TurnLag(sh, s)));
+            }
+            else vL = Math.Sqrt(TurnShare * aMax * Radius(q, route[j].Pos, route[j + 1].Pos));
+            double allow = Math.Max(vL, a * (-tFlip + Math.Sqrt(tFlip * tFlip + (2 * D + vL * vL / a) / a)));
+            speed = Math.Min(speed, allow);
+        }
         if (wp.Kind == "pass" && cmd.SpeedNow > 1)
         {
             // short of time for the sideways move to the pass point: don't speed up or brake, put all thrust sideways
@@ -415,7 +471,7 @@ public static class Nav
             double along = Math.Max(1, Vector3D.Dot(v, dir));
             if (d / along < tNeed * 1.5) speed = Math.Min(speed, along);
         }
-        if (stopWp.Kind != "pass" && stopDist < stopWp.Arrive * 0.4) speed = 0;
+        if (stopWp.Kind != "pass" && stopWp.Kind != "curve" && stopDist < stopWp.Arrive * 0.4) speed = 0;
         var vWant = dir * speed;
         var acc = (vWant - v) / 3.0 - g;
         double am = acc.Length();
@@ -474,6 +530,57 @@ public static class Nav
             cmd.Eta = cmd.SpeedNow / aFull + angle / s.FlipRate;
         }
         return cmd;
+    }
+
+    /// <summary>A detour or waypoint: flown as a turn onto the next leg (the last point is the stop).</summary>
+    static bool Corner(Wp w) { return w.Kind == "detour" || w.Kind == "waypoint"; }
+
+    /// <summary>
+    /// The point before route[j]: the one before it, or for the first, a point back toward the ship as far out as the
+    /// next (so the turn's room doesn't shrink as the ship closes in).
+    /// </summary>
+    static Vector3D Before(List<Wp> route, int j, Vector3D p)
+    {
+        if (j > 0) return route[j - 1].Pos;
+        var w = route[j].Pos; var back = p - w;
+        double far = j + 1 < route.Count ? Vector3D.Distance(w, route[j + 1].Pos) : 1;
+        return back.LengthSquared() < 1 ? p : w + Vector3D.Normalize(back) * Math.Max(back.Length(), far);
+    }
+
+    /// <summary>sin of half the turn at b, going a → b → c.</summary>
+    public static double SinHalf(Vector3D a, Vector3D b, Vector3D c)
+    {
+        var u = b - a; var w = c - b;
+        if (u.LengthSquared() < 1e-6 || w.LengthSquared() < 1e-6) return 1;
+        return Math.Sqrt(Math.Max(0, (1 - Vector3D.Dot(Vector3D.Normalize(u), Vector3D.Normalize(w))) / 2));
+    }
+
+    /// <summary>
+    /// The fastest a turn at b can be flown: burning the velocity change at full thrust cuts the corner by
+    /// v^2 sin^2(t/2) / 2a, kept within tol (the point's reach radius), and starts v^2 sin(t/2) / a before the point,
+    /// kept within half the shorter leg. The plugin plans with the same.
+    /// </summary>
+    public static double TurnSpeed(Vector3D a, Vector3D b, Vector3D c, double acc, double tol, double cap)
+    {
+        if (acc <= 0) return 0;
+        double sh = SinHalf(a, b, c);
+        if (sh < 1e-6) return cap;
+        double room = Math.Min(Vector3D.Distance(a, b), Vector3D.Distance(b, c)) / 2;
+        return Math.Min(cap, Math.Min(Math.Sqrt(2 * acc * tol) / sh, Math.Sqrt(acc * room / sh)));
+    }
+
+    /// <summary>Seconds to swing the drives from braking to the turn's push (90 degrees less half the turn), plus a second.</summary>
+    static double TurnLag(double sh, Settings s) { return (Math.PI / 2 - Math.Asin(Math.Min(1, sh))) / s.FlipRate + 1; }
+
+    /// <summary>Share of the thrust a bend may take sideways (the plugin plans with the same).</summary>
+    public const double TurnShare = 0.6;
+
+    /// <summary>Radius of the circle through three points (very large when they're in a line).</summary>
+    public static double Radius(Vector3D a, Vector3D b, Vector3D c)
+    {
+        var u = b - a; var w = c - b;
+        double cross = Vector3D.Cross(u, w).Length();
+        return cross < 1e-9 * Math.Max(1, u.Length() * w.Length()) ? 1e12 : u.Length() * w.Length() * (c - a).Length() / (2 * cross);
     }
 
     // time to go dist from rest to rest: speed up at a, slow down at b, no faster than vmax

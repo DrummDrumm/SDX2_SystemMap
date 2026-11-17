@@ -211,6 +211,47 @@ internal static class FlipAndBurnLink
         catch { return false; }
     }
 
+    private static FieldInfo menuSearchBox;
+    private static PropertyInfo boxEditing, boxHighlighting;
+    private static object blockedBox;
+    private static bool wasEditing, wasHighlighting;
+
+    /// <summary>
+    /// While the mouse is over the map preview, F&amp;B's search box takes no typing (its editing and highlighting are
+    /// switched off), so the map's keys can be used there; switched back as they were when it leaves.
+    /// </summary>
+    public static void BlockSearch(bool block)
+    {
+        try
+        {
+            if (!block)
+            {
+                if (blockedBox == null) return;
+                var b = blockedBox; blockedBox = null;
+                boxEditing.SetValue(b, wasEditing);
+                boxHighlighting?.SetValue(b, wasHighlighting);
+                return;
+            }
+            var menu = Hud == null || hudNavMenu == null ? null : hudNavMenu.GetValue(Hud);
+            if (menu == null) return;
+            if (menuSearchBox == null || menuSearchBox.DeclaringType != menu.GetType())
+            {
+                menuSearchBox = menu.GetType().GetField("_searchBox", Any);
+                boxEditing = menuSearchBox?.FieldType.GetProperty("EnableEditing", Any);
+                boxHighlighting = menuSearchBox?.FieldType.GetProperty("EnableTextHighlighting", Any);
+            }
+            var box = menuSearchBox?.GetValue(menu);
+            if (box == null || boxEditing == null || box == blockedBox) return;
+            if (blockedBox != null) BlockSearch(false);
+            wasEditing = (bool)boxEditing.GetValue(box);
+            wasHighlighting = boxHighlighting != null && (bool)boxHighlighting.GetValue(box);
+            boxEditing.SetValue(box, false);
+            boxHighlighting?.SetValue(box, false);
+            blockedBox = box;
+        }
+        catch (Exception e) { blockedBox = null; Plugin.LogThrottled("can't pause Flip and Burn's search box: " + (e.InnerException ?? e).Message); }
+    }
+
     public static void OpenNavMenu()
     {
         try { setNavMenuOpen?.Invoke(true, false); } catch { }

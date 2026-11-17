@@ -27,6 +27,8 @@ internal static class AutopilotLink
     public static int Count => autopilots.Count;
     /// <summary>The first autopilot's own report, or null.</summary>
     public static RouteExport.Status Status { get; private set; }
+    /// <summary>The route the first autopilot holds (its [SDX2 Route] section), or null.</summary>
+    public static RouteExport.Parsed Route { get; private set; }
     /// <summary>The last order we sent this session, and whether the PB has acted on it yet.</summary>
     public static string LastCommand => lastCommand;
     public static bool Pending => lastId != 0 && (Status == null || Status.Ack != lastId);
@@ -39,7 +41,7 @@ internal static class AutopilotLink
 
     public static void Reset()
     {
-        autopilots.Clear(); Status = null; gridId = 0; lastId = 0; lastCommand = null; sentAt = -1; nextScan = 0;
+        autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; lastCommand = null; sentAt = -1; nextScan = 0;
     }
 
     private static MyCubeGrid ControlledGrid() =>
@@ -51,7 +53,7 @@ internal static class AutopilotLink
         nextScan = now + 2;
         autopilots.Clear();
         var grid = ControlledGrid();
-        if (grid == null) { Status = null; return; }
+        if (grid == null) { Status = null; Route = null; return; }
         if (grid.EntityId != gridId) { gridId = grid.EntityId; lastId = 0; lastCommand = null; }
         pbs.Clear();
         try { MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid)?.GetBlocksOfType(pbs); }
@@ -60,6 +62,7 @@ internal static class AutopilotLink
             if (pb is IMyTerminalBlock tb && tb.IsFunctional && RouteExport.HasSection(tb.CustomData) && pb.HasLocalPlayerAccess())
                 autopilots.Add(tb);
         Status = autopilots.Count > 0 ? RouteExport.ParseStatus(autopilots[0].CustomData) : null;
+        Route = autopilots.Count > 0 && RouteExport.Parse(autopilots[0].CustomData, out var r) ? r : null;
     }
 
     /// <summary>Sends the route with a command (engage | update | load); returns how many PBs got it, -1 if there's no ship or route.</summary>

@@ -14,6 +14,7 @@ internal static class Binds
     public static KeyCombo Pin => Get(Plugin.Settings.KeyPin);
     public static KeyCombo Steer => Get(Plugin.Settings.KeySteer);
     public static KeyCombo Settings => Get(Plugin.Settings.KeySettings);
+    public static KeyCombo Cursor => Get(Plugin.Settings.KeyCursor);
 
     private static readonly Dictionary<string, KeyCombo> cache = new Dictionary<string, KeyCombo>();
     private static KeyCombo Get(string text)
@@ -36,8 +37,29 @@ internal static class Binds
     {
         var input = MyInput.Static;
         var key = GameKey(k);
-        return input != null && key != MyKeys.None && input.IsNewKeyPressed(key)
+        return input != null && IsNew(input, key)
             && input.IsAnyCtrlKeyPressed() == k.Ctrl && input.IsAnyShiftKeyPressed() == k.Shift && input.IsAnyAltKeyPressed() == k.Alt;
+    }
+
+    /// <summary>Down now. The side mouse buttons (Mouse 4 / 5) come from the mouse, not the keyboard state.</summary>
+    public static bool IsDown(VRage.Input.IMyInput input, MyKeys key) =>
+        key == MyKeys.ExtraButton1 ? input.IsXButton1MousePressed()
+        : key == MyKeys.ExtraButton2 ? input.IsXButton2MousePressed()
+        : key != MyKeys.None && input.IsKeyPress(key);
+
+    /// <summary>Went down this frame (keyboard key or side mouse button).</summary>
+    public static bool IsNew(VRage.Input.IMyInput input, MyKeys key) =>
+        key == MyKeys.ExtraButton1 ? input.IsNewXButton1MousePressed()
+        : key == MyKeys.ExtraButton2 ? input.IsNewXButton2MousePressed()
+        : key != MyKeys.None && input.IsNewKeyPressed(key);
+
+    /// <summary>Held down now, with at least its modifiers held (more are fine, so Shift+click works while it's held).</summary>
+    public static bool Held(this KeyCombo k)
+    {
+        var input = MyInput.Static;
+        var key = GameKey(k);
+        return input != null && IsDown(input, key)
+            && (!k.Ctrl || input.IsAnyCtrlKeyPressed()) && (!k.Shift || input.IsAnyShiftKeyPressed()) && (!k.Alt || input.IsAnyAltKeyPressed());
     }
 
     /// <summary>
@@ -54,9 +76,19 @@ internal static class Binds
             var key = GameKey(k);
             var input = MyInput.Static;
             if (key == MyKeys.None || input == null) return null;
+            var button = key == MyKeys.ExtraButton1 ? MyMouseButtonsEnum.XButton1 : key == MyKeys.ExtraButton2 ? MyMouseButtonsEnum.XButton2 : MyMouseButtonsEnum.None;
             foreach (var c in input.GetGameControlsList())
             {
                 if (c == null) continue;
+                if (button != MyMouseButtonsEnum.None)
+                {
+                    // a side button bound to a game control (no modifiers there)
+                    if (c.GetMouseControl() != button) continue;
+                    string mname = MyTexts.GetString(c.GetControlName());
+                    if (!k.Ctrl && !k.Shift && !k.Alt) { exact = true; return mname; }
+                    loose ??= mname;
+                    continue;
+                }
                 for (int i = 0; i < 2; i++)
                 {
                     if ((i == 0 ? c.GetKeyboardControl() : c.GetSecondKeyboardControl()) != key) continue;
@@ -85,15 +117,15 @@ internal static class Binds
             Plugin.Log(msg);
             try { Sandbox.ModAPI.MyAPIGateway.Utilities?.ShowNotification(msg, 10000, "Red"); } catch { }
         }
-        One(Map, "map"); One(Autopilot, "autopilot"); One(Pin, "pin the map"); One(Steer, "steer round asteroid"); One(Settings, "settings");
+        One(Map, "map"); One(Autopilot, "autopilot"); One(Pin, "pin the map"); One(Steer, "steer round asteroid"); One(Settings, "settings"); One(Cursor, "free the mouse");
     }
 
-    /// <summary>Keys a binding can't use: modifiers, mouse buttons and the Windows keys.</summary>
+    /// <summary>Keys a binding can't use: modifiers, the main mouse buttons and the Windows keys (the side buttons are fine).</summary>
     public static bool Bindable(MyKeys k)
     {
         switch (k)
         {
-            case MyKeys.None: case MyKeys.LeftButton: case MyKeys.RightButton: case MyKeys.MiddleButton: case MyKeys.ExtraButton1: case MyKeys.ExtraButton2:
+            case MyKeys.None: case MyKeys.LeftButton: case MyKeys.RightButton: case MyKeys.MiddleButton:
             case MyKeys.Shift: case MyKeys.Control: case MyKeys.Alt: case MyKeys.LeftShift: case MyKeys.RightShift: case MyKeys.LeftControl:
             case MyKeys.RightControl: case MyKeys.LeftAlt: case MyKeys.RightAlt: case MyKeys.LeftWindows: case MyKeys.RightWindows: case MyKeys.Apps:
             case MyKeys.Escape: case MyKeys.Back: case MyKeys.Delete: case MyKeys.CapsLock:

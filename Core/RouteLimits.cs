@@ -19,6 +19,8 @@ public sealed class RouteLimits
     /// behind the drives a baseline sensor first picks the ship up (gain × the all-round range, twice the Strong range);
     /// 0 = no cap.</summary>
     public double SignatureKm, BrakeSignatureKm;
+    /// <summary>Route legs: true = parabolic (curve through each direction change without stopping), false = flip and burn (slow to turn at each).</summary>
+    public bool Parabolic;
 
     public RouteLimits Clone() => (RouteLimits)MemberwiseClone();
 

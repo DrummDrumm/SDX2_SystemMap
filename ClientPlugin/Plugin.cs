@@ -46,6 +46,7 @@ public class Plugin : IPlugin
             SettingsScreen.CheckHotkey();
             if (!WorldGate.Update(Now)) return; // not an SDX2 world: stay off
             PlayGuard.Update(Now);
+            if (PlayGuard.ViewOnly) { SidePreview.ViewUpdate(Now); return; } // AFK: the map and pinned preview, read-only
             if (PlayGuard.Blocked) { SidePreview.Pause(); return; }
             FlipAndBurnLink.Search(Now);
             SidePreview.Update(Now);
@@ -107,6 +108,7 @@ public class SystemMapSession : MySessionComponentBase
         WorldGate.Reset();
         SpectrumLink.Reset();
         SidePreview.Reset();
+        RichHudCursor.Reset();
         Plugin.SaveSettings();
         base.UnloadData();
     }

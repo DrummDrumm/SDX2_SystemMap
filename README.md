@@ -28,8 +28,8 @@ destination. The prompt and the route panel always say what to pick next. The pl
 within 25 km of a detour.
 
 The detours are planned once when you pick the destination and then stay put, so the entries you pick don't move.
-Press **R** in the full map to plan again from where you are, or **V** to turn detours off. ETA assumes a stop at each
-detour.
+Press **R** in the full map to plan again from where you are, or **V** to turn detours off. ETA assumes the ship slows at each
+detour just enough to turn there (Legs: FLIP & BURN), or curves through them (PARABOLIC).
 
 Near a world the route still goes round it, never through:
 - **In low orbit** (inside the clearance): it goes round near your own height, dipping to no lower than 80% of it.
@@ -38,34 +38,56 @@ Near a world the route still goes round it, never through:
 - **Picking the world itself** (its entry in the N list): it's flown to, not round, and the stop is at the clearance on
   your side (or where you are, if you're already lower).
 
-**Bases and stations.** The route also bends round the known stations (8 km) and the bases owned by you or your
+**Bases and stations.** The route also bends round the known stations (8 km) and Sol (a fixed 800 km no-fly sphere: a route that starts inside it goes straight out first) and the bases owned by you or your
 faction that your game has loaded (their size plus 2 km; bases close together count as one). A base is a grid set to
 station with an Outpost or Installation core; ships and other grids aren't obstacles. Leaving a station or base
 (docked, or inside its sphere), the route first goes straight out of it, then round it, when the way ahead passes
 through it. The station or base you fly to isn't gone round. Other players' grids are left out on purpose: the map
 only uses what you already know (SDX2's plugin rules).
 
-Side window (while the N list is open, so the mouse is free): right-drag orbits, wheel zooms, middle click re-frames,
-and hovering shows what a point is. It doesn't take clicks on the map: pick destinations in the N list, or with
-**Shift+click** in the full map (Shift+M from the map window). **FOLLOW SHIP** (top right of the window) keeps the view centred on your
-ship; it's on at the start of each session, and middle click or the button turns it off. The bottom bar holds the legend (burn / coast / brake / flown, grid
-scale) with the keys under it in labelled rows (VIEW, KEYS; the full map adds ROUTE and SHOW with each layer's on/off).
+Side window (while the N list is open, so the mouse is free): with the mouse over the map it works like the full map.
+Drag orbits, right-drag pans, the wheel zooms, a click focuses on a world, station or GPS point, and middle click
+re-frames. **Shift+click** sets the destination, **Shift+right-click** adds or removes a waypoint (or straightens a
+bent leg), **Shift+right-drag** adds one above or below the plane, and dragging your waypoint or a flip point raises,
+lowers or bends it, all as in the full map. The full map's keys (F H S U A R V C G O X T P L J K) work there too:
+while the mouse is over the map, Flip and Burn's search box takes no typing, and it takes it again when the mouse
+leaves (N then closes the list, as F&B's own key). **FOLLOW SHIP** (top right of the window) keeps the view centred on your
+ship; it's on at the start of each session, and panning, middle click or the button turns it off. The bottom bar holds the legend (burn / coast / brake / flown, grid
+scale) with the keys under it in labelled rows (VIEW, ROUTE, SHOW, KEYS, each layer with its on/off).
 Esc closes the full map.
+
+**Free the mouse (hold F2).** While the autopilot flies, hold **F2** to bring up the mouse cursor without opening the
+N list: the mouse stops turning the ship (so the autopilot isn't taken over) and works on the side window or pinned map
+as above, including FOLLOW SHIP and the route panel's buttons. Let go and the mouse steers again. It uses Rich HUD
+Master's cursor, which SDX2 loads.
+
+**After a reload or sector change.** The autopilot PB keeps flying its route through a world load or a Nexus sector
+change. When you sit back in the seat and the PB is flying, the plugin reads the route back from the PB (destination,
+your waypoints and detours, and how far along it is) and shows it on the map, side window and pinned map again, with
+the next point picked in Flip and Burn's list. Nothing is sent to the PB. A bent leg comes back straight on the map
+(the PB still flies the curve it was sent).
 
 **Picture-in-picture.** **Alt+M** or the cockpit toolbar action pins a small map in a screen corner that
 stays up while you fly (the N list still shows the full side window while it's open). It shows the route, ship,
 flown track and a short summary (distance, ETA, flip, next pick). **Q** in the full map moves it to the next corner;
-its size is `PipSize` in the settings file. It's saved, so it comes back on the next world load.
+its size is `PipSize` in the settings file. It's saved, so it comes back on the next world load. Closing the full map
+keeps a pinned map pinned; with a route picked it pins the map for that route (unpinned again when the route is
+cleared).
 
-**Toolbar actions.** Every cockpit, seat and remote control gets two actions you can drag onto the ship's toolbar (G
-menu): **System Map: pin preview on/off** and **System Map: full map**. They run only on your client.
+**Toolbar actions.** Every cockpit, seat and remote control gets three actions you can drag onto the ship's toolbar (G
+menu): **System Map: pin preview on/off**, **System Map: full map** and **System Map: stop autopilot** (stops the
+flight at once, no pop-up; RESUME ROUTE then sits under the N list). They run only on your client.
 
 **Admin mode and AFK.** SDX2's client-plugin rules say a plugin must switch itself off in admin mode or while you're
 AFK, so the plugin pauses while any of these hold: creative tools on, any admin-menu toggle on (invulnerable, show
 players, use terminals...), the admin menu open, the spectator camera, or no key, mouse or joystick input for 30 s (the
-game's own AFK rule). While paused the full map closes, the preview and PiP are hidden, nothing is written to the
-autopilot PB, the asteroid watch stops and Flip and Burn's list behaves as normal. An autopilot already flying carries
-on (that's the PB script). Everything comes back on your next input. The log says `paused: <reason>`.
+game's own AFK rule). While paused nothing is written to the autopilot PB, the asteroid watch stops, Flip and Burn's
+list behaves as normal, the speedometer fix steps aside, and the plugin's keys and mouse do nothing. An autopilot
+already flying carries on (that's the PB script). In admin mode the full map closes and the preview and PiP are hidden.
+While AFK the full map and the pinned preview stay up as a read-only view: your ship, the route and the autopilot's
+status keep updating on them, as on the game's own map, but nothing is sent anywhere and no input is taken (the side
+preview under the N list, the prompts and the asteroid warning are hidden). Everything comes back on your next input.
+The log says `paused: <reason>`.
 
 There are no chat commands: the plugin doesn't read chat.
 
@@ -87,10 +109,9 @@ bracketed panels. The full map, the side preview and the autopilot panels all fo
 **Flown and projected track** (side window and full map): a dashed white line shows where the ship has actually flown
 since the route was set (or the autopilot engaged), from a small ring at the start, with a thin grey line for the route
 as set, so you can see how far it strayed and how it corrects back. The route itself is drawn along the **projected path**: where the ship really goes from its current position and
-velocity as it corrects onto the route (turning with its acceleration, sideways error first), round each detour and
-waypoint on a curve (constant thrust sideways, a parabola): it slows to a speed the corner allows and starts turning
-early, so a sharp turn cuts inside the waypoint instead of overshooting and doubling back. Then it brakes into the
-destination. It's coloured by what the ship is doing (burn / coast / brake) with a diamond
+velocity as it corrects onto the route (turning with its acceleration, sideways error first), braking to its turn speed at each
+detour and waypoint and turning there (Legs: FLIP & BURN, as the autopilot flies it), then braking into the destination.
+A PARABOLIC or bent route is drawn as planned instead, since the autopilot holds to the curve. It's coloured by what the ship is doing (burn / coast / brake) with a diamond
 where it turns to brake; the straight plan stays underneath, thin and dim, with its flip point and T+ marks. A red ring
 and "projected end" mark where it ends if it can't get there (no thrust known).
 
@@ -104,6 +125,7 @@ Full-screen map:
 | Shift+right-click | Add a waypoint there, in the leg it's nearest (Shift+right-click one of your waypoints to remove it): on a world, station or GPS point it's that point; near the route's line it's on the line; elsewhere it's level with the nearest part of the route. Build a route of several stages this way (up to 8 waypoints; **x** in the autopilot panel removes one) |
 | Shift+right-drag | Add a waypoint above or below the plane: press where it should go, then drag up or down with the view tilted (the marker shows the height); let go to add it |
 | Drag one of your waypoints | Raise or lower it (left-drag, or Shift+right-drag); the route is planned again when you let go |
+| Drag a flip point | Bend that leg up or down: it curves through the point you let go at (a **BEND** marker), turning partly sideways instead of stopping. Drag the BEND marker to move it; drag it back near the straight line, or Shift+right-click it, to straighten the leg |
 | S | Follow your ship (toggle; on each time the map opens; panning, F or H turns it off) |
 | U | Turn with the ship (on by default, saved): while following, the view turns so your forward movement points up the screen (nearly stopped: the way the ship faces). Your tilt stays; a sideways drag turns the view and it keeps turning with the ship from there. Also in the settings, and for the side window and pinned map while they follow |
 | F / H | Frame the route / the whole system |
@@ -116,10 +138,20 @@ Full-screen map:
 | Shift+M | Close the map and hide the map window |
 
 **Autopilot controls in the map.** After a Shift+click (or A), a window on the right works like the buttons under the
-N list: **AUTOPILOT** opens the same route panel there (top speed, burn and brake caps, waypoints: Shift+click points
+N list: **AUTOPILOT** opens the same route panel there (top speed, burn and brake caps, **Legs**, waypoints: Shift+click points
 on the map while ADD WAYPOINT is on, then ENGAGE), and **MANUAL** closes the map so you fly it with Flip and Burn.
-After a stop part-way it also shows **RESUME ROUTE**. While the autopilot flies it shows **STOP AUTOPILOT**, and it
+After a stop part-way it also shows **RESUME ROUTE**. If any of the ship's fusion drives are switched off when you press ENGAGE (or RESUME ROUTE), a
+pop-up says how many and offers **TURN ON & ENGAGE**, which switches them on and starts the route. While the autopilot flies it shows **STOP AUTOPILOT**, and it
 stays open after ENGAGE so you can watch the route.
+
+**Legs** (route panel, saved) sets how a route with waypoints or detours meets each direction change:
+- **FLIP & BURN**: a leg per stage. At each point the ship brakes only as much as the turn needs, then turns onto the
+  new course and burns again: slow enough that burning the velocity change cuts the corner by no more than the
+  point's reach radius (up to 2 km), and that the turn fits in half the shorter leg. Doubling back is nearly a stop;
+  a point almost straight on costs no slowing.
+- **PARABOLIC**: one curved leg through all the points and one flip. The ship turns its drives partly sideways to bend
+  its path, never using more than 60% of the thrust for that, and slows for a sharp bend only as much as it needs.
+  The confirm lines show the fastest it takes the tightest bend.
 
 The route shows:
 - the burn (orange), coast (blue) and brake (green) legs, the flip point and T+ marks;
@@ -135,7 +167,8 @@ The route shows:
 
 **Setup.** Paste the script into a PB on the ship. It adds a `[SDX2 Route]` line to the PB's Custom Data, which is how
 the plugin finds it. The ship needs a cockpit or remote control, gyros (RCS Control Computer or braced gyros), and its
-fusion drives (`sdx_drive*`) all facing one way, which SDX2 requires anyway.
+fusion drives (`sdx_drive*`) all facing one way, which SDX2 requires anyway. Only the drives push the ship along a
+route: it turns the ship so they point the way it needs to push, and leaves the RCS thrusters to turning and the dampeners.
 
 **Route panel.** AUTOPILOT under the N list (or Ctrl+M, or A in the full map) opens it beside the list:
 - **Top speed**: a slider up to Flip and Burn's cap.
@@ -160,8 +193,11 @@ fusion drives (`sdx_drive*`) all facing one way, which SDX2 requires anyway.
 - **Waypoints**: click **+ ADD WAYPOINT**, then pick points in Flip and Burn's list (stations, planets, GPS); each pick
   is added in order before the destination instead of changing it. Or Shift+right-click in the full map to drop one
   into the leg you click. **DONE** stops adding, **x** removes one. Detours
-  round worlds are still planned on every leg; a station waypoint stops 8 km short, a world one at the clearance.
+  round worlds are still planned on every leg; a station waypoint stops 3 km short, a world one at the clearance.
 - The route summary (distance, ETA with your caps, where it stops, borders), then **ENGAGE** or **CANCEL**.
+- **While the autopilot flies**, Ctrl+M (or A in the full map) opens the same panel as **CHANGE FLIGHT**: change the
+  top speed, caps or waypoints, then **APPLY** sends them and the autopilot flies on with them; **CANCEL** (or closing
+  the N list or the map) drops the changes and it flies on as before. Nothing is sent until APPLY.
 - The planned route and your waypoints are dropped when you get out of the cockpit or seat, or die / respawn. Pick a
   point in Flip and Burn's list again to plan a new one. An autopilot that's already flying keeps flying (stop it
   from the hotbar or the PB).
@@ -173,8 +209,9 @@ The panel keeps its settings (in the settings file). ENGAGE sends the route and 
   time, since physics speed is capped);
 - never runs the drives above the route's burn cap while speeding up, or its brake cap while slowing down, and keeps
   under its top speed;
-- stops at each detour round a world and each of your waypoints, then turns for the next leg;
-- stops **8 km short of a station** (Flip and Burn's 5 km exclusion) or at the **clearance above a planet or moon**,
+- slows at each detour round a world and each of your waypoints just enough to turn onto the next leg there (Legs: FLIP & BURN), or
+  curves through them without stopping (PARABOLIC, or a leg you bent), slowing only as much as each bend needs;
+- stops **3 km short of a station** (on the side away from the planet or moon when the station is on or near one, going round the station to get there), at **800 km from Sol**, or at the **clearance above a planet or moon**,
   then switches the dampeners on;
 - learns how fast the ship really turns (weak RCS gyros) and flips earlier if needed.
 
@@ -186,7 +223,8 @@ HUD marker always shows where it's heading.
 **Taking over, at any time.** Any of these stops it:
 - touching any movement or turn control in a seat;
 - switching the dampeners on (Z);
-- STOP AUTOPILOT or Ctrl+M (both ask first: **TAKE CONTROL** or **KEEP FLYING**);
+- STOP AUTOPILOT under the N list (asks first: **TAKE CONTROL** or **KEEP FLYING**);
+- the **System Map: stop autopilot** toolbar action (at once);
 - a **hotbar** slot: drag the PB onto the cockpit's toolbar, pick **Run**, and give it the argument `manual`.
 
 It lets go of the thrusters and gyros at once. When you took over (controls, dampeners or the hotbar) a pop-up says
@@ -249,14 +287,14 @@ id=17632368001                changes on every send
 command=engage                engage | update (new points, keep flying) | stop | load (store only)
 target=Belt.Tycho.STN
 dest=x,y,z                    the picked destination
-stop=station                  station (8 km short) | world (clearance above it) | point
+stop=station                  station (3 km short) | sol (800 km out) | world (clearance above it) | point
 accel=12.5                    F&B max acceleration when sent (m/s², 0 = unknown)
 maxspeed=50000                speed cap (m/s): the route panel's, at most F&B's
 thrust=1                      share of the drives' thrust it may use burning (the panel's Burn cap)
 brake=1                       share it may use braking (the panel's Brake cap; missing = same as thrust)
 clearance=100000              wanted clearance above world surfaces (m)
-eta=2051                      planned seconds, stopping at each detour
-wp=x,y,z,arrive,kind,name     in flight order; kind = pass | detour | waypoint | target (last: the stop point)
+eta=2051                      planned seconds, slowing to turn at each detour
+wp=x,y,z,arrive,kind,name     in flight order; kind = pass | curve | detour | waypoint | target (last: the stop point)
 border=x,y,z,fromDx,toDx      Nexus borders on the route
 ```
 
@@ -295,7 +333,8 @@ saved when it closes; **Defaults** puts them back.
 
 Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini`:
 - `KeyMap` (`Shift+M`), `KeyAutopilot` (`Ctrl+M`), `KeyPin` (`Alt+M`), `KeySteer` (`Ctrl+Shift+M`), `KeySettings`
-  (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/): Ctrl/Shift/Alt plus a game key name, or `None`. A key fires only with
+  (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/), `KeyCursor` (`F2`, held; extra Ctrl/Shift/Alt are fine): Ctrl/Shift/Alt plus a game key name, a side mouse button (`Mouse 4` / `Mouse 5`, stored as
+  `ExtraButton1` / `ExtraButton2`), or `None`. A key fires only with
   exactly its modifiers. In the window, click a key and press the new keys (Esc cancels, Backspace unbinds); a combo
   already in use moves over and the other action is unbound. If the keys are also one of the game's controls
   (your current game bindings), a pop-up asks before binding them, the key shows **(!)**, and each world load shows a
