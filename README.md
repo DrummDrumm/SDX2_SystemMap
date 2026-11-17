@@ -266,7 +266,10 @@ Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini`:
 - `KeyMap` (`Shift+M`), `KeyAutopilot` (`Ctrl+M`), `KeyPin` (`Alt+M`), `KeySteer` (`Ctrl+Shift+M`), `KeySettings`
   (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/): Ctrl/Shift/Alt plus a game key name, or `None`. A key fires only with
   exactly its modifiers. In the window, click a key and press the new keys (Esc cancels, Backspace unbinds); a combo
-  already in use moves over and the other action is unbound. An older file's `PreviewKey=X` becomes Shift/Ctrl/Alt/
+  already in use moves over and the other action is unbound. If the keys are also one of the game's controls
+  (your current game bindings), a pop-up asks before binding them, the key shows **(!)**, and each world load shows a
+  red HUD warning until it's rebound. A game key with no Ctrl/Shift/Alt also fires with them held, so the window notes
+  that too (Shift+M also switches symmetry while you place blocks). An older file's `PreviewKey=X` becomes Shift/Ctrl/Alt/
   Ctrl+Shift+X;
 - `OnlyInCockpit` (off): the map, preview, pinned map and autopilot HUD lines show, and the keys work, only while you
   sit in a cockpit, seat or remote control;

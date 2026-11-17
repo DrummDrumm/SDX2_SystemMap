@@ -173,8 +173,31 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         catch (Exception e) { Plugin.LogThrottled("key binding failed: " + e.Message); RecreateControls(false); }
     }
 
-    /// <summary>Sets the binding; another action on the same keys is unbound, and the footer says so.</summary>
+    /// <summary>
+    /// A new combo: if it's also one of the game's keys with the same modifiers, a pop-up asks first. Then
+    /// <see cref="Apply"/>.
+    /// </summary>
     private void Assign(Bind b, KeyCombo combo)
+    {
+        bool exact = false;
+        string game = combo.IsNone ? null : Binds.GameConflict(combo, out exact);
+        if (game != null && exact)
+        {
+            capturing = null; // stop listening while the pop-up is up
+            MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(MyMessageBoxStyleEnum.Info, MyMessageBoxButtonsType.YES_NO,
+                new StringBuilder(combo.Display + " is already the game's \"" + game + "\" key, so both would happen when you press it."
+                    + "\n\nBind \"" + b.Name + "\" to " + combo.Display + " anyway?"),
+                new StringBuilder("Key already in use"),
+                callback: r => { if (r == MyGuiScreenMessageBox.ResultEnum.YES) Apply(b, combo); else RecreateControls(false); },
+                focusedResult: MyGuiScreenMessageBox.ResultEnum.NO));
+            return;
+        }
+        if (game != null) note = "Note: the game's \"" + game + "\" key (" + KeyCombo.KeyName(combo.Key) + ") also fires on " + combo.Display + ".";
+        Apply(b, combo);
+    }
+
+    /// <summary>Sets the binding; another of this plugin's actions on the same keys is unbound, and the footer says so.</summary>
+    private void Apply(Bind b, KeyCombo combo)
     {
         if (!combo.IsNone)
             foreach (var other in bindList)
@@ -184,8 +207,6 @@ internal sealed class SettingsScreen : MyGuiScreenBase
                     note = combo.Display + " was on \"" + other.Name + "\": that one is unbound now.";
                 }
         b.Set(combo.ToString());
-        if (note == null && !combo.IsNone && !combo.Ctrl && !combo.Shift && !combo.Alt)
-            note = combo.Display + " alone may also be one of the game's keys.";
         RecreateControls(false);
     }
 
@@ -193,7 +214,11 @@ internal sealed class SettingsScreen : MyGuiScreenBase
     {
         Label(b.Name, b.Tip);
         MyGuiControlButton btn = null;
-        btn = new MyGuiControlButton(new Vector2(controlX, y), text: new StringBuilder(KeyCombo.Parse(b.Get()).Display), toolTip: b.Tip + " Click, then press the keys.",
+        var combo = KeyCombo.Parse(b.Get());
+        string game = Binds.GameConflict(combo, out bool exact);
+        string tip = b.Tip + " Click, then press the keys.";
+        if (game != null) tip += exact ? "\nAlso the game's \"" + game + "\" key: both happen." : "\nThe game's \"" + game + "\" key (" + KeyCombo.KeyName(combo.Key) + ") also fires on this.";
+        btn = new MyGuiControlButton(new Vector2(controlX, y), text: new StringBuilder(combo.Display + (exact ? "  (!)" : "")), toolTip: tip,
             originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER, onButtonClick: x =>
             {
                 if (capturing != null) return;

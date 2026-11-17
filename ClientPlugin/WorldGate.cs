@@ -52,6 +52,7 @@ internal static class WorldGate
         begun = true;
         ToolbarActions.Register();
         SidePreview.Start();
+        Binds.WarnConflicts();
     }
 
     private static bool HasFlipAndBurn()

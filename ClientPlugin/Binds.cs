@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using VRage;
 using VRage.Input;
+using VRage.ModAPI;
 
 namespace SDX2_SystemMap;
 
@@ -36,6 +38,54 @@ internal static class Binds
         var key = GameKey(k);
         return input != null && key != MyKeys.None && input.IsNewKeyPressed(key)
             && input.IsAnyCtrlKeyPressed() == k.Ctrl && input.IsAnyShiftKeyPressed() == k.Shift && input.IsAnyAltKeyPressed() == k.Alt;
+    }
+
+    /// <summary>
+    /// The game control that also reacts to this combo (the player's current game bindings, primary or secondary key), or
+    /// null. <paramref name="exact"/>: it has the same modifiers. Otherwise it's a game key with no modifiers, which the
+    /// game fires with Ctrl/Shift/Alt held too (MyControl.IsNewPressed), e.g. M (symmetry) on Shift+M while building.
+    /// </summary>
+    public static string GameConflict(KeyCombo k, out bool exact)
+    {
+        exact = false;
+        string loose = null;
+        try
+        {
+            var key = GameKey(k);
+            var input = MyInput.Static;
+            if (key == MyKeys.None || input == null) return null;
+            foreach (var c in input.GetGameControlsList())
+            {
+                if (c == null) continue;
+                for (int i = 0; i < 2; i++)
+                {
+                    if ((i == 0 ? c.GetKeyboardControl() : c.GetSecondKeyboardControl()) != key) continue;
+                    var m = i == 0 ? c.GetKeyboardModifier() : c.GetSecondKeyboardModifier();
+                    bool ctrl = (m & (MyKeyboardModifiers.Control | MyKeyboardModifiers.LeftControl | MyKeyboardModifiers.RightControl)) != 0;
+                    bool shift = (m & (MyKeyboardModifiers.Shift | MyKeyboardModifiers.LeftShift | MyKeyboardModifiers.RightShift)) != 0;
+                    bool alt = (m & (MyKeyboardModifiers.Alt | MyKeyboardModifiers.LeftAlt | MyKeyboardModifiers.RightAlt)) != 0;
+                    string name = MyTexts.GetString(c.GetControlName());
+                    if (ctrl == k.Ctrl && shift == k.Shift && alt == k.Alt) { exact = true; return name; }
+                    if (!ctrl && !shift && !alt && loose == null) loose = name;
+                }
+            }
+        }
+        catch (Exception e) { Plugin.LogThrottled("can't read the game's key bindings: " + e.Message); }
+        return loose;
+    }
+
+    /// <summary>World load: a HUD warning for each binding that is also one of the game's keys (same modifiers).</summary>
+    public static void WarnConflicts()
+    {
+        void One(KeyCombo k, string what)
+        {
+            var game = GameConflict(k, out bool exact);
+            if (game == null || !exact) return;
+            string msg = "SDX2 System Map: " + k.Display + " (" + what + ") is also the game's \"" + game + "\" key. Rebind it in the plugin's settings.";
+            Plugin.Log(msg);
+            try { Sandbox.ModAPI.MyAPIGateway.Utilities?.ShowNotification(msg, 10000, "Red"); } catch { }
+        }
+        One(Map, "map"); One(Autopilot, "autopilot"); One(Pin, "pin the map"); One(Steer, "steer round asteroid"); One(Settings, "settings");
     }
 
     /// <summary>Keys a binding can't use: modifiers, mouse buttons and the Windows keys.</summary>
