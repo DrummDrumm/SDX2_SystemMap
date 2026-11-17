@@ -172,6 +172,7 @@ internal static class SidePreview
         if (resumeTarget != null && Tracker.TargetName != resumeTarget) resumeTarget = null; // picked somewhere else
         if (engaged && flyingTarget != null && Tracker.TargetName == flyingTarget) SteerSelection(); else steeredTo = null;
 
+        if (OutOfCockpit) { if (MapScreen.IsOpen) MapScreen.Close(); dragging = false; return; }
         HandleKeys();
         if (Visible && navOpen) HandleMouse();
         else dragging = false;
@@ -519,12 +520,16 @@ internal static class SidePreview
         if (input.IsNewMiddleMousePressed()) { reframe = true; Plugin.Settings.PreviewFollow = false; }
     }
 
+    /// <summary>OnlyInCockpit is on and you're not in a ship controller: nothing drawn, no keys. Visible and the pin are
+    /// kept, so it all comes back when you sit down.</summary>
+    public static bool OutOfCockpit => Plugin.Settings.OnlyInCockpit && !Snap.InCockpit;
+
     /// <summary>Drawn after the game screen (GamePlayDrawPatch), on the main thread.</summary>
     public static void Draw()
     {
         double now = Plugin.Now, dt = Math.Min(0.1, Math.Max(0, now - lastDraw));
         lastDraw = now;
-        if (MapScreen.IsOpen || PlayGuard.Blocked) return;
+        if (MapScreen.IsOpen || PlayGuard.Blocked || OutOfCockpit) return;
         var full = MyGuiManager.GetFullscreenRectangle();
         float sw = full.Width, sh = full.Height;
         float px = Math.Max(14f, sh / 52f);

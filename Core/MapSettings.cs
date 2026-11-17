@@ -11,6 +11,8 @@ public sealed class MapSettings
     /// <summary>Key bindings (<see cref="KeyCombo"/>; "None" unbinds). The map key cycles map window → full map → off.
     /// M alone is left to the game (its symmetry key).</summary>
     public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion";
+    /// <summary>Show the map, preview, pinned map and HUD lines only while you sit in a cockpit, seat or remote control.</summary>
+    public bool OnlyInCockpit = false;
     /// <summary>Show the map window whenever F&amp;B's N list opens.</summary>
     public bool ShowMapWithNav = true;
     /// <summary>Keep F&amp;B's N list open when you pick a destination (it closes by itself otherwise).</summary>
@@ -63,6 +65,7 @@ public sealed class MapSettings
                     case "KeySteer": s.KeySteer = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
+                    case "OnlyInCockpit": s.OnlyInCockpit = B(v, false); break;
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
                     case "ApBySignature": s.Limits.BySignature = B(v, false); break;
@@ -119,7 +122,7 @@ public sealed class MapSettings
         sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
         L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings);
-        L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
+        L("OnlyInCockpit", OnlyInCockpit); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
         L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
         L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);

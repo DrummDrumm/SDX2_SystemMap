@@ -74,6 +74,8 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         // ---- left column
         Column(-W / 2 + 0.03f, -0.22f, top);
         Section("MAP WINDOW");
+        Check("Only in a cockpit", "Show the map, the pinned map and the autopilot HUD lines only while you sit in a cockpit, seat or remote control. Its keys work only there too.",
+            s.OnlyInCockpit, v => s.OnlyInCockpit = v);
         Check("Open with Flip and Burn's list", "Show the map window whenever the N list opens.", s.ShowMapWithNav, v => s.ShowMapWithNav = v);
         Check("Keep the list open on a pick", "Flip and Burn's N list stays open when you pick a destination.", s.KeepNavOpen, v => s.KeepNavOpen = v);
         Check("Window on the left", "Put the map window on the left of the N list instead of the right.", s.PreviewLeft, v => s.PreviewLeft = v);
@@ -127,7 +129,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
     private void ResetDefaults()
     {
         var s = Plugin.Settings; var d = new MapSettings();
-        s.ShowMapWithNav = d.ShowMapWithNav; s.KeepNavOpen = d.KeepNavOpen; s.PreviewLeft = d.PreviewLeft;
+        s.OnlyInCockpit = d.OnlyInCockpit; s.ShowMapWithNav = d.ShowMapWithNav; s.KeepNavOpen = d.KeepNavOpen; s.PreviewLeft = d.PreviewLeft;
         s.PreviewSize = d.PreviewSize; s.Theme = d.Theme; MapTheme.Current = MapTheme.Find(d.Theme);
         s.PipCorner = d.PipCorner; s.PipSize = d.PipSize; SidePreview.SetPip(d.Pip);
         s.AvoidBodies = d.AvoidBodies; s.ClearanceKm = d.ClearanceKm; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer;

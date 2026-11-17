@@ -470,6 +470,10 @@ internal static class Program
         Check(kd.KeyMap == "Shift+M" && kd.KeyAutopilot == "Ctrl+M" && kd.KeyPin == "Alt+M" && kd.KeySteer == "Ctrl+Shift+M", "keys: defaults leave M alone to the game");
         var ks = new MapSettings { KeyMap = "F8", KeySteer = "None" }; ks.Save(dir);
         var kl = MapSettings.Load(dir);
+        Check(!kd.OnlyInCockpit, "only-in-cockpit: off by default");
+        new MapSettings { OnlyInCockpit = true }.Save(dir);
+        Check(MapSettings.Load(dir).OnlyInCockpit, "only-in-cockpit: saved and loaded");
+        ks.Save(dir); kl = MapSettings.Load(dir);
         Check(kl.KeyMap == "F8" && kl.KeySteer == "None" && kl.KeyPin == "Alt+M", "keys: saved and loaded");
         File.WriteAllText(dir, "PreviewKey=N" + Environment.NewLine);
         var ko = MapSettings.Load(dir);
