@@ -244,12 +244,43 @@ internal static class FlipAndBurnLink
             var select = menu.GetMethod("SelectEntry", Any);
             if (select == null || select.GetParameters().Length != 1 || menu.GetField("OnSelect", Any) == null)
             { Plugin.Log("Flip and Burn's list has no SelectEntry/OnSelect: it will close when you pick"); return; }
+            string odd = UnexpectedCalls(select);
+            if (odd != null)
+            {
+                Plugin.Log("Flip and Burn's SelectEntry has changed (it now calls " + odd + "): not patched, so the list "
+                    + "closes when you pick. Please report this so the plugin can be updated.");
+                return;
+            }
             Plugin.Harmony.Patch(select, prefix: new HarmonyMethod(typeof(KeepNavOpen), nameof(KeepNavOpen.SelectPrefix)));
             patchedMenus.Add(menu);
             KeepOpenPatched = true;
             Plugin.Log("Flip and Burn's list patched: it stays open on a pick");
         }
         catch (Exception e) { Plugin.Log("can't keep Flip and Burn's list open on a pick: " + e.Message); }
+    }
+
+    /// <summary>
+    /// The prefix replaces SelectEntry (F&amp;B 2832248541: check Enabled, pick an asteroid ring's nearest point,
+    /// OnSelect, Close), so it is only safe while the method still does just that. Returns the first call outside that
+    /// list, or null when the shape matches.
+    /// </summary>
+    private static string UnexpectedCalls(MethodInfo select)
+    {
+        var known = new HashSet<string> { "get_Enabled", "get_PointOfInterest", "get_Ring", "ClosestPoint", "get_Session",
+            "get_Camera", "get_Position", "set_SelectedPosition", ".ctor", "Invoke", "Close" };
+        bool invoke = false, close = false;
+        try
+        {
+            foreach (var op in PatchProcessor.ReadMethodBody(select))
+            {
+                if (!(op.Value is MethodBase m)) continue;
+                if (!known.Contains(m.Name)) return m.DeclaringType?.Name + "." + m.Name;
+                invoke |= m.Name == "Invoke";
+                close |= m.Name == "Close";
+            }
+        }
+        catch (Exception e) { return "unreadable IL: " + e.Message; }
+        return invoke && close ? null : "no OnSelect/Close";
     }
 
     /// <summary>Puts our detour waypoints in F&amp;B's N list (replacing the last set; empty clears them). Client side only.</summary>

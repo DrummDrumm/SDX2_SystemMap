@@ -386,7 +386,7 @@ internal static class Program
         AutopilotPanel.RouteHit Frame(float mx, float my, bool down, bool pressed, bool released)
         {
             ui.Input(c, mx, my, down, pressed, released);
-            return AutopilotPanel.RoutePanel(ui, 0, 0, 600, 1080, 20, t.Path, lim, 50000, 10, new SignatureInfo { Weight = 8 }, names, false, "M");
+            return AutopilotPanel.RoutePanel(ui, 0, 0, 600, 1080, 20, t.Path, lim, 50000, 10, new SignatureInfo { Weight = 8 }, names, false, "Ctrl+M");
         }
         Frame(-1, -1, false, false, false);
         var tr = c.Find("Burn", 0);   // the burn slider row label
@@ -459,6 +459,21 @@ internal static class Program
         var pst = new MapSettings { Pip = true, PipCorner = "BL", PipSize = 1.4f }; pst.Save(dir);
         var pl = MapSettings.Load(dir);
         Check(pl.Pip && pl.PipCorner == "BL" && Math.Abs(pl.PipSize - 1.4f) < 1e-4, "pip: saved and loaded");
+        // key bindings
+        var kc = KeyCombo.Parse("shift+ctrl+m");
+        Check(kc.Ctrl && kc.Shift && !kc.Alt && kc.Key == "m" && kc.ToString() == "Ctrl+Shift+m", "keys: parse any order and case");
+        Check(KeyCombo.Parse("Ctrl+Alt+OemQuestion").Display == "Ctrl+Alt+/" && KeyCombo.Parse("Ctrl+Alt+/").Key == "OemQuestion", "keys: / shown and read back");
+        Check(KeyCombo.Parse("Alt+5").Key == "D5" && KeyCombo.Parse("Alt+D5").Display == "Alt+5", "keys: digits");
+        Check(KeyCombo.Parse("None").IsNone && KeyCombo.Parse("Ctrl+").IsNone && KeyCombo.Parse("").ToString() == "None" && KeyCombo.Parse("None").Display == "unbound", "keys: unbound");
+        Check(KeyCombo.Parse("Shift+M").Equals(KeyCombo.Parse("shift+m")) && !KeyCombo.Parse("Shift+M").Equals(KeyCombo.Parse("Ctrl+Shift+M")), "keys: equality is exact on modifiers");
+        var kd = new MapSettings();
+        Check(kd.KeyMap == "Shift+M" && kd.KeyAutopilot == "Ctrl+M" && kd.KeyPin == "Alt+M" && kd.KeySteer == "Ctrl+Shift+M", "keys: defaults leave M alone to the game");
+        var ks = new MapSettings { KeyMap = "F8", KeySteer = "None" }; ks.Save(dir);
+        var kl = MapSettings.Load(dir);
+        Check(kl.KeyMap == "F8" && kl.KeySteer == "None" && kl.KeyPin == "Alt+M", "keys: saved and loaded");
+        File.WriteAllText(dir, "PreviewKey=N" + Environment.NewLine);
+        var ko = MapSettings.Load(dir);
+        Check(ko.KeyMap == "Shift+N" && ko.KeyAutopilot == "Ctrl+N" && ko.KeyPin == "Alt+N" && ko.KeySteer == "Ctrl+Shift+N", "keys: an old PreviewKey carries over");
         Check(SideLayout.Corner("top left") == "TL" && SideLayout.Corner("br") == "BR" && SideLayout.Corner("Bottom-Left") == "BL" && SideLayout.Corner("middle") == null, "pip: corner names");
         Check(SideLayout.NextCorner("TR") == "BR" && SideLayout.NextCorner("BR") == "BL" && SideLayout.NextCorner("BL") == "TL" && SideLayout.NextCorner("TL") == "TR" && SideLayout.NextCorner(null) == "TR", "pip: Q cycles the corners");
         var tr = SideLayout.Pip(1920, 1080, 1, "TR"); var bl = SideLayout.Pip(1920, 1080, 1, "BL"); var big = SideLayout.Pip(1920, 1080, 2, "TR");
@@ -624,7 +639,7 @@ internal static class Program
                 string[] rows = { "Earth", "  Luna", "Belt.Tycho.STN   ← selected", "Belt.Vesta.STN", "Mars", "Ice Field (GPS)" };
                 for (int i = 0; i < rows.Length; i++) g.DrawString(rows[i], f, i == 2 ? Brushes.LightGreen : Brushes.Gainsboro, 690, 350 + i * 34);
             }
-            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\nKEYS|M hide" + MapScene.Sep + "Shift+M full map" + MapScene.Sep + "Ctrl+M autopilot" + MapScene.Sep + "Alt+M pin on screen" };
+            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\nKEYS|Shift+M map, full map, off" + MapScene.Sep + "Ctrl+M autopilot" + MapScene.Sep + "Alt+M pin on screen" };
             var box = SideBox(1920, 1080);
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
@@ -663,7 +678,7 @@ internal static class Program
             Check(dodge.HasValue, "render: the asteroid on the first leg gets a dodge point");
             snap.Asteroids.Add(new MapSnapshot.Marker { Name = "Asteroid", Pos = rock, Color = MapScene.HazardCol });
             snap.Dodges.Add(dodge.Value);
-            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "M hide · Shift+M full map · Ctrl+M autopilot" };
+            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "Shift+M map, full map, off · Ctrl+M autopilot" };
             var box = SideBox(1920, 1080);
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
@@ -672,7 +687,7 @@ internal static class Program
             scene.Draw(c, box);
             float px = Math.Max(14f, 1080 / 52f);
             var st = new RouteExport.Status { State = "flying", Wp = 0, Count = 3, Dist = route.Distance * 0.9, Speed = 31200, Eta = 2400, Msg = "Flying to " + route.Waypoints[0].Name };
-            var line = AutopilotPanel.StatusLine(c, 1920, 54, px * 0.9f, route.TargetName, st, "M");
+            var line = AutopilotPanel.StatusLine(c, 1920, 54, px * 0.9f, route.TargetName, st, "Ctrl+M");
             AutopilotPanel.AsteroidWarning(c, 1920, line.Bottom + px * 0.5f, px, 1_250e3, 31200, true, true, true, 0.7);
             var list = SideLayout.FnbList(1920, 1080);
             // the route panel left of the list, with one of your own waypoints and a 60 % thrust cap
@@ -688,10 +703,10 @@ internal static class Program
             ui.Input(c, 500, 640, false, false, false);
             var names = new List<string>(); foreach (var u in t2.UserPoints) names.Add(u.Name);
             float pw = Math.Min(list.X - 1080 * 0.044f, px * 32);
-            var hit = AutopilotPanel.RoutePanel(ui, list.X - 1080 * 0.022f - pw, list.Y, pw, 1080, px, t2.Path, lim, 50000, snap.MaxAccel, new SignatureInfo { Weight = 14, Floor = DriveSignature.StrengthForKm(50), FloorWhat = "antenna broadcast", LiveAllRound = DriveSignature.StrengthForKm(50), LiveCone = 0 }, names, false, "M", 0.2);
+            var hit = AutopilotPanel.RoutePanel(ui, list.X - 1080 * 0.022f - pw, list.Y, pw, 1080, px, t2.Path, lim, 50000, snap.MaxAccel, new SignatureInfo { Weight = 14, Floor = DriveSignature.StrengthForKm(50), FloorWhat = "antenna broadcast", LiveAllRound = DriveSignature.StrengthForKm(50), LiveCone = 0 }, names, false, "Ctrl+M", 0.2);
             Check(hit.Panel.Bottom <= 1080 && hit.Panel.X >= 0 && hit.Panel.Right < list.X, "route panel fits left of the list");
             Check(!hit.Engage && !hit.Cancel && hit.Remove < 0 && !hit.Changed, "no clicks: nothing happens");
-            var lines = AutopilotPanel.ConfirmLines(t2.Path, "M");
+            var lines = AutopilotPanel.ConfirmLines(t2.Path, "Ctrl+M");
             Check(lines.Exists(l => l.Text.Contains("short of")) && lines.Exists(l => l.Text.Contains("1 waypoint")), "route lines say where it stops and count your waypoint");
             // under the list on the plain picture: the two choices
             AutopilotPanel.Choice(ui, 960, list.Bottom + px * 0.8f, px, true, out _, out _);

@@ -8,9 +8,10 @@ namespace SDX2_SystemMap;
 /// <summary>Plain key=value settings file (Storage\SDX2_SystemMap.ini). Game-free so it can be tested.</summary>
 public sealed class MapSettings
 {
-    /// <summary>Toggles the route preview window (Shift+key opens the full map). A MyKeys name.</summary>
-    public string PreviewKey = "M";
-    /// <summary>Show the map window whenever F&amp;B's N list opens (M hides it again).</summary>
+    /// <summary>Key bindings (<see cref="KeyCombo"/>; "None" unbinds). The map key cycles map window → full map → off.
+    /// M alone is left to the game (its symmetry key).</summary>
+    public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion";
+    /// <summary>Show the map window whenever F&amp;B's N list opens.</summary>
     public bool ShowMapWithNav = true;
     /// <summary>Keep F&amp;B's N list open when you pick a destination (it closes by itself otherwise).</summary>
     public bool KeepNavOpen = true;
@@ -43,6 +44,7 @@ public sealed class MapSettings
     public static MapSettings Load(string path)
     {
         var s = new MapSettings();
+        string legacyKey = null; bool keys = false;
         try
         {
             if (!File.Exists(path)) return s;
@@ -54,7 +56,12 @@ public sealed class MapSettings
                 string k = line.Substring(0, eq).Trim(), v = line.Substring(eq + 1).Trim();
                 switch (k)
                 {
-                    case "PreviewKey": s.PreviewKey = v; break;
+                    case "PreviewKey": legacyKey = v; break; // older files: one key with Shift/Ctrl/Alt/Ctrl+Shift
+                    case "KeyMap": s.KeyMap = KeyCombo.Parse(v).ToString(); keys = true; break;
+                    case "KeyAutopilot": s.KeyAutopilot = KeyCombo.Parse(v).ToString(); keys = true; break;
+                    case "KeyPin": s.KeyPin = KeyCombo.Parse(v).ToString(); keys = true; break;
+                    case "KeySteer": s.KeySteer = KeyCombo.Parse(v).ToString(); keys = true; break;
+                    case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
@@ -92,6 +99,11 @@ public sealed class MapSettings
             }
         }
         catch { }
+        if (!keys && !string.IsNullOrWhiteSpace(legacyKey))
+        {
+            string k = KeyCombo.Parse(legacyKey).Key ?? "M";
+            s.KeyMap = "Shift+" + k; s.KeyAutopilot = "Ctrl+" + k; s.KeyPin = "Alt+" + k; s.KeySteer = "Ctrl+Shift+" + k;
+        }
         if (double.IsNaN(s.Yaw) || double.IsInfinity(s.Yaw)) s.Yaw = 0.9;
         if (double.IsNaN(s.Pitch) || double.IsInfinity(s.Pitch)) s.Pitch = 0.62;
         s.Pitch = Math.Max(OrbitCamera.MinPitch, Math.Min(OrbitCamera.MaxPitch, s.Pitch));
@@ -104,9 +116,10 @@ public sealed class MapSettings
     public void Save(string path)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# SDX2 System Map settings. PreviewKey is a game key name (M, N, F8, ...); Shift+key opens the full map.");
+        sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
-        L("PreviewKey", PreviewKey); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
+        L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings);
+        L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
         L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
         L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);

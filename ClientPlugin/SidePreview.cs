@@ -10,7 +10,7 @@ namespace SDX2_SystemMap;
 
 /// <summary>
 /// The map window beside Flip and Burn's N list, the route plan behind it, and the autopilot's buttons and panel.
-///  - Opening the N list shows the map window (ShowMapWithNav); M hides or shows it, Shift+M opens the full map.
+///  - Opening the N list shows the map window (ShowMapWithNav); Shift+M cycles map window, full map, off. M alone stays the game's symmetry key.
 ///    The list stays open when you pick a destination (KeepNavOpen, see FlipAndBurnLink).
 ///  - Once a destination is picked, AUTOPILOT and MANUAL sit under the list. MANUAL closes the list: fly it with
 ///    Flip and Burn. AUTOPILOT opens the route panel beside the list: top speed, a thrust or signature cap, your own
@@ -35,8 +35,6 @@ internal static class SidePreview
     private static readonly GameCanvas canvas = new GameCanvas();
     private static readonly PanelUi ui = new PanelUi();
     private static readonly List<string> userNames = new List<string>();
-    private static MyKeys key = MyKeys.M;
-    private static string keyText;
     private static double nextRoute, promptUntil, lastDraw;
     private static int publishedRevision = -1, lastNext = -1;
     private static string lastTarget, prevSel;
@@ -74,17 +72,6 @@ internal static class SidePreview
         Tracker.Clearance = s.ClearanceKm * 1000;
     }
 
-    private static MyKeys Key
-    {
-        get
-        {
-            var t = Plugin.Settings.PreviewKey ?? "";
-            if (t == keyText) return key;
-            keyText = t;
-            if (!Enum.TryParse(t.Trim(), true, out key) || key == MyKeys.None) { key = MyKeys.M; Plugin.Log("Preview key '" + t + "' isn't a game key name; using M."); }
-            return key;
-        }
-    }
 
     /// <summary>
     /// Admin mode or AFK (<see cref="PlayGuard"/>): close the full map, hide the preview and leave F&amp;B's list to itself.
@@ -171,7 +158,7 @@ internal static class SidePreview
         AsteroidWatch.Update(now, Snap, Tracker, engaged);
         if (engaged && AsteroidWatch.Changed && Path != null && now >= dodgeNoteAt)
         {
-            Notify("Asteroid on the route: Ctrl+Shift+" + Key + " steers round it.", false);
+            if (!Binds.Steer.IsNone) Notify("Asteroid on the route: " + Binds.Steer.Display + " steers round it.", false);
             dodgeNoteAt = now + 15;
         }
         WatchState();
@@ -199,15 +186,37 @@ internal static class SidePreview
     private static void HandleKeys()
     {
         var input = MyInput.Static;
-        if (input == null || !input.IsNewKeyPressed(Key) || !KeysFree()) return;
-        if (input.IsAnyCtrlKeyPressed() && input.IsAnyShiftKeyPressed()) { SteerRound(); return; }
-        if (input.IsAnyShiftKeyPressed()) { MapScreen.Open(); return; }
-        if (input.IsAnyCtrlKeyPressed()) { AutopilotKey(); return; }
-        if (input.IsAnyAltKeyPressed()) { Notify(TogglePip(), true); return; }
-        Visible = !Visible;
+        if (input == null || !KeysFree()) return;
+        // each binding fires only with exactly its modifiers, so plain M stays the game's symmetry key
+        if (Binds.Steer.Pressed()) SteerRound();
+        else if (Binds.Map.Pressed()) CycleView();
+        else if (Binds.Autopilot.Pressed()) AutopilotKey();
+        else if (Binds.Pin.Pressed()) Notify(TogglePip(), true);
+    }
+
+    /// <summary>The map key (Shift+M): map window → full map → off (the full map's map key does the last step).</summary>
+    private static void CycleView()
+    {
         autoShown = false;
         promptUntil = 0;
-        if (Visible) reframe = true;
+        if (!Visible) { Visible = true; reframe = true; return; }
+        MapScreen.Open();
+    }
+
+    /// <summary>The help row under the map: each bound key and what it does.</summary>
+    private static string KeysHelp()
+    {
+        var sb = new System.Text.StringBuilder("KEYS|");
+        void Add(KeyCombo b, string what) { if (b.IsNone) return; if (sb.Length > 5) sb.Append(MapScene.Sep); sb.Append(b.Display).Append(' ').Append(what); }
+        Add(Binds.Map, "map, full map, off"); Add(Binds.Autopilot, "autopilot"); Add(Binds.Pin, "pin on screen");
+        return sb.ToString();
+    }
+
+    /// <summary>The map key in the full map: close it and hide the map window, ending the cycle.</summary>
+    public static void CycleOff()
+    {
+        Visible = false;
+        autoShown = false;
     }
 
     /// <summary>Ctrl+M (and A in the full map): stop if flying (after asking), else open the N list with the route panel.</summary>
@@ -356,7 +365,7 @@ internal static class SidePreview
         if (kind == "Your ship") return "That's your ship.";
         if (routePanel && adding && Tracker.TargetName != null)
             return Tracker.AddUser(name, pos) ? "Waypoint added: " + name : "Can't add " + name + " (already in the route, or 8 waypoints)";
-        if (AutopilotLink.Engaged(Plugin.Now)) return "The autopilot is flying: stop it (Ctrl+M) before you change the destination.";
+        if (AutopilotLink.Engaged(Plugin.Now)) return "The autopilot is flying: stop it (" + Binds.Autopilot.Display + ") before you change the destination.";
         if (!FlipAndBurnLink.Found) return "Flip and Burn isn't loaded.";
         // a station's F&B entry goes by its GPS name (JU.Ganymede.STN), shown as the pick's detail
         string alt = kind == "Trade station" ? detail : null;
@@ -469,7 +478,7 @@ internal static class SidePreview
         else if (!navOpen) Visible = false;
         reframe = true;
         Plugin.SaveSettings();
-        return on ? "Map preview pinned on screen (" + CornerName(Plugin.Settings.PipCorner) + "). Alt+" + Key + " to unpin."
+        return on ? "Map preview pinned on screen (" + CornerName(Plugin.Settings.PipCorner) + ")." + (Binds.Pin.IsNone ? "" : " " + Binds.Pin.Display + " to unpin.")
                   : "Map preview unpinned.";
     }
 
@@ -520,7 +529,7 @@ internal static class SidePreview
         float sw = full.Width, sh = full.Height;
         float px = Math.Max(14f, sh / 52f);
         var path = Path;
-        string k = Key.ToString();
+        string k = Binds.Map.Display, stop = Binds.Autopilot.Display;
         bool engaged = AutopilotLink.Engaged(now);
         var input = MyInput.Static;
         float mx = float.NaN, my = float.NaN;
@@ -529,10 +538,10 @@ internal static class SidePreview
 
         // HUD: autopilot status and asteroid warning
         float hudY = sh * 0.05f;
-        if (engaged) hudY = AutopilotPanel.StatusLine(canvas, sw, hudY, px * 0.9f, flyingTarget ?? NonEmpty(AutopilotLink.Status?.Target) ?? "route", AutopilotLink.Status, k).Bottom + px * 0.5f;
+        if (engaged) hudY = AutopilotPanel.StatusLine(canvas, sw, hudY, px * 0.9f, flyingTarget ?? NonEmpty(AutopilotLink.Status?.Target) ?? "route", AutopilotLink.Status, stop).Bottom + px * 0.5f;
         if (!double.IsNaN(AsteroidWatch.NearestDistance))
             AutopilotPanel.AsteroidWarning(canvas, sw, Math.Max(hudY, sh * 0.12f), px, AsteroidWatch.NearestDistance, Snap.ShipVel.Length,
-                AsteroidWatch.NearestOnRoute, AsteroidWatch.NearestDodged, engaged, now, Key.ToString());
+                AsteroidWatch.NearestOnRoute, AsteroidWatch.NearestDodged, engaged, now, Binds.Steer.Display);
 
         if (Visible)
         {
@@ -545,7 +554,7 @@ internal static class SidePreview
             bool follow = Plugin.Settings.PreviewFollow;
             if (follow && Snap.HasShip) { scene.Cam.GoalTarget = Snap.ShipPos; scene.Cam.Target = Snap.ShipPos; }
             scene.Cam.Tick(dt);
-            string keys = "KEYS|" + k + " hide" + MapScene.Sep + "Shift+" + k + " full map" + MapScene.Sep + "Ctrl+" + k + " autopilot" + MapScene.Sep + "Alt+" + k + " pin on screen";
+            string keys = KeysHelp();
             if (pip) { scene.MouseX = scene.MouseY = float.NaN; scene.Help = ""; }
             else if (navOpen) { scene.MouseX = mx; scene.MouseY = my; scene.Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\n" + keys; }
             else { scene.MouseX = scene.MouseY = float.NaN; scene.Help = keys; }
@@ -581,7 +590,7 @@ internal static class SidePreview
         {
             string text = path.DetoursAhead > 0
                 ? "Route goes via \"" + path.Waypoints[path.Next].Name + "\": pick it in N first    preview [" + k + "]"
-                : "Preview route to " + path.TargetName + "   [" + k + "]      full map [Shift+" + k + "]";
+                : "Preview route to " + path.TargetName + "   [" + k + "]";
             if (engaged) text = "Autopilot is flying the route    preview [" + k + "]";
             float w = canvas.TextWidth(text, px) + px * 2, h = px * 1.8f;
             var promptBox = new Box((sw - w) / 2, y, w, h);
@@ -625,7 +634,7 @@ internal static class SidePreview
         float px0 = left ? list.X - margin - pw : list.Right + margin;
         userNames.Clear();
         foreach (var u in Tracker.UserPoints) userNames.Add(u.Name);
-        var hit = AutopilotPanel.RoutePanel(ui, px0, list.Y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding, k, now);
+        var hit = AutopilotPanel.RoutePanel(ui, px0, list.Y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding, Binds.Autopilot.Display, now);
         RouteHit(hit);
     }
 
@@ -666,7 +675,7 @@ internal static class SidePreview
             userNames.Clear();
             foreach (var u in Tracker.UserPoints) userNames.Add(u.Name);
             var hit = AutopilotPanel.RoutePanel(ui, x, y, pw, sh, px, path, Limits, Snap.MaxSpeed, Snap.MaxAccel, Snap.Signature, userNames, adding,
-                Key.ToString(), now, "Shift+click a point on the map");
+                Binds.Autopilot.Display, now, "Shift+click a point on the map");
             RouteHit(hit);
             return hit.Panel;
         }

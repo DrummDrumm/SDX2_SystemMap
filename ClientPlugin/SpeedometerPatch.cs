@@ -19,7 +19,7 @@ internal static class SpeedometerPatch
     {
         try
         {
-            if (!Plugin.Settings.FixSpeedometer || PlayGuard.Blocked) return;
+            if (!Plugin.Settings.FixSpeedometer || PlayGuard.Blocked || !WorldGate.Active) return;
             if (!(MySession.Static?.ControlledEntity is MyShipController sc) || sc.CubeGrid == null) return;
             float real = (float)FlipAndBurnLink.Velocity(sc.CubeGrid).Length();
             if (real > ___m_currentValue + 0.5f && !float.IsNaN(real) && !float.IsInfinity(real))

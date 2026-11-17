@@ -6,8 +6,12 @@ from scratch.
 
 ## In game
 
-1. Sit in a cockpit and press **N**. Flip and Burn's list opens with the **map window** beside it (M hides it, Shift+M
-   opens the full-screen map).
+The plugin only runs in worlds that have SDX2's Flip and Burn mod (workshop 2832248541). Elsewhere it stays off:
+no keys, no map, no toolbar actions, no speed-dial fix. Only its settings window opens.
+
+1. Sit in a cockpit and press **N**. Flip and Burn's list opens with the **map window** beside it (**Shift+M** cycles
+   it: map window, full-screen map, off. M alone stays the game's symmetry key; every key can be rebound in
+   [Settings](#settings)).
 2. Pick a destination. The list **stays open** (Flip and Burn would close it), and the map shows the route.
 3. Under the list, choose:
    - **MANUAL**: the list closes and you fly it with Flip and Burn as usual.
@@ -30,7 +34,7 @@ clearance). ETA assumes a stop at each detour.
 
 Side window (while the N list is open, so the mouse is free): right-drag orbits, wheel zooms, middle click re-frames,
 and hovering shows what a point is. It doesn't take clicks on the map: pick destinations in the N list, or with
-**Shift+click** in the full map (Shift+M). **FOLLOW SHIP** (top right of the window) keeps the view centred on your
+**Shift+click** in the full map (Shift+M from the map window). **FOLLOW SHIP** (top right of the window) keeps the view centred on your
 ship; it's on at the start of each session, and middle click or the button turns it off. The bottom bar holds the legend (burn / coast / brake / flown, grid
 scale) with the keys under it in labelled rows (VIEW, KEYS; the full map adds ROUTE and SHOW with each layer's on/off).
 Esc closes the full map.
@@ -92,7 +96,8 @@ Full-screen map:
 | R / V | Plan detours again from here / detours on or off |
 | N | Close the map and open Flip and Burn's list |
 | G O X T P L J | Grid, orbits, sectors, stations, GPS, labels, moons |
-| Esc or M | Close |
+| Esc | Back to the map window |
+| Shift+M | Close the map and hide the map window |
 
 **Autopilot controls in the map.** After a Shift+click (or A), a window on the right works like the buttons under the
 N list: **AUTOPILOT** opens the same route panel there (top speed, burn and brake caps, waypoints: Shift+click points
@@ -237,7 +242,7 @@ without flying it.
   destination doesn't change. If the patch is missing, the plugin opens the list again after a pick instead.
 - Read-only reflection for the rest:
   - the picked destination (`Hud._selection`);
-  - whether its search box has focus (M is ignored while you type);
+  - whether its search box has focus (the plugin's keys are ignored while you type);
   - `Extensions.GetThrustData` (max acceleration);
   - `Session.Config.MaxSpeed`;
   - the grid's speed state;
@@ -252,13 +257,17 @@ If a Flip and Burn update renames those internals, the preview stops finding a d
 
 ## Settings
 
-**Settings window:** Pulsar's **Config** button for the plugin, or **Ctrl+Alt+/** in game. It covers the preview key,
+**Settings window:** Pulsar's **Config** button for the plugin, or **Ctrl+Alt+/** in game. It covers the keys,
 the map window (opens with the N list, keep the list open, side, size, theme), the pinned map (on, corner, size),
 detours and clearance, loading new plans into the autopilot, and the speed dial fix. Changes apply at once and are
 saved when it closes; **Defaults** puts them back.
 
 Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini`:
-- `PreviewKey`;
+- `KeyMap` (`Shift+M`), `KeyAutopilot` (`Ctrl+M`), `KeyPin` (`Alt+M`), `KeySteer` (`Ctrl+Shift+M`), `KeySettings`
+  (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/): Ctrl/Shift/Alt plus a game key name, or `None`. A key fires only with
+  exactly its modifiers. In the window, click a key and press the new keys (Esc cancels, Backspace unbinds); a combo
+  already in use moves over and the other action is unbound. An older file's `PreviewKey=X` becomes Shift/Ctrl/Alt/
+  Ctrl+Shift+X;
 - `ShowMapWithNav` (the map window opens with the N list), `KeepNavOpen` (the list stays open on a pick);
 - `ApMaxSpeed`, `ApBySignature`, `ApThrustPct`, `ApConeSignatureKm`, `ApBrakePct`, `ApBrakeConeSignatureKm` (the route
   panel's last limits; the first pair of caps is the burn);

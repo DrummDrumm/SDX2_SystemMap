@@ -81,7 +81,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             var o = scene.Opt;
             return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "F frame route" + s + "H whole system" + "\n"
                 + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
-                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + s + "Esc / M close";
+                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
 
@@ -92,7 +92,7 @@ internal sealed class MapScreen : MyGuiScreenBase
         if (input != null && input.IsNewKeyPressed(MyKeys.Escape) && State == MyGuiScreenState.OPENED) { CloseScreen(); return; }
         base.HandleInput(receivedFocusInThisUpdate);
         if (input == null || receivedFocusInThisUpdate) return;
-        if (input.IsNewKeyPressed(MyKeys.M)) { CloseScreen(); return; }
+        if (Binds.Map.Pressed()) { SidePreview.CycleOff(); CloseScreen(); return; } // the map key's last step: off
         if (input.IsNewKeyPressed(MyKeys.N)) { CloseScreen(); FlipAndBurnLink.OpenNavMenu(); return; }
         var o = scene.Opt;
         if (input.IsNewKeyPressed(MyKeys.F)) { follow = false; scene.FrameDefault(false); }

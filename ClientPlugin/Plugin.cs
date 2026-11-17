@@ -44,6 +44,7 @@ public class Plugin : IPlugin
         {
             if (Sandbox.Game.World.MySession.Static == null) return;
             SettingsScreen.CheckHotkey();
+            if (!WorldGate.Update(Now)) return; // not an SDX2 world: stay off
             PlayGuard.Update(Now);
             if (PlayGuard.Blocked) { SidePreview.Pause(); return; }
             FlipAndBurnLink.Search(Now);
@@ -84,7 +85,7 @@ internal static class GamePlayDrawPatch
 {
     private static void Postfix(bool __result)
     {
-        if (!__result) return;
+        if (!__result || !WorldGate.Active) return;
         try { SidePreview.Draw(); } catch (Exception e) { Plugin.LogThrottled("preview draw failed: " + e); }
     }
 }
@@ -97,13 +98,13 @@ public class SystemMapSession : MySessionComponentBase
     {
         FlipAndBurnLink.Load();
         PlayGuard.Reset();
-        ToolbarActions.Register();
-        SidePreview.Start();
+        WorldGate.Start(Plugin.Now); // toolbar actions and the pinned map only in a world with Flip and Burn
     }
 
     protected override void UnloadData()
     {
         FlipAndBurnLink.Unload();
+        WorldGate.Reset();
         SpectrumLink.Reset();
         SidePreview.Reset();
         Plugin.SaveSettings();

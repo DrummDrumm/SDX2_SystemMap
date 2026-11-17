@@ -45,7 +45,7 @@ public static class AutopilotPanel
         if (borders > 0) l.Add(("Crosses " + borders + (borders == 1 ? " sector border" : " sector borders") + " (server transfers): stay in the seat", Warn));
         if (p.MaxAccel <= 0) l.Add(("Max acceleration unknown: the ship's own thrust is used", Warn));
         l.Add(("Asteroids found on the line are flown round", Dim));
-        l.Add(("Move, turn, or press Ctrl+" + stopKey + " at any time to take over", Dim));
+        l.Add(("Move, turn, or press " + stopKey + " at any time to take over", Dim));
         return l;
     }
 
@@ -215,7 +215,7 @@ public static class AutopilotPanel
             if (s.Count > 1) text += "    point " + Math.Min(s.Wp + 1, s.Count) + " of " + s.Count;
         }
         else text += "    starting...";
-        string sub = (s != null && !string.IsNullOrEmpty(s.Msg) ? s.Msg + "    " : "") + "Move or turn to take over    Ctrl+" + stopKey + ": stop";
+        string sub = (s != null && !string.IsNullOrEmpty(s.Msg) ? s.Msg + "    " : "") + "Move or turn to take over    " + stopKey + ": stop";
         float w = Math.Max(c.TextWidth(text, px), c.TextWidth(sub, px * 0.8f)) + px * 2, h = px * 2.6f;
         var b = new Box((screenW - w) / 2, y, w, h);
         c.Rect(b.X, b.Y, b.W, b.H, Panel);
@@ -226,12 +226,12 @@ public static class AutopilotPanel
     }
 
     /// <summary>The asteroid warning (blinks while it's on the line and not dodged).</summary>
-    public static Box AsteroidWarning(IMapCanvas c, float screenW, float y, float px, double dist, double speed, bool onRoute, bool dodged, bool engaged, double now, string key = "M")
+    public static Box AsteroidWarning(IMapCanvas c, float screenW, float y, float px, double dist, double speed, bool onRoute, bool dodged, bool engaged, double now, string key = "Ctrl+Shift+M")
     {
         string text = (onRoute ? "ASTEROID ON ROUTE  " : "ASTEROID AHEAD  ") + Fmt.Dist(dist);
         if (speed > 1) text += "  (" + Fmt.Time(dist / speed) + ")";
         string sub = dodged ? "Autopilot flies round it"
-            : engaged ? "Ctrl+Shift+" + key + " steers the autopilot round it"
+            : engaged ? key + " steers the autopilot round it"
             : onRoute ? "Steer round it, or pick a detour" : "On your current heading";
         bool blink = !dodged && (now % 1.0) < 0.5;
         var col = dodged ? Warn : Stop;
