@@ -459,6 +459,7 @@ internal static class Program
         var pst = new MapSettings { Pip = true, PipCorner = "BL", PipSize = 1.4f }; pst.Save(dir);
         var pl = MapSettings.Load(dir);
         Check(pl.Pip && pl.PipCorner == "BL" && Math.Abs(pl.PipSize - 1.4f) < 1e-4, "pip: saved and loaded");
+        Check(MapScene.GridStepFor(MapScene.ShipViewDistance) == 2e6, "no route: the view round your ship has a 2000 km grid");
         // key bindings
         var kc = KeyCombo.Parse("shift+ctrl+m");
         Check(kc.Ctrl && kc.Shift && !kc.Alt && kc.Key == "m" && kc.ToString() == "Ctrl+Shift+m", "keys: parse any order and case");

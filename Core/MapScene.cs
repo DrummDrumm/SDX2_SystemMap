@@ -224,7 +224,7 @@ public sealed class MapScene
 
     private void Grid()
     {
-        gridStep = Nice(Cam.Distance / 3.5);
+        gridStep = GridStepFor(Cam.Distance);
         const int n = 10;
         double cx = Math.Round(Cam.Target.X / gridStep) * gridStep, cz = Math.Round(Cam.Target.Z / gridStep) * gridStep;
         float w = Math.Max(1f, 0.7f * u);
@@ -1020,10 +1020,16 @@ public sealed class MapScene
     }
 
     /// <summary>Frames the camera on the route (ship and destination), or on the ship, or on the whole system.</summary>
+    /// <summary>Camera distance round your ship with no route: the grid (a nice step near distance / 3.5) reads 2000 km.</summary>
+    public const double ShipViewDistance = 7e6;
+
+    /// <summary>Distance → grid step, as the grid draws it.</summary>
+    public static double GridStepFor(double distance) => Nice(distance / 3.5);
+
     public void FrameDefault(bool snap)
     {
         if (Path != null) Cam.Frame(Path.Points(), 20e3);
-        else if (Snap.HasShip) Cam.FlyTo(Snap.ShipPos, 2e5);
+        else if (Snap.HasShip) Cam.FlyTo(Snap.ShipPos, ShipViewDistance);
         else Cam.FlyTo(V3.Zero, 6e7);
         if (snap) Cam.Snap();
     }

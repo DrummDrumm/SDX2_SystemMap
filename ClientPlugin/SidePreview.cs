@@ -574,7 +574,7 @@ internal static class SidePreview
                 if (ui.Button(followBox, ft, fpx, MapScene.ShipColor, follow))
                 {
                     Plugin.Settings.PreviewFollow = !follow;
-                    if (!follow && Snap.HasShip) scene.Cam.FlyTo(Snap.ShipPos, Math.Min(scene.Cam.GoalDistance, 2e6));
+                    if (!follow && Snap.HasShip) scene.Cam.FlyTo(Snap.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
                     Plugin.SaveSettings();
                 }
             }

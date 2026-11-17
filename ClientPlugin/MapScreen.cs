@@ -101,7 +101,7 @@ internal sealed class MapScreen : MyGuiScreenBase
         {
             follow = !follow;
             var sn = SidePreview.Snap;
-            if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, 2e6));
+            if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
             Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (no ship yet: sit in a cockpit)");
         }
         if (input.IsNewKeyPressed(MyKeys.C)) CopyFlip();
