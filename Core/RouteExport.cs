@@ -58,11 +58,14 @@ public static class RouteExport
         foreach (var w in SystemData.Worlds)
         {
             double alt = V3.Distance(to, w.Pos) - w.Radius;
-            if (alt < clearance && alt < bestAlt && V3.Distance(from, w.Pos) > w.Radius + clearance) { best = w; bestAlt = alt; }
+            // a point on a world you're already near is flown to; the world itself (its centre) never is
+            if (alt < clearance && alt < bestAlt && (V3.Distance(from, w.Pos) > w.Radius + clearance || DetourPlanner.IsCore(w, to))) { best = w; bestAlt = alt; }
         }
         if (best == null) return to;
         why = "world";
-        return best.Pos + (from - best.Pos).Normalized * (best.Radius + clearance);
+        // at the clearance on your side; already lower than that: where you are, but never below its ground
+        double r = Math.Max(DetourPlanner.Top(best), Math.Min(best.Radius + clearance, V3.Distance(from, best.Pos)));
+        return best.Pos + (from - best.Pos).Normalized * r;
     }
 
     /// <summary>The route section. <paramref name="passes"/> are dodge points flown by before the next waypoint.</summary>

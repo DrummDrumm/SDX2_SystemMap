@@ -22,6 +22,10 @@ public static class SystemData
         public string Name, Parent; public V3 Pos; public double Radius; public MapColor Color;
         public bool IsPlanet => Parent == "";
         public bool IsAsteroid => Parent == "Belt";
+        /// <summary>Not a world: a grid or station the route keeps out of (Radius already has the margin; no clearance on top).</summary>
+        public bool IsObstacle => Parent == ObstacleParent || Parent == StationParent;
+        /// <summary>A known station (kept apart from your grids when nearby spheres are merged).</summary>
+        public bool IsStation => Parent == StationParent;
     }
 
     public sealed class Station
@@ -66,6 +70,19 @@ public static class SystemData
 
     private static World W(string n, string parent, double x, double y, double z, double r, int rgb = 0x9AA4AE) =>
         new World { Name = n, Parent = parent, Pos = new V3(x, y, z), Radius = r, Color = MapColor.Rgb(rgb) };
+
+    public const string ObstacleParent = "(obstacle)", StationParent = "(station)";
+
+    /// <summary>
+    /// SDX2's base cores (SDX2: Core, Data/Cores/StationCores): sdx_shipcoreOutpost and sdx_shipcoreInstallation. A grid
+    /// set to station with one of these is a base.
+    /// </summary>
+    public static bool IsBaseCore(string subtype) =>
+        subtype != null && (subtype.IndexOf("shipcoreOutpost", StringComparison.OrdinalIgnoreCase) >= 0 || subtype.IndexOf("shipcoreInstallation", StringComparison.OrdinalIgnoreCase) >= 0);
+
+    /// <summary>A grid or station for the route to keep out of: a sphere of radius r round pos.</summary>
+    public static World Obstacle(string name, V3 pos, double r, bool station = false) =>
+        new World { Name = name, Parent = station ? StationParent : ObstacleParent, Pos = pos, Radius = r };
 
     public static readonly World[] Worlds = {
         W("Sol", "", -19187, -19187, -19187, 9500, 0xFFD24A),

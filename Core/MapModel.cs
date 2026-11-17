@@ -9,7 +9,12 @@ public sealed class MapSnapshot
     public bool HasShip;
     public string ShipName = "YOU";
     public V3 ShipPos, ShipVel;
+    /// <summary>The way your cockpit (or you) face.</summary>
+    public V3 ShipFwd;
     public bool InCockpit;
+    /// <summary>Your character's entity id (0 = none) and whether it's dead: a change means you respawned.</summary>
+    public long CharacterId;
+    public bool Dead;
 
     /// <summary>Flip and Burn: found and its API answered.</summary>
     public bool FnbReady;

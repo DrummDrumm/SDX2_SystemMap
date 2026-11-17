@@ -51,6 +51,16 @@ public sealed class RouteTracker
         TargetName = null; Waypoints.Clear(); UserPoints.Clear(); Next = 0; Path = null; Revision++;
     }
 
+    /// <summary>
+    /// Drops the plan (left the seat, respawned) and ignores F&amp;B's current pick (selectedName / selectedPos) until it
+    /// changes, so the same destination isn't planned again straight away. Picking a point again plans a new route.
+    /// </summary>
+    public void Cancel(string selectedName, V3 selectedPos)
+    {
+        Clear();
+        lastSel = selectedName; lastSelPos = selectedPos;
+    }
+
     /// <summary>The index of our point with this name and position (as picked in F&amp;B's list), or -1.</summary>
     public int IndexOf(string name, V3 pos)
     {
@@ -96,6 +106,16 @@ public sealed class RouteTracker
         }
     }
 
+    /// <summary>Moves one of your waypoints (keeping its place in the route) and plans the route again. False if it would sit on another point.</summary>
+    public bool MoveUser(int index, V3 pos)
+    {
+        if (index < 0 || index >= UserPoints.Count || V3.Distance(pos, Target) < 100) return false;
+        for (int i = 0; i < UserPoints.Count; i++) if (i != index && V3.Distance(UserPoints[i].Pos, pos) < 100) return false;
+        UserPoints[index] = (UserPoints[index].Name, pos);
+        if (hasShip) Replan(lastShip); else Revision++;
+        return true;
+    }
+
     public void RemoveUser(int index)
     {
         if (index < 0 || index >= UserPoints.Count) return;
@@ -104,6 +124,9 @@ public sealed class RouteTracker
     }
 
     /// <summary>Plans the route again from where the ship is now: detours on each leg, through your own waypoints.</summary>
+    /// <summary>Grids and stations to keep out of (set by the plugin; used when the route is planned).</summary>
+    public IList<SystemData.World> Obstacles;
+
     public void Replan(V3 ship)
     {
         if (TargetName == null) return;
@@ -111,14 +134,14 @@ public sealed class RouteTracker
         var from = ship;
         foreach (var u in UserPoints)
         {
-            var det = Avoid ? DetourPlanner.Plan(from, u.Pos, u.Name, Clearance) : new List<Waypoint>();
+            var det = Avoid ? DetourPlanner.Plan(from, u.Pos, u.Name, Clearance, Obstacles) : new List<Waypoint>();
             Waypoints.AddRange(det);
             var last = det.Count > 0 ? det[det.Count - 1].Pos : from;
             var stop = RouteExport.StopNear(last, u.Pos, Clearance, out _);
             Waypoints.Add(new Waypoint { Name = u.Name, Pos = stop, Pick = u.Pos, User = true });
             from = stop;
         }
-        if (Avoid) Waypoints.AddRange(DetourPlanner.Plan(from, Target, TargetName, Clearance));
+        if (Avoid) Waypoints.AddRange(DetourPlanner.Plan(from, Target, TargetName, Clearance, Obstacles));
         // number the detours across the whole route
         int total = 0, k = 0;
         foreach (var w in Waypoints) if (!w.User) total++;

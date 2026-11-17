@@ -44,6 +44,27 @@ public static class RouteClick
     }
 
     /// <summary>
+    /// Height dragging: the point on the vertical line through <paramref name="basePos"/> nearest the ray (eye, unit
+    /// dir), so a tilted view can put a waypoint above or below the plane. The height change is capped at
+    /// <paramref name="maxRise"/> (0 = 5× the eye's distance to the base). False when the view looks too nearly
+    /// straight up or down to tell height, or the nearest point is behind the eye; pos is then the base.
+    /// </summary>
+    public static bool HeightOnVertical(V3 eye, V3 dir, V3 basePos, out V3 pos, double maxRise = 0)
+    {
+        pos = basePos;
+        var w = basePos - eye;
+        double b = dir.Y, den = 1 - b * b;
+        if (den < 0.005) return false;
+        double t = (b * w.Dot(dir) - w.Y) / den;   // along +Y from the base
+        double s = (w.Dot(dir) - b * w.Y) / den;   // along the ray
+        if (s <= 0) return false;
+        if (maxRise <= 0) maxRise = 5 * Math.Max(1, w.Length);
+        t = Math.Max(-maxRise, Math.Min(maxRise, t));
+        pos = new V3(basePos.X, basePos.Y + t, basePos.Z);
+        return true;
+    }
+
+    /// <summary>
     /// The world point for a click at (sx, sy): on the route's line when the click is within tolPx pixels of it,
     /// otherwise on the horizontal plane at the height of the nearest route point. False when neither works.
     /// </summary>

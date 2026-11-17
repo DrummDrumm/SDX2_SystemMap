@@ -151,11 +151,14 @@ public sealed class RoutePlan
         Hazards.Clear();
         foreach (var w in SystemData.Worlds)
         {
-            if (DetourPlanner.Skip(w, Start, Target, Clearance)) continue;
+            if (DetourPlanner.IsCore(w, Start) || DetourPlanner.IsCore(w, Target)) continue; // flying to / from the world itself
             double c = V3.SegmentDistance(Start, Target, w.Pos, out var t);
             double clear = c - w.Radius;
-            if (clear > Clearance) continue;
-            Hazards.Add(new Hazard { World = w, Clearance = clear, At = t * Distance, Blocked = clear < 0, Closest = PointAt(t * Distance) });
+            double low = Math.Min(V3.Distance(Start, w.Pos), V3.Distance(Target, w.Pos));
+            bool blocked = c < Math.Min(w.Radius, low * 0.99); // through it (not just down to a point on its ground)
+            double floor = DetourPlanner.Floor(w, Start, Target, Clearance);
+            if (!blocked && (double.IsNaN(floor) || c >= floor)) continue;
+            Hazards.Add(new Hazard { World = w, Clearance = clear, At = t * Distance, Blocked = blocked, Closest = PointAt(t * Distance) });
         }
         Hazards.Sort((x, y) => x.At.CompareTo(y.At));
     }

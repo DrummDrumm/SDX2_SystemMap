@@ -61,7 +61,7 @@ internal static class SidePreview
         publishedRevision = -1; lastNext = -1;
         routePanel = adding = false; lastState = null; flyingTarget = null; flyingThrust = flyingBrake = 1;
         resumeTarget = null; stoppingSelf = asking = mapPanel = false; steeredTo = null;
-        AutopilotLink.Reset(); AsteroidWatch.Reset();
+        AutopilotLink.Reset(); AsteroidWatch.Reset(); Seat.Reset(); GridObstacles.Reset();
     }
 
     public static void ApplySettings(MapSettings s)
@@ -99,6 +99,8 @@ internal static class SidePreview
     public static void Update(double now)
     {
         GameState.Fill(Snap, now);
+        var leftWhy = Seat.Update(Snap.InCockpit, Snap.CharacterId, Snap.Dead);
+        if (leftWhy != null) CancelRoute(leftWhy);
         bool was = navOpen;
         navOpen = FlipAndBurnLink.IsNavMenuOpen();
         if (navOpen && !was)
@@ -125,6 +127,8 @@ internal static class SidePreview
         if (!navOpen && !mapPanel && now > panelGrace) { routePanel = false; adding = false; }
 
         AutopilotLink.Update(now);
+        GridObstacles.Update(now);
+        Tracker.Obstacles = GridObstacles.Current;
         bool engaged = AutopilotLink.Engaged(now);
         if (now >= nextRoute)
         {
@@ -352,6 +356,24 @@ internal static class SidePreview
         return "Waypoint removed: " + n + (Tracker.UserPoints.Count > 0 ? " (" + Tracker.UserPoints.Count + " left)" : "");
     }
 
+    /// <summary>Where one of your waypoints is (the point you placed, not the stop short of a station). False when it isn't one.</summary>
+    public static bool UserWaypoint(string name, out V3 pos)
+    {
+        int i = Tracker.UserPoints.FindIndex(u => u.Name == name);
+        pos = i >= 0 ? Tracker.UserPoints[i].Pos : default;
+        return i >= 0;
+    }
+
+    /// <summary>Dragging one of your waypoints up or down in the full map: moves it and plans the route again.</summary>
+    public static string MoveWaypoint(string name, V3 pos, double rise)
+    {
+        int i = Tracker.UserPoints.FindIndex(u => u.Name == name);
+        if (i < 0) return "That waypoint is gone";
+        if (!Tracker.MoveUser(i, pos)) return "Can't move " + name + " onto another point of the route";
+        nextRoute = 0;
+        return name + " moved " + Fmt.Dist(Math.Abs(rise)) + (rise >= 0 ? " up" : " down");
+    }
+
     /// <summary>Shift+right-click in the full map: a waypoint into the route where it fits (name null = "Waypoint n").</summary>
     public static string InsertWaypoint(string name, V3 pos)
     {
@@ -421,6 +443,22 @@ internal static class SidePreview
             stoppingSelf = false;
         }
         lastState = state;
+    }
+
+    private static readonly SeatWatch Seat = new SeatWatch();
+    private static readonly HeadingFollow previewHeading = new HeadingFollow();
+
+    /// <summary>
+    /// You got out of the seat or respawned: the planned route (and your waypoints) is dropped. F&amp;B's own pick stays,
+    /// but isn't planned again until you pick a point. An autopilot already flying isn't stopped here.
+    /// </summary>
+    private static void CancelRoute(string why)
+    {
+        if (Tracker.TargetName == null && Tracker.UserPoints.Count == 0) return;
+        Tracker.Cancel(Snap.FnbTargetName, Snap.FnbTarget);
+        routePanel = adding = mapPanel = false;
+        resumeTarget = null; steeredTo = null;
+        Notify("Route cancelled: " + why, false);
     }
 
     public static void Notify(string text, bool ok = true)
@@ -515,7 +553,11 @@ internal static class SidePreview
         var box = WindowBox();
         bool over = box.Contains(mx, my);
         bool right = input.IsRightMousePressed();
-        if (right && dragging) scene.Cam.Orbit(-(mx - lastMx) * 0.006, (my - lastMy) * 0.006);
+        if (right && dragging)
+        {
+            scene.Cam.Orbit(-(mx - lastMx) * 0.006, (my - lastMy) * 0.006);
+            if (Plugin.Settings.PreviewFollow && Plugin.Settings.FollowHeading) previewHeading.Turned(-(mx - lastMx) * 0.006);
+        }
         dragging = right && (dragging || over);
         lastMx = mx; lastMy = my;
         if (!over) return;
@@ -562,6 +604,7 @@ internal static class SidePreview
             if (reframe) { scene.FrameDefault(true); reframe = false; }
             bool follow = Plugin.Settings.PreviewFollow;
             if (follow && Snap.HasShip) { scene.Cam.GoalTarget = Snap.ShipPos; scene.Cam.Target = Snap.ShipPos; }
+            if (follow && Snap.HasShip && Plugin.Settings.FollowHeading) previewHeading.Update(scene.Cam, Snap.ShipVel, Snap.ShipFwd, dt);
             scene.Cam.Tick(dt);
             string keys = KeysHelp();
             if (pip) { scene.MouseX = scene.MouseY = float.NaN; scene.Help = ""; }

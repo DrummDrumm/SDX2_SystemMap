@@ -49,6 +49,7 @@ internal static class Program
         HoverOnTop();
         PoiMatching();
         WaypointClicks();
+        TurnWithShip();
 
         Console.WriteLine($"{checks - fails}/{checks} checks passed");
         return fails == 0 ? 0 : 1;
@@ -152,6 +153,17 @@ internal static class Program
         return true;
     }
 
+    /// <summary>The nearest the flown line start → waypoints → end comes to w's centre.</summary>
+    private static double LowestOver(V3 start, List<Waypoint> wps, V3 end, SystemData.World w)
+    {
+        var pts = new List<V3> { start }; foreach (var p in wps) pts.Add(p.Pos); pts.Add(end);
+        double min = double.MaxValue;
+        for (int i = 0; i + 1 < pts.Count; i++) min = Math.Min(min, V3.SegmentDistance(pts[i], pts[i + 1], w.Pos, out _));
+        return min;
+    }
+
+    private static string Km(double m) => (m / 1000).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " km";
+
     private static void Detours()
     {
         var earth = SystemData.FindWorld("Earth");
@@ -173,6 +185,74 @@ internal static class Program
         Check(DetourPlanner.Plan(earth.Pos + new V3(-800e3, 400e3, 0), earth.Pos + new V3(800e3, 400e3, 0), "C").Count == 0, "clear line: no detour");
         // flying to Earth or leaving it: never avoided
         Check(DetourPlanner.Plan(earth.Pos + new V3(-600e3, 0, 0), earth.Pos + new V3(0, 0, 130e3), "E").Count == 0, "flying to Earth: no detour");
+        // starting close to a world (inside the clearance) used to skip it: the line went straight through
+        double R = earth.Radius;
+        var lowStart = earth.Pos + new V3(-150e3, 0, 0); var farSide = earth.Pos + new V3(600e3, 0, 0); // 50 km up, target behind Earth
+        var low = DetourPlanner.Plan(lowStart, farSide, "F");
+        Check(low.Count >= 1 && LowestOver(lowStart, low, farSide, earth) >= R + 40e3 - 1, "low orbit: goes round near its own height, not through (" + Km(LowestOver(lowStart, low, farSide, earth) - R) + " up)");
+        Check(RoutePath.Make("F", lowStart, farSide, V3.Zero, 10, 50000, null, 0).First.Hazards.Exists(h => h.World == earth && h.Blocked), "low orbit: the straight line is flagged THROUGH EARTH");
+        Check(!RoutePath.Make("F", lowStart, farSide, V3.Zero, 10, 50000, low, 0).Legs.Exists(l => l.Hazards.Exists(h => h.Blocked)), "low orbit: the detoured legs aren't flagged through anything");
+        var band = earth.Pos + new V3(-205e3, 0, 0); // 105 km up: the corners at 1.15 x clearance were above the ship
+        var bandWps = DetourPlanner.Plan(band, farSide, "F");
+        Check(bandWps.Count >= 1 && LowestOver(band, bandWps, farSide, earth) >= R + 80e3, "105 km up: goes round (" + Km(LowestOver(band, bandWps, farSide, earth) - R) + " up)");
+        // on the ground: climb first, then round
+        var ground = earth.Pos + new V3(-102e3, 0, 0);
+        var up = DetourPlanner.Plan(ground, farSide, "F");
+        Check(up.Count >= 2 && Math.Abs(V3.Distance(up[0].Pos, earth.Pos) - (R + 100e3)) < 1 && V3.Distance(up[0].Pos, earth.Pos + new V3(-200e3, 0, 0)) < 1, "take-off: climbs straight up to the clearance first");
+        Check(LowestOver(up[0].Pos, up.GetRange(1, up.Count - 1), farSide, earth) >= R + 80e3, "take-off: then round, clear");
+        // landing on the far side: round, then down from above it
+        var base2 = earth.Pos + new V3(101e3, 0, 0);
+        var down = DetourPlanner.Plan(lowStart, base2, "B");
+        Check(down.Count >= 2 && V3.Distance(down[down.Count - 1].Pos, earth.Pos + new V3(200e3, 0, 0)) < 1, "landing: comes down from straight above the base");
+        Check(LowestOver(lowStart, down.GetRange(0, down.Count - 1), down[down.Count - 1].Pos, earth) >= R + 40e3 - 1, "landing: round, clear, before coming down");
+        // picking Earth itself from low orbit: stop above you, never at the centre
+        var stop = RouteExport.StopNear(lowStart, earth.Pos, 100e3, out var why);
+        Check(why == "world" && Math.Abs(V3.Distance(stop, earth.Pos) - 150e3) < 1 && stop.X < earth.Pos.X, "pick Earth from low orbit: stop where you are, not its centre");
+        Check(DetourPlanner.Plan(lowStart, earth.Pos, "Earth").Count == 0, "pick Earth: no detours round Earth itself");
+
+        // your own grids and the known stations: gone round outside their sphere, except the one you leave or fly to
+        var o1 = earth.Pos + new V3(0, 0, 3e6);                     // well clear of Earth
+        var baseObs = SystemData.Obstacle("Home Base", o1, 3000);
+        var obs = new List<SystemData.World> { baseObs };
+        var oa = o1 + new V3(-50e3, 200, 0); var ob = o1 + new V3(50e3, -200, 0);
+        var round = DetourPlanner.Plan(oa, ob, "X", 100e3, obs);
+        Check(round.Count >= 1 && round.TrueForAll(w => w.Around == baseObs) && LowestOver(oa, round, ob, baseObs) >= 3000 - 1, "grid in the way: gone round outside its sphere (" + Km(LowestOver(oa, round, ob, baseObs)) + " from its centre)");
+        Check(LowestOver(oa, round, ob, baseObs) < 3000 * DetourPlanner.Slack + 100, "grid in the way: no 100 km clearance on top of its margin");
+        Check(DetourPlanner.Plan(oa, ob, "X", 100e3).Count == 0, "no obstacles given: straight");
+        Check(DetourPlanner.Plan(o1 + new V3(0, 0, 1000), ob, "X", 100e3, obs).Count == 0, "leaving your base, target off to the side: straight away");
+        Check(DetourPlanner.Plan(oa, o1 + new V3(0, 1500, 0), "Home", 100e3, obs).Count == 0, "flying to your base: not gone round");
+        Check(DetourPlanner.Plan(oa + new V3(0, 0, 20e3), ob + new V3(0, 0, 20e3), "X", 100e3, obs).Count == 0, "base well off the line: straight");
+        var tr = new RouteTracker { Avoid = true, Obstacles = obs };
+        tr.Update("Far", ob, true, oa, V3.Zero, 10, 0);
+        Check(tr.Waypoints.Exists(w => w.Around == baseObs), "tracker: plans round your grids");
+        var merged = new List<SystemData.World> { SystemData.Obstacle("A", V3.Zero, 3000), SystemData.Obstacle("B", new V3(4000, 0, 0), 2500), SystemData.Obstacle("C", new V3(50e3, 0, 0), 2000) };
+        DetourPlanner.Merge(merged);
+        Check(merged.Count == 2 && merged[0].Radius >= (4000 + 2500 + 3000) / 2.0 - 1e-6 && V3.Distance(merged[0].Pos, V3.Zero) + 3000 <= merged[0].Radius + 1e-6 && V3.Distance(merged[0].Pos, new V3(4000, 0, 0)) + 2500 <= merged[0].Radius + 1e-6, "merge: overlapping grids become one sphere holding both, apart ones stay");
+
+        // a station you start at (undocking) or near: straight out of it first, then round it; your own grid: not gone round
+        var stn = SystemData.Obstacle("Tycho Station", o1, 8000, station: true);
+        var stns = new List<SystemData.World> { stn };
+        var docked = o1 + new V3(-2000, 300, 0); var behind = o1 + new V3(60e3, 0, 0);
+        var undock = DetourPlanner.Plan(docked, behind, "X", 100e3, stns);
+        Check(undock.Count >= 2 && undock[0].Around == stn && Math.Abs(V3.Distance(undock[0].Pos, o1) - 8000 * DetourPlanner.Slack) < 1 && undock[0].Pos.X < o1.X, "undock, target behind: straight out of the station first");
+        Check(LowestOver(undock[0].Pos, undock.GetRange(1, undock.Count - 1), behind, stn) >= 8000 - 1, "undock, target behind: then round it, outside its 8 km");
+        Check(DetourPlanner.Plan(docked, o1 + new V3(-60e3, 0, 0), "X", 100e3, stns).Count == 0, "undock, target ahead: straight away");
+        Check(DetourPlanner.Plan(o1 + new V3(-7000, 0, 0), behind, "X", 100e3, stns).Exists(w => w.Around == stn), "near a station (7 km): gone round too");
+        Check(DetourPlanner.Plan(oa, o1 + new V3(0, 1500, 0), "Tycho", 100e3, stns).Count == 0, "flying to a station: not gone round");
+        Check(SystemData.IsBaseCore("sdx_shipcoreOutpost") && SystemData.IsBaseCore("sdx_shipcoreInstallation") && !SystemData.IsBaseCore("sdx_shipcoreNoCore") && !SystemData.IsBaseCore("sdx_shipcoreSkiff") && !SystemData.IsBaseCore(null), "base: an Outpost or Installation core, no other core");
+        // your own base you start at: the same as a station (out first, then round); flying to it: not gone round
+        var home = SystemData.Obstacle("Home Base", o1, 2300);
+        var homes = new List<SystemData.World> { home };
+        var atHome = o1 + new V3(-400, 100, 0);
+        var leave = DetourPlanner.Plan(atHome, behind, "X", 100e3, homes);
+        Check(leave.Count >= 2 && leave[0].Around == home && Math.Abs(V3.Distance(leave[0].Pos, o1) - 2300 * DetourPlanner.Slack) < 1 && leave[0].Pos.X < o1.X, "leave your base, target behind: straight out of it first");
+        Check(LowestOver(leave[0].Pos, leave.GetRange(1, leave.Count - 1), behind, home) >= 2300 - 1, "leave your base, target behind: then round it");
+        Check(DetourPlanner.Plan(atHome, o1 + new V3(-60e3, 0, 0), "X", 100e3, homes).Count == 0, "leave your base, target ahead: straight away");
+        Check(DetourPlanner.Plan(behind, o1 + new V3(-300, 0, 0), "Home", 100e3, homes).Count == 0, "fly home: your base isn't gone round");
+        var mix = new List<SystemData.World> { SystemData.Obstacle("Home", V3.Zero, 3000), SystemData.Obstacle("Stn", new V3(4000, 0, 0), 8000, station: true), SystemData.Obstacle("Stn2", new V3(5000, 0, 0), 8000, station: true) };
+        DetourPlanner.Merge(mix);
+        Check(mix.Count == 2 && mix.Exists(w => w.Name == "Home" && !w.IsStation) && mix.Exists(w => w.IsStation), "merge: stations aren't merged into your grids (two stations are)");
+
         // the geometry: corners of a semicircle around a unit sphere
         var c = DetourPlanner.Around(new V3(-3, 0, 0), new V3(3, 0, 0), V3.Zero, 1);
         Check(c.Count == 1 && c[0].Length > 1 && Math.Abs(c[0].X) < 1e-9, "Around: one corner over the middle, outside the sphere");
@@ -365,11 +445,13 @@ internal static class Program
         }
         // settings round-trip
         string f = Path.Combine(Path.GetTempPath(), "sdx2map-test.ini");
-        var s = new MapSettings { KeepNavOpen = false };
+        Check(new MapSettings().FollowHeading, "turn with ship: on by default");
+        var s = new MapSettings { KeepNavOpen = false, FollowHeading = false };
         s.Limits.BySignature = true; s.Limits.SignatureKm = 77; s.Limits.ThrustPct = 35; s.Limits.MaxSpeed = 12000;
         s.Save(f);
         var l = MapSettings.Load(f);
         Check(!l.KeepNavOpen && l.ShowMapWithNav && l.Limits.BySignature && Near(l.Limits.SignatureKm, 77, 1e-9) && Near(l.Limits.ThrustPct, 35, 1e-9) && Near(l.Limits.MaxSpeed, 12000, 1e-9), "settings keep the limits");
+        Check(!l.FollowHeading, "settings keep turn-with-ship off");
         File.Delete(f);
     }
 
@@ -545,6 +627,35 @@ internal static class Program
         Check(snap.Track.Count == 1, "track: skips short moves and too-soon samples");
     }
 
+    private static void TurnWithShip()
+    {
+        // the ship's travel ends up straight up the screen, whatever the tilt and wherever the view was turned
+        var ship = new V3(2e6, 1e5, -4e6);
+        foreach (var vel in new[] { new V3(3000, 200, 0), new V3(-500, 0, -2500), new V3(0, -40, 900), new V3(-700, 0, 700) })
+        {
+            var cam = new OrbitCamera { Target = ship, Distance = 2e5, Pitch = 0.5, Yaw = 2.7 };
+            new HeadingFollow().Update(cam, vel, new V3(1, 0, 0), 0);
+            cam.Setup(0, 0, 1000, 600);
+            cam.Project(ship, out var sx, out var sy, out _);
+            cam.Project(ship + new V3(vel.X, 0, vel.Z).Normalized * 5e4, out var ax, out var ay, out _);
+            Check(Math.Abs(ax - sx) < 0.5 && ay < sy - 10 && Near(cam.Pitch, 0.5, 1e-12), "turn with ship: travel " + vel + " points up the screen, tilt kept");
+        }
+        // nearly stopped: the way the ship faces
+        var c2 = new OrbitCamera { Target = ship, Distance = 2e5, Pitch = 0.5 };
+        new HeadingFollow().Update(c2, new V3(1, 3, 0), new V3(0, 0, -1), 0);
+        Check(Near(c2.Yaw, HeadingFollow.YawFor(new V3(0, 0, -1)), 1e-9), "turn with ship: slow, so the ship's facing is used");
+        Check(!HeadingFollow.HeadingOf(new V3(0, 400, 0), new V3(0, 1, 0), out _), "turn with ship: straight up or down: no turn");
+        // smooth, the short way round, and a drag is kept on top
+        var hf = new HeadingFollow();
+        var c3 = new OrbitCamera { Yaw = HeadingFollow.YawFor(new V3(1, 0, 0)) - 0.2 };
+        hf.Update(c3, new V3(1000, 0, 0), V3.Zero, 0.1);
+        double moved = Math.IEEERemainder(c3.Yaw - (HeadingFollow.YawFor(new V3(1, 0, 0)) - 0.2), Math.PI * 2);
+        Check(moved > 0.02 && moved < 0.2, "turn with ship: catches up smoothly, the short way");
+        hf.Turned(0.5);
+        hf.Update(c3, new V3(1000, 0, 0), V3.Zero, 0);
+        Check(Near(Math.IEEERemainder(c3.Yaw - HeadingFollow.YawFor(new V3(1, 0, 0)), Math.PI * 2), 0.5, 1e-9), "turn with ship: your own turn stays on top");
+    }
+
     private static void WaypointClicks()
     {
         // the ray is the inverse of Project
@@ -563,6 +674,17 @@ internal static class Program
         Check(RouteClick.Place(cam, new[] { a, b }, mx + 3, my, 12, out var on, out var onRoute) && onRoute && Math.Abs(on.Y - 2e5) < 1 && Math.Abs(on.Z + 3e6) < 1, "waypoint: click near the line is on it");
         Check(RouteClick.Place(cam, new[] { a, b }, mx, my + 120, 12, out var off, out var onRoute2) && !onRoute2 && Math.Abs(off.Y - 2e5) < 1, "waypoint: click off the line is level with the route");
 
+        // height drag: the mouse above / below the base point on screen lifts / lowers it along the vertical
+        var hbase = new V3(1.0e6, 2e5, -3e6);
+        var up = new V3(1.0e6, 2.5e5, -3e6); cam.Project(up, out var ux, out var uy, out _);
+        Check(RouteClick.HeightOnVertical(cam.Eye, cam.Ray(ux, uy), hbase, out var hup) && Math.Abs(hup.Y - 2.5e5) < 10 && Math.Abs(hup.X - 1e6) < 1e-3 && Math.Abs(hup.Z + 3e6) < 1e-3, "waypoint height: drag up lands 50 km above, same X/Z");
+        var down = new V3(1.0e6, 1.2e5, -3e6); cam.Project(down, out var ddx, out var ddy, out _);
+        Check(RouteClick.HeightOnVertical(cam.Eye, cam.Ray(ddx, ddy), hbase, out var hdn) && Math.Abs(hdn.Y - 1.2e5) < 10, "waypoint height: drag down lands 80 km below");
+        Check(RouteClick.HeightOnVertical(cam.Eye, cam.Ray(ux, uy - 5000), hbase, out var hcap, 1e5) && Math.Abs(hcap.Y - (2e5 + 1e5)) < 1e-3, "waypoint height: capped at the limit");
+        Check(!RouteClick.HeightOnVertical(new V3(0, 1e6, 0), new V3(0, -1, 0), new V3(10, 0, 0), out var hflat) && hflat.Y == 0, "waypoint height: straight-down view can't tell height");
+        cam.Project(hbase, out var bsx, out var bsy, out _);
+        Check(RouteClick.HeightOnVertical(cam.Eye, cam.Ray(bsx, bsy), hbase, out var hsame) && Math.Abs(hsame.Y - 2e5) < 1, "waypoint height: no drag, no change");
+
         // slot that adds the least distance
         var chain = new List<V3> { new V3(0, 0, 0), new V3(100e3, 0, 0), new V3(200e3, 0, 0) };
         Check(RouteClick.InsertIndex(chain, new V3(50e3, 1e3, 0)) == 0, "waypoint: goes into the first leg");
@@ -575,6 +697,32 @@ internal static class Program
         Check(t.UserPoints.Count == 2 && t.UserPoints[0].Name == "Waypoint 2" && t.UserPoints[1].Name == "Waypoint 1", "waypoint: the nearer one is flown first");
         Check(!t.InsertUser("dup", new V3(100e3, 50, 0)), "waypoint: no duplicate within 100 m");
         Check(t.Waypoints.Count == 2 && t.Waypoints[0].User && t.Path != null, "waypoint: route replanned through them");
+
+        // raising one keeps its place and name, and the route goes through the new height
+        int rev = t.Revision;
+        Check(t.MoveUser(0, new V3(100e3, 40e3, 0)) && t.UserPoints[0].Name == "Waypoint 2" && t.UserPoints[0].Pos.Y == 40e3 && t.Revision > rev, "waypoint height: moved up, same slot, replanned");
+        Check(Math.Abs(t.Waypoints[0].Pos.Y - 40e3) < 1, "waypoint height: route goes through the new height");
+        Check(!t.MoveUser(0, new V3(200e3, 0, 0)) && !t.MoveUser(5, new V3(0, 1e3, 0)), "waypoint height: can't move onto another waypoint or a missing one");
+
+        // leaving the seat drops the plan, and F&B's same pick doesn't bring it back; a new pick does
+        t.Cancel("Dest", new V3(300e3, 0, 0));
+        Check(t.TargetName == null && t.UserPoints.Count == 0 && t.Path == null, "cancel: plan and waypoints dropped");
+        t.Update("Dest", new V3(300e3, 0, 0), true, new V3(0, 0, 0), new V3(0, 0, 0), 10, 0);
+        Check(t.TargetName == null && t.Path == null, "cancel: F&B's unchanged pick isn't planned again");
+        t.Update("Other", new V3(0, 0, 400e3), true, new V3(0, 0, 0), new V3(0, 0, 0), 10, 0);
+        Check(t.TargetName == "Other" && t.Path != null, "cancel: a new pick plans a route again");
+
+        var seat = new SeatWatch();
+        Check(seat.Update(false, 7, false) == null && seat.Update(true, 7, false) == null, "seat: first look and sitting down cancel nothing");
+        Check(seat.Update(true, 7, false) == null, "seat: staying seated cancels nothing");
+        Check(seat.Update(false, 7, false) == "you left the seat", "seat: getting out cancels");
+        Check(seat.Update(false, 7, false) == null, "seat: on foot after that, nothing more");
+        Check(seat.Update(false, 7, true) == "you respawned", "seat: dying cancels");
+        Check(seat.Update(false, 0, false) == null, "seat: no body while respawning, nothing more");
+        Check(seat.Update(true, 9, false) == "you respawned", "seat: a new character (respawn ship) cancels");
+        Check(seat.Update(true, 9, false) == null, "seat: then settled");
+        seat.Reset();
+        Check(seat.Update(false, 3, false) == null, "seat: a new session starts fresh");
     }
 
     private static void PoiMatching()
@@ -626,6 +774,17 @@ internal static class Program
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
             Check(scene.Picks.Exists(p => p.Kind == "F&B destination"), "full map: destination is pickable");
             bmp.Save(Path.Combine(outDir, "full-map" + sfx + ".png"), ImageFormat.Png);
+
+            // the same view while Shift+right-dragging a new waypoint 150 km above the route's first leg
+            if (sfx == "")
+            {
+                g.Clear(Color.FromArgb(30, 34, 40));
+                var pts = route.Points();
+                scene.GhostBase = V3.Lerp(pts[0], pts[1], 0.5) + new V3(0, 0, 0);
+                scene.Ghost = scene.GhostBase + new V3(0, 150e3, 0);
+                scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+                bmp.Save(Path.Combine(outDir, "full-map-height-drag.png"), ImageFormat.Png);
+            }
         }
         // the autopilot PB's script-browser thumbnail (512 x 512): the map on the route, with the autopilot status line
         if (sfx == "-hud")

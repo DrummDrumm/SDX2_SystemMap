@@ -120,7 +120,7 @@ public sealed class OrbitCamera
 
     private static double Clamp(double d) => Math.Max(MinDistance, Math.Min(MaxDistance, d));
 
-    private static double Wrap(double a)
+    public static double Wrap(double a)
     {
         double t = Math.PI * 2;
         a %= t;

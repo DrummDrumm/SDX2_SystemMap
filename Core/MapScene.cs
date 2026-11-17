@@ -51,6 +51,10 @@ public sealed class MapScene
     /// <summary>The separator between help items.</summary>
     public const string Sep = "  ·  ";
 
+    /// <summary>A waypoint being placed or raised / lowered in the full map (null = none), drawn with a line from GhostBase.</summary>
+    public V3? Ghost;
+    public V3 GhostBase;
+
     public readonly List<Pick> Picks = new List<Pick>();
     public Pick? Hovered;
     /// <summary>The bottom of the title bar (screen px), set by Draw: room for the plugin's own buttons below it.</summary>
@@ -92,6 +96,7 @@ public sealed class MapScene
         TrackLines();
         AsteroidMarkers();
         Ship();
+        GhostMarker();
         FindHover();
         PlaceLabels();
         Panels();
@@ -190,6 +195,21 @@ public sealed class MapScene
         if (Math.Abs(ay - by) < 3 * u) return;
         Dashed(ax, ay, bx, by, Math.Max(1, 0.8f * u), col, 3 * u, 3 * u);
         c.Disc(bx, by, 1.6f * u, col);
+    }
+
+    /// <summary>The waypoint being dragged: a ring where it'll go, a line up / down from where it started, its height change.</summary>
+    private void GhostMarker()
+    {
+        if (!Ghost.HasValue) return;
+        var g = Ghost.Value; var col = WaypointCol;
+        Seg(GhostBase, g, Math.Max(1, 1.4f * u), col.WithAlpha(0.85f));
+        if (P(GhostBase, out var bx, out var by)) c.Disc(bx, by, 2.2f * u, col.WithAlpha(0.7f));
+        Stalk(g, col.WithAlpha(0.5f));
+        if (!P(g, out var x, out var y)) return;
+        ScreenCircle(x, y, 9 * u, 2 * u, col, 24);
+        c.Disc(x, y, 3 * u, col);
+        double h = g.Y - GhostBase.Y;
+        Label(Math.Abs(h) < 1 ? "level" : Fmt.Dist(Math.Abs(h)) + (h > 0 ? " up" : " down"), x, y, 11 * u, col, 0, 11 * u, true);
     }
 
     private void Label(string text, float x, float y, float r, MapColor col, int prio, float px = 0, bool boxed = false) =>
@@ -636,7 +656,7 @@ public sealed class MapScene
             var wc = wp.User ? WaypointCol : DetourCol;
             ScreenCircle(wx, wy, 7 * u, 2 * u, wc, 20);
             c.Disc(wx, wy, 2.5f * u, wc);
-            AddPick(wp.Name, wp.User ? "Your waypoint" : "Detour around " + (wp.Around?.Name ?? "?"), "pick it in F&B's list (N)", wp.Pos, wx, wy, 8 * u);
+            AddPick(wp.Name, wp.User ? "Your waypoint" : "Detour around " + (wp.Around?.Name ?? "?"), wp.User ? "drag: raise / lower" : "pick it in F&B's list (N)", wp.Pos, wx, wy, 8 * u);
             Label((wp.User ? wp.Name : "D" + (n + 1)) + (legIndex == 0 ? "  next pick" : ""), wx, wy, 9 * u, wc, legIndex == 0 ? 1 : 3, 10.5f * u, true);
         }
 

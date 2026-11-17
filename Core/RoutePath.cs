@@ -30,50 +30,141 @@ public static class DetourPlanner
     /// <summary>Detours sit a bit outside the wanted clearance so the new legs pass the check with room to spare.</summary>
     public const double Slack = 1.15;
 
-    /// <summary>Worlds a route never avoids: one whose clearance zone the destination or the start is inside (landing on it, leaving it).</summary>
-    public static bool Skip(SystemData.World w, V3 start, V3 target, double clearance = RoutePlan.DefaultClearance) =>
-        V3.Distance(w.Pos, target) < w.Radius + clearance || V3.Distance(w.Pos, start) < w.Radius + clearance;
+    /// <summary>Above this distance from a world's centre a point is clear of its ground (hills reach a few % of the radius).</summary>
+    public static double Top(SystemData.World w) => w.Radius * (w.IsObstacle ? 1.05 : 1.1);
 
-    public static List<Waypoint> Plan(V3 start, V3 target, string targetName, double clearance = RoutePlan.DefaultClearance)
+    /// <summary>A pick of the world itself (its centre), not of a point on it: a route there stops at the clearance and never goes round it.</summary>
+    public static bool IsCore(SystemData.World w, V3 p) => V3.Distance(p, w.Pos) < w.Radius * 0.5;
+
+    /// <summary>A point on or just above a world's ground (a base, a ship sitting on it), but not the world itself.</summary>
+    public static bool OnGround(SystemData.World w, V3 p) => V3.Distance(p, w.Pos) < Top(w) && !IsCore(w, p);
+
+    /// <summary>
+    /// How near w's centre the line a→b may come: the world's radius plus the clearance, but never more than the lower
+    /// end's own height (a ship in low orbit is routed round near its own height, dipping to 80% of it, not skipped). NaN when an end is on
+    /// the ground or in the world (that leg lands on it or leaves it).
+    /// </summary>
+    public static double Floor(SystemData.World w, V3 a, V3 b, double clearance)
     {
+        double low = Math.Min(V3.Distance(a, w.Pos), V3.Distance(b, w.Pos));
+        if (low < Top(w)) return double.NaN;
+        if (w.IsObstacle) return w.Radius;
+        return Math.Min(w.Radius + clearance, w.Radius + (low - w.Radius) * 0.8);
+    }
+
+    /// <summary>Where the corners round w go: a little outside its clearance (an obstacle: outside its sphere).</summary>
+    private static double CornerRadius(SystemData.World w, double clearance) => w.IsObstacle ? w.Radius * Slack : w.Radius + clearance * Slack;
+
+    /// <summary>Just outside a station's or grid's sphere, straight out from its centre through p (toward the target when p is at the centre).</summary>
+    public static V3 Out(SystemData.World w, V3 p, V3 target)
+    {
+        var d = p - w.Pos;
+        if (d.Length < 1) d = target - w.Pos;
+        return w.Pos + d.Normalized * (w.Radius * Slack);
+    }
+
+    /// <summary>The point straight above p at the clearance: where a route climbs to first (or comes down from).</summary>
+    public static V3 Lift(SystemData.World w, V3 p, double clearance) => w.Pos + (p - w.Pos).Normalized * (w.Radius + clearance);
+
+    /// <summary>
+    /// The detours from start to target round the worlds and, when given, <paramref name="obstacles"/> (your own and
+    /// your faction's grids, the known stations). One the route ends at is never gone round; one it starts at (or near) is
+    /// left straight outward first, then gone round when the way ahead passes through it.
+    /// </summary>
+    public static List<Waypoint> Plan(V3 start, V3 target, string targetName, double clearance = RoutePlan.DefaultClearance, IList<SystemData.World> obstacles = null)
+    {
+        var all = new List<SystemData.World>(SystemData.Worlds);
+        if (obstacles != null) all.AddRange(obstacles);
         var pts = new List<(V3 Pos, SystemData.World Around)>();
         var skip = new HashSet<SystemData.World>();
-        foreach (var w in SystemData.Worlds) if (Skip(w, start, target, clearance)) skip.Add(w);
-        Solve(start, target, clearance, skip, 0, pts);
+        // a world picked itself is never gone round; one you take off from or land on is, from a point above the ground
+        V3 s = start, e = target; SystemData.World upFrom = null, downTo = null, outOf = null;
+        foreach (var w in all)
+        {
+            if (w.IsObstacle)
+            {
+                bool atStart = V3.Distance(start, w.Pos) < Top(w), atEnd = V3.Distance(target, w.Pos) < Top(w);
+                // a station or base you start at or near: out of its sphere first, then round it; the one you fly to: not gone round
+                if (atStart && !atEnd && outOf == null) { outOf = w; s = Out(w, start, target); continue; }
+                if (atStart || atEnd) skip.Add(w);
+                continue;
+            }
+            if (IsCore(w, start) || IsCore(w, target) || OnGround(w, start) && OnGround(w, target)) { skip.Add(w); continue; }
+            if (OnGround(w, start)) { upFrom = w; s = Lift(w, start, clearance); }
+            if (OnGround(w, target)) { downTo = w; e = Lift(w, target, clearance); }
+        }
+        Solve(all, s, e, clearance, skip, 0, pts);
+        // climb / come down straight when the way goes round that world, or the direct line would graze it
+        // leaving a station or base: straight out of it first when the way goes round it or the direct line heads in through it
+        if (outOf != null && (pts.Exists(q => q.Around == outOf) || V3.SegmentDistance(start, pts.Count > 0 ? pts[0].Pos : e, outOf.Pos, out _) < Math.Min(V3.Distance(start, outOf.Pos), outOf.Radius) * 0.95))
+            pts.Insert(0, (s, outOf));
+        if (upFrom != null && (pts.Exists(q => q.Around == upFrom) || V3.SegmentDistance(start, pts.Count > 0 ? pts[0].Pos : e, upFrom.Pos, out _) < upFrom.Radius * 1.02))
+            pts.Insert(0, (s, upFrom));
+        if (downTo != null && (pts.Exists(q => q.Around == downTo) || V3.SegmentDistance(pts.Count > 0 ? pts[pts.Count - 1].Pos : start, target, downTo.Pos, out _) < downTo.Radius * 1.02))
+            pts.Add((e, downTo));
         var list = new List<Waypoint>();
         for (int i = 0; i < pts.Count; i++)
             list.Add(new Waypoint { Pos = pts[i].Pos, Around = pts[i].Around, Name = "Detour " + (i + 1) + " of " + pts.Count + " - " + targetName });
         return list;
     }
 
+    /// <summary>Overlapping spheres become one that holds both (a base of several grids is gone round as one). Stations aren't merged with grids.</summary>
+    public static void Merge(List<SystemData.World> s)
+    {
+        for (bool again = true; again;)
+        {
+            again = false;
+            for (int i = 0; i < s.Count && !again; i++)
+                for (int j = i + 1; j < s.Count && !again; j++)
+                {
+                    var a = s[i]; var b = s[j];
+                    double d = V3.Distance(a.Pos, b.Pos);
+                    if (d >= a.Radius + b.Radius || a.IsStation != b.IsStation) continue; // a station keeps its own rule
+                    SystemData.World m;
+                    if (d + b.Radius <= a.Radius) m = a;
+                    else if (d + a.Radius <= b.Radius) m = b;
+                    else
+                    {
+                        double r = (d + a.Radius + b.Radius) / 2;
+                        var c = a.Pos + (b.Pos - a.Pos) * ((r - a.Radius) / d);
+                        m = SystemData.Obstacle(a.Radius >= b.Radius ? a.Name : b.Name, c, r, a.IsStation);
+                    }
+                    s[i] = m; s.RemoveAt(j); again = true;
+                }
+        }
+    }
+
     /// <summary>Adds the waypoints between a and b (in order) to output.</summary>
-    private static void Solve(V3 a, V3 b, double clearance, HashSet<SystemData.World> skip, int depth, List<(V3, SystemData.World)> output)
+    private static void Solve(List<SystemData.World> all, V3 a, V3 b, double clearance, HashSet<SystemData.World> skip, int depth, List<(V3, SystemData.World)> output)
     {
         if (depth >= MaxDepth || output.Count >= MaxWaypoints) return;
         // the first world along a→b that the line comes too close to
         SystemData.World hit = null;
         double hitT = double.MaxValue;
-        foreach (var w in SystemData.Worlds)
+        foreach (var w in all)
         {
             if (skip.Contains(w)) continue;
+            double floor = Floor(w, a, b, clearance);
+            if (double.IsNaN(floor)) continue; // an end is on the ground: can't go round
             double c = V3.SegmentDistance(a, b, w.Pos, out var t);
-            if (c - w.Radius >= clearance) continue;
-            if (V3.Distance(a, w.Pos) < w.Radius + clearance * 0.99 || V3.Distance(b, w.Pos) < w.Radius + clearance * 0.99) continue; // an end is inside: can't go round
+            if (c >= floor) continue;
             if (t < hitT) { hitT = t; hit = w; }
         }
         if (hit == null) return;
 
-        var corners = Around(a, b, hit.Pos, hit.Radius + clearance * Slack);
+        // round it a little outside the clearance, or at the lower end's own height when that's nearer
+        double low = Math.Min(V3.Distance(a, hit.Pos), V3.Distance(b, hit.Pos));
+        var corners = Around(a, b, hit.Pos, Math.Min(CornerRadius(hit, clearance), low * (1 - 1e-4)));
         if (corners.Count == 0) return;
         var prev = a;
         foreach (var p in corners)
         {
-            Solve(prev, p, clearance, skip, depth + 1, output);
+            Solve(all, prev, p, clearance, skip, depth + 1, output);
             if (output.Count >= MaxWaypoints) return;
             output.Add((p, hit));
             prev = p;
         }
-        Solve(prev, b, clearance, skip, depth + 1, output);
+        Solve(all, prev, b, clearance, skip, depth + 1, output);
     }
 
     /// <summary>The corners of the shortest path from a to b around a sphere (centre c, radius r), in the a-c-b plane.</summary>

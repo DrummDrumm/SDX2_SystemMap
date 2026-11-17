@@ -77,6 +77,8 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         Check("Only in a cockpit", "Show the map, the pinned map and the autopilot HUD lines only while you sit in a cockpit, seat or remote control. Its keys work only there too.",
             s.OnlyInCockpit, v => s.OnlyInCockpit = v);
         Check("Open with Flip and Burn's list", "Show the map window whenever the N list opens.", s.ShowMapWithNav, v => s.ShowMapWithNav = v);
+        Check("Follow turns with the ship", "While the map follows your ship, it turns so your forward movement points up the screen (U in the full map). Off: the view keeps its own direction.",
+            s.FollowHeading, v => s.FollowHeading = v);
         Check("Keep the list open on a pick", "Flip and Burn's N list stays open when you pick a destination.", s.KeepNavOpen, v => s.KeepNavOpen = v);
         Check("Window on the left", "Put the map window on the left of the N list instead of the right.", s.PreviewLeft, v => s.PreviewLeft = v);
         Slider("Window size", s.PreviewSize, 0.5f, 1.5f, v => s.PreviewSize = v, v => v.ToString("0.00", CultureInfo.InvariantCulture) + "x");

@@ -28,9 +28,22 @@ destination. The prompt and the route panel always say what to pick next. The pl
 within 25 km of a detour.
 
 The detours are planned once when you pick the destination and then stay put, so the entries you pick don't move.
-Press **R** in the full map to plan again from where you are, or **V** to turn detours off. The world you're leaving
-and the one you're flying to are never avoided (a world counts when the start or destination is within its
-clearance). ETA assumes a stop at each detour.
+Press **R** in the full map to plan again from where you are, or **V** to turn detours off. ETA assumes a stop at each
+detour.
+
+Near a world the route still goes round it, never through:
+- **In low orbit** (inside the clearance): it goes round near your own height, dipping to no lower than 80% of it.
+- **On the ground** (taking off, or landing at a base on it): it climbs straight up to the clearance first, or comes
+  down from straight above the base, when the way goes round that world.
+- **Picking the world itself** (its entry in the N list): it's flown to, not round, and the stop is at the clearance on
+  your side (or where you are, if you're already lower).
+
+**Bases and stations.** The route also bends round the known stations (8 km) and the bases owned by you or your
+faction that your game has loaded (their size plus 2 km; bases close together count as one). A base is a grid set to
+station with an Outpost or Installation core; ships and other grids aren't obstacles. Leaving a station or base
+(docked, or inside its sphere), the route first goes straight out of it, then round it, when the way ahead passes
+through it. The station or base you fly to isn't gone round. Other players' grids are left out on purpose: the map
+only uses what you already know (SDX2's plugin rules).
 
 Side window (while the N list is open, so the mouse is free): right-drag orbits, wheel zooms, middle click re-frames,
 and hovering shows what a point is. It doesn't take clicks on the map: pick destinations in the N list, or with
@@ -89,7 +102,10 @@ Full-screen map:
 | Click a world, station or GPS | Focus the view on it |
 | Shift+click a world, station, GPS or route point | Make it Flip and Burn's destination (a waypoint while ADD WAYPOINT is on) and open the autopilot controls. Off while the autopilot flies |
 | Shift+right-click | Add a waypoint there, in the leg it's nearest (Shift+right-click one of your waypoints to remove it): on a world, station or GPS point it's that point; near the route's line it's on the line; elsewhere it's level with the nearest part of the route. Build a route of several stages this way (up to 8 waypoints; **x** in the autopilot panel removes one) |
+| Shift+right-drag | Add a waypoint above or below the plane: press where it should go, then drag up or down with the view tilted (the marker shows the height); let go to add it |
+| Drag one of your waypoints | Raise or lower it (left-drag, or Shift+right-drag); the route is planned again when you let go |
 | S | Follow your ship (toggle; on each time the map opens; panning, F or H turns it off) |
+| U | Turn with the ship (on by default, saved): while following, the view turns so your forward movement points up the screen (nearly stopped: the way the ship faces). Your tilt stays; a sideways drag turns the view and it keeps turning with the ship from there. Also in the settings, and for the side window and pinned map while they follow |
 | F / H | Frame the route / the whole system |
 | C | Copy the flip point as a GPS (paste it in the GPS tab) |
 | A | Open the autopilot controls in the map (while it flies: asks, then stops it) |
@@ -146,6 +162,9 @@ fusion drives (`sdx_drive*`) all facing one way, which SDX2 requires anyway.
   into the leg you click. **DONE** stops adding, **x** removes one. Detours
   round worlds are still planned on every leg; a station waypoint stops 8 km short, a world one at the clearance.
 - The route summary (distance, ETA with your caps, where it stops, borders), then **ENGAGE** or **CANCEL**.
+- The planned route and your waypoints are dropped when you get out of the cockpit or seat, or die / respawn. Pick a
+  point in Flip and Burn's list again to plan a new one. An autopilot that's already flying keeps flying (stop it
+  from the hotbar or the PB).
 
 The panel keeps its settings (in the settings file). ENGAGE sends the route and closes the list.
 

@@ -19,8 +19,10 @@ internal static class GameState
     public static void Fill(MapSnapshot s, double now)
     {
         var session = MySession.Static;
-        s.HasShip = false; s.InCockpit = false;
+        s.HasShip = false; s.InCockpit = false; s.CharacterId = 0; s.Dead = false;
         if (session == null) return;
+        var me = session.LocalCharacter;
+        if (me != null) { s.CharacterId = me.EntityId; s.Dead = me.IsDead; }
         var controlled = session.ControlledEntity;
         var top = controlled?.Entity?.GetTopMostParent();
         var grid = top as MyCubeGrid;
@@ -33,6 +35,7 @@ internal static class GameState
             s.InCockpit = controlled is MyShipController;
             s.ShipName = grid != null ? grid.DisplayName : "You";
             s.ShipPos = V(top.PositionComp.GetPosition());
+            s.ShipFwd = V(controlled.Entity.WorldMatrix.Forward);
             s.ShipVel = grid != null ? V(FlipAndBurnLink.Velocity(grid)) : V(top.Physics?.LinearVelocity ?? Vector3.Zero);
             if (slow)
             {

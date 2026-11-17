@@ -11,6 +11,8 @@ namespace SDX2_SystemMap;
 /// The full-screen interactive map (Shift+M). Drag: orbit. Right-drag: pan. Wheel: zoom. Click a world, station or
 /// GPS: focus the view on it. Shift+click: make it Flip and Burn's destination (or a waypoint while ADD WAYPOINT is
 /// on), and the autopilot controls open on the left as under the N list: AUTOPILOT (route panel) / MANUAL.
+/// Shift+right-click: add / remove a waypoint; Shift+right-drag: add one above or below the plane (tilt the view);
+/// drag one of your waypoints (left, or Shift+right): raise or lower it.
 /// S: follow your ship (toggle). F: frame the route. H: whole system. C: copy the flip point as a GPS. N: back to F&amp;B's list.
 /// A: autopilot (confirm in the N list, or stop it while it flies). R: re-plan detours from here. V: detours on/off.
 /// G/O/X/T/P/L/J: grid, orbits, sectors, stations, GPS, labels, moons. Esc or M: close.
@@ -31,6 +33,8 @@ internal sealed class MapScreen : MyGuiScreenBase
     /// <summary>The autopilot controls window (opened by Shift+click or A; always shown while the autopilot flies).</summary>
     private bool showControls;
     private readonly PanelUi ui = new PanelUi();
+    private readonly HeadingFollow heading = new HeadingFollow();
+    private bool Turning => follow && Plugin.Settings.FollowHeading;
     private Box controls;   // where the controls were drawn last frame (the map ignores the mouse there)
     private bool panelGrab; // a press that started on the controls (slider drags)
 
@@ -79,8 +83,8 @@ internal sealed class MapScreen : MyGuiScreenBase
         {
             const string s = MapScene.Sep;
             var o = scene.Opt;
-            return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "F frame route" + s + "H whole system" + "\n"
-                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
+            return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system" + "\n"
+                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint up / down" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
                 + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
@@ -103,6 +107,11 @@ internal sealed class MapScreen : MyGuiScreenBase
             var sn = SidePreview.Snap;
             if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
             Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (no ship yet: sit in a cockpit)");
+        }
+        if (input.IsNewKeyPressed(MyKeys.U))
+        {
+            Plugin.Settings.FollowHeading = !Plugin.Settings.FollowHeading; heading.Offset = 0; Plugin.SaveSettings();
+            Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (your travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
         }
         if (input.IsNewKeyPressed(MyKeys.C)) CopyFlip();
         if (input.IsNewKeyPressed(MyKeys.A)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
@@ -132,18 +141,52 @@ internal sealed class MapScreen : MyGuiScreenBase
         {
             // the controls window has the mouse: no orbit, pick or zoom underneath
             if (!left) panelGrab = false;
+            if (hMode != 0 && !(hRight ? right : left)) { hMode = 0; scene.Ghost = null; } // let go over the controls: cancelled
             leftDown = false; rightDown = right && rightDown;
             lastX = m.X; lastY = m.Y;
             return;
         }
-        if (left && leftDown) scene.Cam.Orbit(-dx * 0.005, dy * 0.005);
         bool shift = input.IsAnyShiftKeyPressed();
         if (input.IsNewRightMousePressed()) { rDownX = m.X; rDownY = m.Y; rMoved = false; }
         if (right && Math.Abs(m.X - rDownX) + Math.Abs(m.Y - rDownY) > 6) rMoved = true;
-        if (input.IsNewRightMouseReleased() && !rMoved && shift) AddWaypointAt(m.X, m.Y);
-        if (right && rightDown && !shift && Math.Abs(dx) + Math.Abs(dy) > 0) { scene.Cam.Pan(dx, dy); if (follow) { follow = false; Toast("Follow ship: off (panned)"); } }
         if (input.IsNewLeftMousePressed()) { downX = m.X; downY = m.Y; moved = false; }
         if (left && Math.Abs(m.X - downX) + Math.Abs(m.Y - downY) > 6) moved = true;
+
+        // height drags: a press on one of your waypoints (drag, or Shift+right-drag), or Shift+right on empty space (a new one)
+        if (hMode == 0 && input.IsNewLeftMousePressed() && scene.Hovered is Pick hp && hp.Kind == "Your waypoint" && SidePreview.UserWaypoint(hp.Name, out var hb))
+            StartHeight(2, false, hp.Name, hb);
+        else if (hMode == 0 && input.IsNewRightMousePressed() && shift)
+        {
+            if (scene.Hovered is Pick rp && rp.Kind == "Your waypoint" && SidePreview.UserWaypoint(rp.Name, out var rb)) StartHeight(2, true, rp.Name, rb);
+            else if (SidePreview.Path is RoutePath path && RouteClick.Place(scene.Cam, path.Points(), m.X, m.Y, 12 * scene.Unit, out var nb, out _)) StartHeight(1, true, null, nb);
+        }
+        if (hMode != 0)
+        {
+            bool held = hRight ? right : left, dragging = hRight ? rMoved : moved;
+            if (dragging)
+            {
+                if (RouteClick.HeightOnVertical(scene.Cam.Eye, scene.Cam.Ray(m.X, m.Y), hBase, out var hp2)) hPos = hp2;
+                else if (!hWarned) { hWarned = true; Toast("Tilt the view to set height"); }
+                scene.Ghost = hPos; scene.GhostBase = hBase;
+            }
+            if (!held)
+            {
+                if (dragging)
+                {
+                    double rise = hPos.Y - hBase.Y;
+                    Toast(hMode == 2 ? SidePreview.MoveWaypoint(hName, hPos, rise) : SidePreview.InsertWaypoint(null, hPos));
+                    hMode = 0; scene.Ghost = null;
+                    leftDown = left; rightDown = right; lastX = m.X; lastY = m.Y;
+                    return; // the release is used up
+                }
+                hMode = 0; scene.Ghost = null; // a plain click: handled as before below
+            }
+        }
+        bool hDrag = hMode != 0;
+
+        if (left && leftDown && !hDrag) { scene.Cam.Orbit(-dx * 0.005, dy * 0.005); if (Turning) heading.Turned(-dx * 0.005); }
+        if (input.IsNewRightMouseReleased() && !rMoved && shift) AddWaypointAt(m.X, m.Y);
+        if (right && rightDown && !shift && !hDrag && Math.Abs(dx) + Math.Abs(dy) > 0) { scene.Cam.Pan(dx, dy); if (follow) { follow = false; Toast("Follow ship: off (panned)"); } }
         if (input.IsNewLeftMouseReleased() && !moved && scene.Hovered is Pick p)
         {
             if (input.IsAnyShiftKeyPressed()) { Toast(SidePreview.SetDestination(p.Name, p.Kind, p.Pos, p.Detail)); if (p.Kind != "Your ship") showControls = true; }
@@ -153,6 +196,17 @@ internal sealed class MapScreen : MyGuiScreenBase
         lastX = m.X; lastY = m.Y;
         int wheel = input.DeltaMouseScrollWheelValue();
         if (wheel != 0) scene.Cam.Zoom(wheel / 120.0);
+    }
+
+    // a height drag: 0 none, 1 placing a new waypoint (Shift+right-drag), 2 raising / lowering one of yours
+    private int hMode;
+    private bool hRight, hWarned;
+    private string hName;
+    private V3 hBase, hPos;
+
+    private void StartHeight(int mode, bool rightButton, string name, V3 basePos)
+    {
+        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false;
     }
 
     /// <summary>
@@ -205,6 +259,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
             if (!framed) { scene.FrameDefault(true); framed = true; }
             if (follow && scene.Snap.HasShip) { scene.Cam.GoalTarget = scene.Snap.ShipPos; scene.Cam.Target = scene.Snap.ShipPos; }
+            if (Turning && scene.Snap.HasShip) heading.Update(scene.Cam, scene.Snap.ShipVel, scene.Snap.ShipFwd, dt);
             scene.Cam.Tick(dt);
             var m = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(MyGuiManager.MouseCursorPosition);
             bool overPanel = controls.W > 0 && controls.Contains(m.X, m.Y) || panelGrab;

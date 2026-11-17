@@ -26,6 +26,8 @@ public sealed class MapSettings
     public float PreviewSize = 1f;
     /// <summary>The side preview stays centred on your ship (its FOLLOW button). On at the start of each session; not saved.</summary>
     public bool PreviewFollow = true;
+    /// <summary>While a view follows your ship it turns so your forward movement points up the screen (U in the full map).</summary>
+    public bool FollowHeading = true;
     /// <summary>Picture-in-picture: the preview stays on screen in a corner while you fly (Alt+key, cockpit toolbar action; Q in the full map moves it).</summary>
     public bool Pip = false;
     /// <summary>Show Flip and Burn's real speed on the HUD speed dial (stops it flickering to 150 m/s).</summary>
@@ -70,6 +72,7 @@ public sealed class MapSettings
                     case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
                     case "OnlyInCockpit": s.OnlyInCockpit = B(v, false); break;
+                    case "FollowHeading": s.FollowHeading = B(v, true); break;
                     case "DefaultGridKm": s.DefaultGridKm = NearestGrid(D(v, DefaultGridDefault)); break;
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
@@ -127,7 +130,7 @@ public sealed class MapSettings
         sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
         L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings);
-        L("OnlyInCockpit", OnlyInCockpit); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
+        L("OnlyInCockpit", OnlyInCockpit); L("FollowHeading", FollowHeading); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
         L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
         L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
