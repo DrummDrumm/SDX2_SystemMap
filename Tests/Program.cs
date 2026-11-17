@@ -460,6 +460,15 @@ internal static class Program
         var pl = MapSettings.Load(dir);
         Check(pl.Pip && pl.PipCorner == "BL" && Math.Abs(pl.PipSize - 1.4f) < 1e-4, "pip: saved and loaded");
         Check(MapScene.GridStepFor(MapScene.ShipViewDistance) == 2e6, "no route: the view round your ship has a 2000 km grid");
+        foreach (var g in MapSettings.GridChoicesKm)
+        {
+            MapScene.DefaultGridKm = g;
+            Check(Math.Abs(MapScene.GridStepFor(MapScene.ShipViewDistance) - g * 1e3) < 1e-3 * g, "default zoom: " + g + " km shows a " + g + " km grid");
+        }
+        MapScene.DefaultGridKm = MapSettings.DefaultGridDefault;
+        Check(MapSettings.NearestGrid(1800) == 2000 && MapSettings.NearestGrid(70) == 50 && MapSettings.NearestGrid(-3) == 2000 && MapSettings.NearestGrid(1e9) == 20000, "default zoom: odd values snap to a choice");
+        new MapSettings { DefaultGridKm = 500 }.Save(dir);
+        Check(MapSettings.Load(dir).DefaultGridKm == 500, "default zoom: saved and loaded");
         // key bindings
         var kc = KeyCombo.Parse("shift+ctrl+m");
         Check(kc.Ctrl && kc.Shift && !kc.Alt && kc.Key == "m" && kc.ToString() == "Ctrl+Shift+m", "keys: parse any order and case");

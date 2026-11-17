@@ -13,6 +13,10 @@ public sealed class MapSettings
     public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion";
     /// <summary>Show the map, preview, pinned map and HUD lines only while you sit in a cockpit, seat or remote control.</summary>
     public bool OnlyInCockpit = false;
+    /// <summary>Default zoom with no route: the grid size round your ship, km (one of <see cref="GridChoicesKm"/>).</summary>
+    public double DefaultGridKm = DefaultGridDefault;
+    public const double DefaultGridDefault = 2000;
+    public static readonly double[] GridChoicesKm = { 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     /// <summary>Show the map window whenever F&amp;B's N list opens.</summary>
     public bool ShowMapWithNav = true;
     /// <summary>Keep F&amp;B's N list open when you pick a destination (it closes by itself otherwise).</summary>
@@ -66,6 +70,7 @@ public sealed class MapSettings
                     case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
                     case "OnlyInCockpit": s.OnlyInCockpit = B(v, false); break;
+                    case "DefaultGridKm": s.DefaultGridKm = NearestGrid(D(v, DefaultGridDefault)); break;
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
                     case "ApBySignature": s.Limits.BySignature = B(v, false); break;
@@ -122,7 +127,7 @@ public sealed class MapSettings
         sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
         L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings);
-        L("OnlyInCockpit", OnlyInCockpit); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
+        L("OnlyInCockpit", OnlyInCockpit); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
         L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
         L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
@@ -132,6 +137,15 @@ public sealed class MapSettings
         L("Gps", Options.Gps); L("Labels", Options.Labels); L("Moons", Options.Moons);
         Directory.CreateDirectory(Path.GetDirectoryName(path));
         File.WriteAllText(path, sb.ToString());
+    }
+
+    /// <summary>The grid choice nearest to <paramref name="km"/> (by ratio).</summary>
+    public static double NearestGrid(double km)
+    {
+        if (double.IsNaN(km) || km <= 0) return DefaultGridDefault;
+        double best = GridChoicesKm[0];
+        foreach (var g in GridChoicesKm) if (Math.Abs(Math.Log(g / km)) < Math.Abs(Math.Log(best / km))) best = g;
+        return best;
     }
 
     private static bool B(string v, bool def) => bool.TryParse(v, out var b) ? b : def;

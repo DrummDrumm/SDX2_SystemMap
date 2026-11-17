@@ -80,6 +80,13 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         Check("Keep the list open on a pick", "Flip and Burn's N list stays open when you pick a destination.", s.KeepNavOpen, v => s.KeepNavOpen = v);
         Check("Window on the left", "Put the map window on the left of the N list instead of the right.", s.PreviewLeft, v => s.PreviewLeft = v);
         Slider("Window size", s.PreviewSize, 0.5f, 1.5f, v => s.PreviewSize = v, v => v.ToString("0.00", CultureInfo.InvariantCulture) + "x");
+        var grids = new List<string>(); foreach (var g in MapSettings.GridChoicesKm) grids.Add(g.ToString("#,0", CultureInfo.InvariantCulture) + " km grid");
+        Combo("Default zoom", "How far out the map and full map start when no route is picked: the size of a grid square round your ship (F in the full map frames it again).",
+            grids, Math.Max(0, Array.IndexOf(MapSettings.GridChoicesKm, s.DefaultGridKm)), i =>
+            {
+                s.DefaultGridKm = MapSettings.GridChoicesKm[i]; MapScene.DefaultGridKm = s.DefaultGridKm;
+                SidePreview.Reframe();
+            });
         var themes = new List<string>(); foreach (var t in MapTheme.All) themes.Add(t.Name);
         Combo("Theme", "The look of the map, the preview and the autopilot panels (K in the full map).", themes, Math.Max(0, themes.IndexOf(MapTheme.Current.Name)),
             i => { MapTheme.Current = MapTheme.All[i]; s.Theme = MapTheme.Current.Name; });
@@ -130,7 +137,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
     {
         var s = Plugin.Settings; var d = new MapSettings();
         s.OnlyInCockpit = d.OnlyInCockpit; s.ShowMapWithNav = d.ShowMapWithNav; s.KeepNavOpen = d.KeepNavOpen; s.PreviewLeft = d.PreviewLeft;
-        s.PreviewSize = d.PreviewSize; s.Theme = d.Theme; MapTheme.Current = MapTheme.Find(d.Theme);
+        s.PreviewSize = d.PreviewSize; s.DefaultGridKm = d.DefaultGridKm; MapScene.DefaultGridKm = d.DefaultGridKm; s.Theme = d.Theme; MapTheme.Current = MapTheme.Find(d.Theme);
         s.PipCorner = d.PipCorner; s.PipSize = d.PipSize; SidePreview.SetPip(d.Pip);
         s.AvoidBodies = d.AvoidBodies; s.ClearanceKm = d.ClearanceKm; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer;
         s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings;

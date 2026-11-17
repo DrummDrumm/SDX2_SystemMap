@@ -258,7 +258,7 @@ If a Flip and Burn update renames those internals, the preview stops finding a d
 ## Settings
 
 **Settings window:** Pulsar's **Config** button for the plugin, or **Ctrl+Alt+/** in game. It covers the keys,
-showing it only in a cockpit, the map window (opens with the N list, keep the list open, side, size, theme), the pinned map (on, corner, size),
+showing it only in a cockpit, the default zoom, the map window (opens with the N list, keep the list open, side, size, theme), the pinned map (on, corner, size),
 detours and clearance, loading new plans into the autopilot, and the speed dial fix. Changes apply at once and are
 saved when it closes; **Defaults** puts them back.
 
@@ -270,6 +270,8 @@ Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini`:
   Ctrl+Shift+X;
 - `OnlyInCockpit` (off): the map, preview, pinned map and autopilot HUD lines show, and the keys work, only while you
   sit in a cockpit, seat or remote control;
+- `DefaultGridKm` (2000): how far out the map window and full map start when no route is picked, as the size of a grid
+  square round your ship (50, 100, 200, 500, 1000, 2000, 5000, 10000 or 20000 km; F in the full map frames it again);
 - `ShowMapWithNav` (the map window opens with the N list), `KeepNavOpen` (the list stays open on a pick);
 - `ApMaxSpeed`, `ApBySignature`, `ApThrustPct`, `ApConeSignatureKm`, `ApBrakePct`, `ApBrakeConeSignatureKm` (the route
   panel's last limits; the first pair of caps is the burn);

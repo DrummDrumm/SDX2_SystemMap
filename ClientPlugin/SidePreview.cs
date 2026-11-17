@@ -67,6 +67,7 @@ internal static class SidePreview
     public static void ApplySettings(MapSettings s)
     {
         scene.Opt = s.Options;
+        MapScene.DefaultGridKm = s.DefaultGridKm;
         scene.Cam.Yaw = s.Yaw; scene.Cam.Pitch = s.Pitch;
         Tracker.Avoid = s.AvoidBodies;
         Tracker.Clearance = s.ClearanceKm * 1000;
@@ -194,6 +195,9 @@ internal static class SidePreview
         else if (Binds.Autopilot.Pressed()) AutopilotKey();
         else if (Binds.Pin.Pressed()) Notify(TogglePip(), true);
     }
+
+    /// <summary>Frame the map window again on its next draw (after the default zoom changes).</summary>
+    public static void Reframe() => reframe = true;
 
     /// <summary>The map key (Shift+M): map window → full map → off (the full map's map key does the last step).</summary>
     private static void CycleView()

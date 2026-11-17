@@ -1020,8 +1020,10 @@ public sealed class MapScene
     }
 
     /// <summary>Frames the camera on the route (ship and destination), or on the ship, or on the whole system.</summary>
-    /// <summary>Camera distance round your ship with no route: the grid (a nice step near distance / 3.5) reads 2000 km.</summary>
-    public const double ShipViewDistance = 7e6;
+    /// <summary>The grid size of the view round your ship with no route (setting DefaultGridKm).</summary>
+    public static double DefaultGridKm = MapSettings.DefaultGridDefault;
+    /// <summary>Camera distance for that view: the grid is a nice step near distance / 3.5.</summary>
+    public static double ShipViewDistance => DefaultGridKm * 1e3 * 3.5;
 
     /// <summary>Distance → grid step, as the grid draws it.</summary>
     public static double GridStepFor(double distance) => Nice(distance / 3.5);
