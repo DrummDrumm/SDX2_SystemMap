@@ -26,7 +26,7 @@ internal static class PlayGuard
     public static string Reason { get; private set; }
     public static bool Blocked => Reason != null;
 
-    public static void Reset() { lastInput = -1; Reason = null; }
+    public static void Reset() { lastInput = -1; Reason = null; axisSeen = null; }
 
     /// <summary>Every frame, before anything else (Plugin.Update).</summary>
     public static void Update(double now)
@@ -45,7 +45,7 @@ internal static class PlayGuard
         {
             var input = MyInput.Static;
             if (lastInput < 0 || input != null && (input.IsAnyKeyPress() || input.IsAnyNewMousePressed() || input.IsAnyMousePressed()
-                || input.GetMouseX() != 0 || input.GetMouseY() != 0 || input.DeltaMouseScrollWheelValue() != 0 || !input.IsJoystickIdle()))
+                || input.GetMouseX() != 0 || input.GetMouseY() != 0 || input.DeltaMouseScrollWheelValue() != 0 || ControllerUsed(input)))
                 lastInput = now;
             ulong me = Sync.MyId;
             if (s.CreativeToolsEnabled(me)) return "admin creative tools";
@@ -60,5 +60,31 @@ internal static class PlayGuard
             Plugin.LogThrottled("admin/AFK check failed, pausing: " + e.Message);
             return "admin/AFK check failed";
         }
+    }
+
+    private static readonly MyJoystickAxesEnum[] Axes = (MyJoystickAxesEnum[])Enum.GetValues(typeof(MyJoystickAxesEnum));
+    private static readonly MyJoystickButtonsEnum[] Buttons = (MyJoystickButtonsEnum[])Enum.GetValues(typeof(MyJoystickButtonsEnum));
+    private static float[] axisSeen;
+
+    /// <summary>
+    /// A controller button held, or a stick, trigger or slider moved more than 5% since it was last seen. Not the game's
+    /// IsJoystickIdle: that wants every axis and both sliders centred, so a pad without sliders (an Xbox pad reads them
+    /// as 0) or a throttle left off-centre never counts as idle, and AFK never comes.
+    /// </summary>
+    private static bool ControllerUsed(IMyInput input)
+    {
+        if (!input.IsJoystickConnected()) { axisSeen = null; return false; }
+        bool used = false;
+        foreach (var b in Buttons)
+            if (b != MyJoystickButtonsEnum.None && input.IsJoystickButtonPressed(b)) { used = true; break; }
+        if (axisSeen == null) { axisSeen = new float[Axes.Length]; for (int i = 0; i < axisSeen.Length; i++) axisSeen[i] = float.NaN; }
+        for (int i = 0; i < Axes.Length; i++)
+        {
+            if (Axes[i] == MyJoystickAxesEnum.None) continue;
+            float v = input.GetJoystickAxisStateForGameplay(Axes[i]);
+            if (float.IsNaN(axisSeen[i])) { axisSeen[i] = v; continue; }
+            if (Math.Abs(v - axisSeen[i]) > 0.05f) { axisSeen[i] = v; used = true; }
+        }
+        return used;
     }
 }
