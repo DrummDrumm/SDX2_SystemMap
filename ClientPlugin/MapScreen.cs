@@ -28,8 +28,8 @@ internal sealed class MapScreen : MyGuiScreenBase
     private bool framed;
     private readonly MapMouse mouse = new MapMouse();
     private string toast; private double toastUntil;
-    /// <summary>The view stays centred on your ship (S); kept while the game runs.</summary>
-    private static bool follow;
+    /// <summary>The view stays centred on your ship (S): the same setting as the preview's FOLLOW SHIP.</summary>
+    private static bool follow { get => Plugin.Settings.PreviewFollow; set => Plugin.Settings.PreviewFollow = value; }
     /// <summary>The autopilot controls window (opened by Shift+click or A; always shown while the autopilot flies).</summary>
     private bool showControls;
     private readonly PanelUi ui = new PanelUi();
@@ -42,7 +42,6 @@ internal sealed class MapScreen : MyGuiScreenBase
     {
         if (open != null) return;
         if (PlayGuard.Blocked) { SidePreview.Notify(SidePreview.Paused, false); return; }
-        follow = true; // the map opens centred on your ship; S, panning, F or H turn it off
         open = new MapScreen();
         open.Closed += (s, unloading) => { open = null; Plugin.SaveSettings(); };
         MyGuiSandbox.AddScreen(open);

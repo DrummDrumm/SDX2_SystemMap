@@ -52,7 +52,8 @@ bent leg), **Shift+right-drag** adds one above or below the plane, and dragging 
 lowers or bends it, all as in the full map. The full map's keys (F H S U A R V C G O X T P L J K) work there too:
 while the mouse is over the map, Flip and Burn's search box takes no typing, and it takes it again when the mouse
 leaves (N then closes the list, as F&B's own key). **FOLLOW SHIP** (top right of the window) keeps the view centred on your
-ship; it's on at the start of each session, and panning, middle click or the button turns it off. The bottom bar holds the legend (burn / coast / brake / flown, grid
+ship; it's the same setting as the full map's S, on at the start of each session, and panning, middle click or the
+button turns it off. The bottom bar holds the legend (burn / coast / brake / flown, grid
 scale) with the keys under it in labelled rows (VIEW, ROUTE, SHOW, KEYS, each layer with its on/off).
 Esc closes the full map.
 
@@ -126,7 +127,7 @@ Full-screen map:
 | Shift+right-drag | Add a waypoint above or below the plane: press where it should go, then drag up or down with the view tilted (the marker shows the height); let go to add it |
 | Drag one of your waypoints | Raise or lower it (left-drag, or Shift+right-drag); the route is planned again when you let go |
 | Drag a flip point | Bend that leg up or down: it curves through the point you let go at (a **BEND** marker), turning partly sideways instead of stopping. Drag the BEND marker to move it; drag it back near the straight line, or Shift+right-click it, to straighten the leg |
-| S | Follow your ship (toggle; on each time the map opens; panning, F or H turns it off) |
+| S | Follow your ship (toggle; the same setting as the window's FOLLOW SHIP, on at the start of each session; panning, F or H turns it off) |
 | U | Turn with the ship (on by default, saved): while following, the view turns so your forward movement points up the screen (nearly stopped: the way the ship faces). Your tilt stays; a sideways drag turns the view and it keeps turning with the ship from there. Also in the settings, and for the side window and pinned map while they follow |
 | F / H | Frame the route / the whole system |
 | C | Copy the flip point as a GPS (paste it in the GPS tab) |

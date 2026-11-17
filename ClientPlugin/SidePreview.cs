@@ -217,7 +217,7 @@ internal static class SidePreview
         HandleKeys();
         HoldCursor(now);
         // F&B's search box takes no typing while the mouse is over the map, so the map's keys work there
-        cursorFree = InGame && (navOpen || RichHudCursor.Shown);
+        cursorFree = InGame && (navOpen || holding || RichHudCursor.Shown);
         FlipAndBurnLink.BlockSearch(navOpen && OverMap());
         if (Visible && cursorFree) { HandleMouse(); if (navOpen) MapKeys(); }
         else mouse.Reset(scene);
@@ -225,6 +225,7 @@ internal static class SidePreview
     }
 
     private static double noRichHudNote;
+    private static bool holding; // the free-mouse key is held (and Rich HUD has its cursor up)
 
     /// <summary>
     /// The free-mouse key (F2), held: Rich HUD's cursor comes up and takes the mouse off the ship, so you can use the map
@@ -232,8 +233,9 @@ internal static class SidePreview
     /// </summary>
     private static void HoldCursor(double now)
     {
+        holding = false;
         if (!KeysFree() || !Binds.Cursor.Held()) return;
-        if (RichHudCursor.Request()) return;
+        if (RichHudCursor.Request()) { holding = true; return; }
         if (now >= noRichHudNote) { Notify("Freeing the mouse needs the Rich HUD Master mod (it's on SDX2; not in this world).", false); noRichHudNote = now + 10; }
     }
 
@@ -792,12 +794,26 @@ internal static class SidePreview
         return WindowBox().Contains(mx, my) && !followBox.Contains(mx, my) && !SideLayout.FnbList(full.Width, full.Height).Contains(mx, my);
     }
 
+    private static bool followPress; // the left button went down on FOLLOW SHIP
+
     private static void HandleMouse()
     {
         var input = MyInput.Static;
         Mouse(out float mx, out float my);
         bool over = OverMap();
         mouse.Handle(scene, input, mx, my, over || mouse.Busy);
+        bool onFollow = Visible && followBox.Contains(mx, my);
+        if (input.IsNewLeftMousePressed()) followPress = onFollow;
+        if (input.IsNewLeftMouseReleased())
+        {
+            if (followPress && onFollow)
+            {
+                bool f = Plugin.Settings.PreviewFollow = !Plugin.Settings.PreviewFollow;
+                if (f && Snap.HasShip) scene.Cam.FlyTo(Snap.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
+                Plugin.SaveSettings();
+            }
+            followPress = false;
+        }
         if (over && input.IsNewMiddleMousePressed()) { reframe = true; Plugin.Settings.PreviewFollow = false; }
     }
 
@@ -873,7 +889,7 @@ internal static class SidePreview
         if (PlayGuard.Blocked && !(PlayGuard.ViewOnly && Visible && Pinned)) return; // AFK: only the pinned preview
         panelBox = default;
         DrawAll(now, dt);
-        if (!cursorFree || !RichHudCursor.Shown) return;
+        if (!cursorFree || !(RichHudCursor.Shown || holding)) return;
         Mouse(out float cx, out float cy);
         if ((Visible && WindowBox().Contains(cx, cy)) || panelBox.Contains(cx, cy))
             RichHudCursor.Draw(cx, cy, MyGuiManager.GetFullscreenRectangle().Height);
@@ -925,12 +941,7 @@ internal static class SidePreview
             followBox = new Box(box.Right - fw - fpx * 0.6f, scene.TitleBottom + fpx * 0.5f, fw, fh);
             if (cursorFree)
             {
-                if (ui.Button(followBox, ft, fpx, MapScene.ShipColor, follow))
-                {
-                    Plugin.Settings.PreviewFollow = !follow;
-                    if (!follow && Snap.HasShip) scene.Cam.FlyTo(Snap.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
-                    Plugin.SaveSettings();
-                }
+                ui.Button(followBox, ft, fpx, MapScene.ShipColor, follow); // clicked in HandleMouse
             }
             else if (follow)
             {
