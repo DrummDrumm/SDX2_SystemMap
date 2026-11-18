@@ -21,20 +21,23 @@
 //    (above it when it's on or near a world), 800 km from Sol, or at the clearance above a planet or moon.
 //  - Taking over: touch any movement or turn control in a seat, switch the dampeners on, press STOP AUTOPILOT /
 //    Ctrl+M in the plugin, or run this PB with the argument "manual". It lets go of thrusters and gyros at once.
+//    FULL STOP in the plugin (or the argument brake) first turns retrograde and burns the ship down to 50 m/s, then
+//    switches the dampeners on (they stop the rest) and hands back.
 //    The plugin then offers RESUME ROUTE (a pop-up, and a button under the N list).
 //  - Hotbar: drag this PB onto the cockpit's toolbar, pick Run, and type the argument  manual  - one key back to
 //    manual control. A second slot with  go  resumes the route already sent.
 //  - Hotbar turns (no route needed; they take over from a route being flown):
 //      prograde    turn the drives' push along your travel (the ship's forward pointing where you're going) and hold
 //      retrograde  turn it against your travel (ready to brake) and hold
-//      brake       retrograde full stop: turn retrograde, burn at full thrust until stopped, then dampeners on
+//      brake       retrograde full stop: turn retrograde, burn at full thrust until under 50 m/s, then dampeners on
 //    A hold lasts until you touch the controls or run manual; brake also ends when stopped. Running the same
 //    argument again turns it off.
 //  - Arguments: manual (or stop) | go (fly the route already in Custom Data) | prograde | retrograde | brake
 //  - Optional settings: a [SDX2 Autopilot Config] section in Custom Data, keys below (defaults shown):
 //      TurnRate=0.6      max turn rate, rad/s
-//      BrakeMargin=0.8   share of max acceleration planned for braking
+//      BrakeMargin=0.8   share of max acceleration planned for stops, bends and corners (the rest is a reserve)
 //      MaxSpeed=0        m/s, 0 = the route's (Flip and Burn's cap)
+//      SpeedBuffer=0.03  at the cap, this share under or over it counts as at speed (no chasing it, no flip to shed it)
 //
 // SDX2 performance: runs every 10 ticks while flying and every 100 while idle, no block scans per tick.
 
@@ -50,6 +53,8 @@ readonly Nav.Settings settings = new Nav.Settings();
 string target = "", lastCd, state = "idle", msg = "", lastStatus;
 int lastId, idx, runs;
 double time, routeMax = 50000, startedAt, thrustCap = 1, brakeCap = 1;
+// FULL STOP hands over to the dampeners below this speed (m/s)
+const double DampenBelow = 50;
 int turnTicks; // runs in a row with turn input (a lone mouse jump, as when a menu opens, isn't a takeover)
 bool flying;
 string mode = "route"; // what Fly() does: route | prograde | retrograde | brake
@@ -107,6 +112,7 @@ void Orders(string cd)
     if (!PeekOrder(cd, out id, out command) || id == lastId) return;
     lastId = id;
     if (command == "stop") { Release("stopped", "Stopped from the map", false); return; }
+    if (command == "brake") { Turn("brake"); if (flying) { msg = "Full stop from the map"; WriteStatus(); } return; } // FULL STOP: brake to rest, then hand back
     bool keepFlying = command == "update" && flying;
     if (!ReadRoute(cd, true)) { if (command == "engage") Release("error", "The route in Custom Data can't be read", true); return; }
     if (command == "engage" || command == "update" && keepFlying) { idx = 0; if (!keepFlying) Engage(); else msg = "Route updated"; }
@@ -172,6 +178,7 @@ void ReadSettings(string cd)
         if (k == "TurnRate" && v > 0.05) settings.TurnRate = Math.Min(v, 3);
         else if (k == "BrakeMargin" && v > 0.2) settings.BrakeMargin = Math.Min(v, 0.95);
         else if (k == "MaxSpeed") settings.MaxSpeed = Math.Max(0, v);
+        else if (k == "SpeedBuffer") settings.SpeedBuffer = Math.Max(0, Math.Min(v, 0.2));
     }
 }
 
@@ -273,9 +280,12 @@ void Fly()
     // learn how fast the ship really turns (weak RCS gyros), so it flips early enough
     if (last.W.Length() >= settings.TurnRate * 0.99)
         settings.Observed = Math.Max(settings.Observed, c.GetShipVelocities().AngularVelocity.Length());
+    settings.Learn(last.W, c.GetShipVelocities().AngularVelocity, time);
 
     if (mode != "route")
     {
+        // FULL STOP: under DampenBelow the dampeners finish the stop (drives off, dampeners on, pilot has the ship)
+        if (mode == "brake" && v.Length() < DampenBelow) { Release("stopped", "Under " + DampenBelow.ToString("0") + " m/s: dampeners on", true); return; }
         last = Nav.Face(mode, v, g, drive, aFull, settings);
         if (last.Arrived) { Release("stopped", mode == "brake" ? "Stopped: dampeners on" : "Too slow to tell " + mode + " (under 1 m/s)", mode == "brake"); return; }
     }
@@ -357,9 +367,37 @@ public static class Nav
     public class Settings
     {
         public double TurnRate = 0.6, BrakeMargin = 0.8, MaxSpeed;
+        // at the speed cap, this share under (or over) it counts as at speed: no burn to chase the last bit (the game
+        // doesn't always let a ship reach its set speed) and no flip to shed a few m/s over it
+        public double SpeedBuffer = 0.03;
+        public bool Burning;    // correcting now (the dead band is narrower until it's done, so it doesn't stutter)
         public double Observed; // fastest turn seen while asking for full rate (0 = not yet)
         public bool Holding;    // a hotbar turn has had a direction to hold
         public double FlipRate { get { return Observed > 0.02 ? Math.Min(TurnRate, Observed) : TurnRate; } }
+        // how fast the gyros really speed up / slow the turn (rad/s², 0 = not seen yet), learnt while they're
+        // still short of the asked rate; until then a guess on the weak side (RCS gyros)
+        public double Accel;
+        public double TurnAccel { get { return Accel > 0 ? Accel : 0.15; } }
+        Vector3D wPrev; double tPrev = -1;
+        /// <summary>Learn the gyros' angular acceleration from the rate asked last run (asked) and the rate now.</summary>
+        public void Learn(Vector3D asked, Vector3D wNow, double time)
+        {
+            double dt = time - tPrev;
+            if (tPrev >= 0 && dt > 0.05 && dt < 1 && (asked - wPrev).Length() > 0.1)
+            {
+                double seen = (wNow - wPrev).Length() / dt;
+                if (seen > 0.01) Accel = Math.Min(5, Math.Max(Accel, seen));
+            }
+            wPrev = wNow; tPrev = time;
+        }
+        /// <summary>
+        /// The turn rate to ask for, angle (rad) off: never faster than the gyros can still slow it to nothing by the
+        /// time it's lined up (with half their acceleration to spare), so the turn doesn't swing past and back.
+        /// </summary>
+        public double TurnCmd(double angle)
+        {
+            return Math.Min(TurnRate, Math.Min(angle * 1.5, Math.Sqrt(TurnAccel * angle)));
+        }
     }
 
     /// <summary>Throttle as written to the drives: whole percent, rounded down so it never goes over a burn or brake cap.</summary>
@@ -394,6 +432,9 @@ public static class Nav
     public static Cmd Steer(Vector3D p, Vector3D v, Vector3D g, Vector3D drive, double aFull, double burnCap, double brakeCap, List<Wp> route, int idx, double cap, Settings s)
     {
         double aMax = aFull * burnCap, aBrake = aFull * brakeCap;
+        // planning share: every stop, bend and corner is planned on BrakeMargin of the thrust, so the rest is kept back
+        // to catch up when the ship runs ahead of the plan (the throttle itself can still use all of it)
+        double aPlan = aMax * s.BrakeMargin;
         var cmd = new Cmd { Idx = idx, SpeedNow = v.Length() };
         // move on from points reached or gone by
         while (cmd.Idx < route.Count - 1)
@@ -456,10 +497,10 @@ public static class Nav
                 // flip and burn: slow only enough to turn onto the next leg within the point's reach radius, by
                 // the time the turn starts
                 double sh = SinHalf(q, route[j].Pos, route[j + 1].Pos);
-                vL = TurnSpeed(q, route[j].Pos, route[j + 1].Pos, aMax, route[j].Arrive, cap);
+                vL = TurnSpeed(q, route[j].Pos, route[j + 1].Pos, aPlan, route[j].Arrive, cap);
                 D = Math.Max(0, along2 - (vL * vL * sh / aMax + vL * TurnLag(sh, s)));
             }
-            else vL = Math.Sqrt(TurnShare * aMax * Radius(q, route[j].Pos, route[j + 1].Pos));
+            else vL = Math.Sqrt(TurnShare * aPlan * Radius(q, route[j].Pos, route[j + 1].Pos));
             double allow = Math.Max(vL, a * (-tFlip + Math.Sqrt(tFlip * tFlip + (2 * D + vL * vL / a) / a)));
             speed = Math.Min(speed, allow);
         }
@@ -467,26 +508,35 @@ public static class Nav
         {
             // short of time for the sideways move to the pass point: don't speed up or brake, put all thrust sideways
             double lat = Vector3D.Reject(to, v / cmd.SpeedNow).Length();
-            double tNeed = Math.Sqrt(2 * lat / (aMax * 0.7)) + Math.PI / 2 / s.FlipRate + 2;
+            double tNeed = Math.Sqrt(2 * lat / (aPlan * 0.7)) + Math.PI / 2 / s.FlipRate + 2;
             double along = Math.Max(1, Vector3D.Dot(v, dir));
             if (d / along < tNeed * 1.5) speed = Math.Min(speed, along);
         }
         if (stopWp.Kind != "pass" && stopWp.Kind != "curve" && stopDist < stopWp.Arrive * 0.4) speed = 0;
-        var vWant = dir * speed;
+        // on a curve: aim at a point some seconds ahead along it, not at the next point (aiming at a point close by
+        // swings the heading as it's reached, and jumps it when the next one takes over)
+        var aimDir = wp.Kind == "curve" ? LookAhead(route, cmd.Idx, k, p, Math.Max(cmd.SpeedNow * LookTime, wp.Arrive * 4)) : dir;
+        double vAlong = Vector3D.Dot(v, aimDir), speedSet = speed;
+        // cruising at the cap: anywhere in the buffer round it is at speed (no chasing it, no flip to shed a few m/s)
+        if (speed >= cap * 0.999 && vAlong > cap * (1 - s.SpeedBuffer) && vAlong < cap * (1 + s.SpeedBuffer)) speedSet = vAlong;
+        var vWant = aimDir * speedSet;
         var acc = (vWant - v) / 3.0 - g;
         double am = acc.Length();
 
-        // where the drives should point: along acc; hold still when there's nothing to do
+        // where the drives should point: along acc; hold still when there's nothing to do. Fast, small errors
+        // (under 0.4 % of the speed) are left until they grow, and a correction runs on until it's a third of that
         bool braking = cmd.SpeedNow > 1 && Vector3D.Dot(acc, v) < 0;
         double capNow = braking ? brakeCap : burnCap;
-        if (am < aFull * capNow * 0.01) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; }
+        double band = Math.Max(aFull * capNow * 0.01, cmd.SpeedNow * 0.004 / 3.0) * (s.Burning ? 0.33 : 1);
+        if (am < band) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; s.Burning = false; }
         else
         {
+            s.Burning = true;
             var want = acc / am;
             double cos = MathHelper.Clamp(Vector3D.Dot(drive, want), -1, 1), angle = Math.Acos(cos);
             var axis = Vector3D.Cross(drive, want);
             if (axis.LengthSquared() < 1e-10) axis = Vector3D.CalculatePerpendicularVector(drive);
-            cmd.W = Vector3D.Normalize(axis) * Math.Min(s.TurnRate, angle * 1.5);
+            cmd.W = Vector3D.Normalize(axis) * s.TurnCmd(angle);
             double aim = angle < 0.05 ? 1 : angle < 0.26 ? (0.26 - angle) / 0.21 : 0;
             cmd.Throttle = MathHelper.Clamp(am / aFull, 0, capNow) * aim * Math.Max(0, cos);
         }
@@ -521,7 +571,7 @@ public static class Nav
         double cos = MathHelper.Clamp(Vector3D.Dot(drive, want), -1, 1), angle = Math.Acos(cos);
         var axis = Vector3D.Cross(drive, want);
         if (axis.LengthSquared() < 1e-10) axis = Vector3D.CalculatePerpendicularVector(drive);
-        cmd.W = angle < 0.002 ? Vector3D.Zero : Vector3D.Normalize(axis) * Math.Min(s.TurnRate, angle * 1.5);
+        cmd.W = angle < 0.002 ? Vector3D.Zero : Vector3D.Normalize(axis) * s.TurnCmd(angle);
         if (brake)
         {
             double aim = angle < 0.05 ? 1 : angle < 0.26 ? (0.26 - angle) / 0.21 : 0;
@@ -530,6 +580,34 @@ public static class Nav
             cmd.Eta = cmd.SpeedNow / aFull + angle / s.FlipRate;
         }
         return cmd;
+    }
+
+    /// <summary>Seconds ahead along a curve the ship aims.</summary>
+    public const double LookTime = 15;
+
+    /// <summary>
+    /// The direction to a point L metres ahead along the route from the ship's place on the leg to route[idx], no
+    /// further than route[stop] (the next point it must stop or turn at).
+    /// </summary>
+    static Vector3D LookAhead(List<Wp> route, int idx, int stop, Vector3D p, double L)
+    {
+        var a = idx > 0 ? route[idx - 1].Pos : p;
+        var b = route[idx].Pos;
+        var seg = b - a; double len = seg.Length();
+        double s0 = len > 1 ? MathHelper.Clamp(Vector3D.Dot(p - a, seg / len), 0, len) : len;
+        var look = b; double left = L - (len - s0);
+        if (left <= 0) look = a + seg / Math.Max(len, 1e-9) * (s0 + L);
+        else
+        {
+            for (int j = idx; j < stop && left > 0; j++)
+            {
+                var u = route[j + 1].Pos - route[j].Pos; double ul = u.Length();
+                if (ul >= left) { look = route[j].Pos + u / ul * left; left = 0; }
+                else { left -= ul; look = route[j + 1].Pos; }
+            }
+        }
+        var to = look - p;
+        return to.LengthSquared() > 1 ? Vector3D.Normalize(to) : Vector3D.Normalize(b - p + new Vector3D(1e-9, 0, 0));
     }
 
     /// <summary>A detour or waypoint: flown as a turn onto the next leg (the last point is the stop).</summary>

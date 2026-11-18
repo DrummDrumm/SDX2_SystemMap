@@ -46,16 +46,18 @@ public class Plugin : IPlugin
             SettingsScreen.CheckHotkey();
             if (!WorldGate.Update(Now)) return; // not an SDX2 world: stay off
             PlayGuard.Update(Now);
-            if (PlayGuard.ViewOnly) { SidePreview.ViewUpdate(Now); return; } // AFK: the map and pinned preview, read-only
-            if (PlayGuard.Blocked) { SidePreview.Pause(); return; }
+            if (PlayGuard.ViewOnly) { SidePreview.ViewUpdate(Now); SecondScreen.Update(Now); return; } // AFK: the map and pinned preview, read-only
+            if (PlayGuard.Blocked) { SidePreview.Pause(); SecondScreen.Update(Now); return; }
             FlipAndBurnLink.Search(Now);
             SidePreview.Update(Now);
+            SecondScreen.Update(Now);
         }
         catch (Exception e) { LogThrottled("update failed: " + e); }
     }
 
     public void Dispose()
     {
+        try { SecondScreen.Reset(); } catch { }
         try { harmony?.UnpatchAll(Id); } catch { }
     }
 
@@ -108,6 +110,7 @@ public class SystemMapSession : MySessionComponentBase
         WorldGate.Reset();
         SpectrumLink.Reset();
         SidePreview.Reset();
+        SecondScreen.Reset();
         RichHudCursor.Reset();
         Plugin.SaveSettings();
         base.UnloadData();

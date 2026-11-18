@@ -23,6 +23,8 @@ public sealed class RoutePlan
     /// <summary>Deceleration for the brake burn, m/s²; 0 = same as <see cref="MaxAccel"/>.</summary>
     public double BrakeAccel;
     private double B => BrakeAccel > 0.01 ? BrakeAccel : MaxAccel;
+    /// <summary>The deceleration the brake leg uses.</summary>
+    public double BrakeUsed => B;
     public double MaxSpeed = DefaultMaxSpeed;
     /// <summary>Wanted clearance above a world's surface; closer passes are hazards.</summary>
     public double Clearance = DefaultClearance;
@@ -247,6 +249,16 @@ public sealed class RoutePlan
             Hazards.Add(new Hazard { World = w, Clearance = clear, At = at, Blocked = blocked, Closest = PointAt(at) });
         }
         Hazards.Sort((x, y) => x.At.CompareTo(y.At));
+    }
+
+    /// <summary>The time from now to reach a distance along the leg, by the burn plan (the inverse of <see cref="AlongAt"/>).</summary>
+    public double TimeAt(double along)
+    {
+        if (double.IsNaN(Eta) || Eta <= 0) return double.NaN;
+        if (along <= 0) return 0;
+        double lo = 0, hi = Eta;
+        for (int i = 0; i < 40; i++) { double m = (lo + hi) / 2; if (AlongAt(m) < along) lo = m; else hi = m; }
+        return hi;
     }
 
     /// <summary>Position along the route at time t from now (for T+ marks), by the burn plan.</summary>

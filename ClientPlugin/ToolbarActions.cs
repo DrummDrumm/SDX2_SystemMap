@@ -44,6 +44,22 @@ internal static class ToolbarActions
             stop.Action = b => SidePreview.HotbarStop(); // at once, no pop-up: you have the controls
             stop.Writer = (b, sb) => sb.Append("Stop AP");
             tc.AddAction<IMyShipController>(stop);
+
+            var full = tc.CreateAction<IMyShipController>("SDX2Map_FullStop");
+            full.Name = new StringBuilder("System Map: full stop");
+            full.Icon = @"Textures\GUI\Icons\Actions\SwitchOff.dds";
+            full.ValidForGroups = false;
+            full.Action = b => SidePreview.FullStop(); // brakes to a standstill, then dampeners on and hands back
+            full.Writer = (b, sb) => sb.Append("Full stop");
+            tc.AddAction<IMyShipController>(full);
+
+            var clear = tc.CreateAction<IMyShipController>("SDX2Map_ClearRoute");
+            clear.Name = new StringBuilder("System Map: clear route");
+            clear.Icon = @"Textures\GUI\Icons\Actions\Reset.dds";
+            clear.ValidForGroups = false;
+            clear.Action = b => SidePreview.Notify(SidePreview.ClearRoute()); // the route stays until cleared or flown
+            clear.Writer = (b, sb) => sb.Append("Clear route");
+            tc.AddAction<IMyShipController>(clear);
         }
         catch (Exception e) { Plugin.Log("toolbar actions not added: " + e.Message); }
     }

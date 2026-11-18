@@ -15,6 +15,10 @@ internal static class Binds
     public static KeyCombo Steer => Get(Plugin.Settings.KeySteer);
     public static KeyCombo Settings => Get(Plugin.Settings.KeySettings);
     public static KeyCombo Cursor => Get(Plugin.Settings.KeyCursor);
+    /// <summary>In the full map: move the route panel to the other side.</summary>
+    public static KeyCombo PanelSide => Get(Plugin.Settings.KeyPanel);
+    /// <summary>The full map on a second screen, open / closed.</summary>
+    public static KeyCombo SecondScreen => Get(Plugin.Settings.KeySecondScreen);
 
     private static readonly Dictionary<string, KeyCombo> cache = new Dictionary<string, KeyCombo>();
     private static KeyCombo Get(string text)
@@ -117,7 +121,7 @@ internal static class Binds
             Plugin.Log(msg);
             try { Sandbox.ModAPI.MyAPIGateway.Utilities?.ShowNotification(msg, 10000, "Red"); } catch { }
         }
-        One(Map, "map"); One(Autopilot, "autopilot"); One(Pin, "pin the map"); One(Steer, "steer round asteroid"); One(Settings, "settings"); One(Cursor, "free the mouse");
+        One(Map, "map"); One(Autopilot, "autopilot"); One(Pin, "pin the map"); One(Steer, "steer round asteroid"); One(Settings, "settings"); One(Cursor, "free the mouse"); One(SecondScreen, "second screen");
     }
 
     /// <summary>Keys a binding can't use: modifiers, the main mouse buttons and the Windows keys (the side buttons are fine).</summary>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Navy Chart</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #02060e">
+<dc-import name="ChartMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line": {"editor": "color", "default": "#7fa8e0"}, "warm": {"editor": "color", "default": "#e8c25a"}, "alert": {"editor": "color", "default": "#ff5a5a"}, "$preview": {"width": 1600, "height": 900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var t = {'name': 'NAVY', 'tag': 'UNN // ASTROGATION CHART', 'title': '#f2f7ff', 'bezel': '#08142a', 'bg': '#040c1c', 'panel': '#071226', 'ring': '#e6f0ff', 'grid': '#4a6aa0', 'text': '#e6f0ff', 'sub': '#9ab0d0', 'planet': '#0e2244', 'box': 'rgba(30,60,120,0.6)', 'hi': '#6ad8ff', 'burn': '#ff9a3a', 'brake': '#e8c25a', 'hexA': 0.05, 'secs': ['#e8c25a', '#6ad8ff', '#6ad8ff', '#6ad8ff', '#5a6a88']};
+    t.line = this.props.line ?? '#7fa8e0';
+    t.warm = this.props.warm ?? '#e8c25a';
+    t.alert = this.props.alert ?? '#ff5a5a';
+    return { theme: t };
+  }
+}
+</script>
+</body>
+</html>

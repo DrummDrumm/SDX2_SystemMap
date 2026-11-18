@@ -30,13 +30,7 @@ public sealed class PanelUi
     public bool Button(Box b, string text, float px, MapColor accent, bool on = false, bool enabled = true)
     {
         bool hover = enabled && Dragging == null && Over(b);
-        var fill = on ? accent.WithAlpha(0.42f) : hover ? accent.WithAlpha(0.25f) : AutopilotPanel.Panel;
-        var edge = enabled ? accent : AutopilotPanel.Dim.WithAlpha(0.5f);
-        C.Rect(b.X, b.Y, b.W, b.H, fill);
-        C.Rect(b.X, b.Y, b.W, 2, edge);
-        C.Rect(b.X, b.Bottom - 2, b.W, 2, edge);
-        var col = !enabled ? AutopilotPanel.Dim.WithAlpha(0.6f) : on || hover ? MapColor.Rgb(0xFFFFFF) : accent;
-        C.Text(text, b.X + b.W / 2, b.Y + (b.H - px) / 2, px, col, TextAnchor.Center);
+        PanelStyle.Button(C, b, px, text, accent, hover, on, enabled);
         return hover && Released && !dropped;
     }
 

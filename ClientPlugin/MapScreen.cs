@@ -12,7 +12,7 @@ namespace SDX2_SystemMap;
 /// GPS: focus the view on it. Shift+click: make it Flip and Burn's destination (or a waypoint while ADD WAYPOINT is
 /// on), and the autopilot controls open on the left as under the N list: AUTOPILOT (route panel) / MANUAL.
 /// Shift+right-click: add / remove a waypoint; Shift+right-drag: add one above or below the plane (tilt the view);
-/// drag one of your waypoints (left, or Shift+right): raise or lower it.
+/// drag one of your waypoints: up / down raises or lowers it, sideways moves it along X or Z; Shift+right-drag: anywhere across the plane.
 /// S: follow your ship (toggle). F: frame the route. H: whole system. C: copy the flip point as a GPS. N: back to F&amp;B's list.
 /// A: autopilot (confirm in the N list, or stop it while it flies). R: re-plan detours from here. V: detours on/off.
 /// G/O/X/T/P/L/J: grid, orbits, sectors, stations, GPS, labels, moons. Esc or M: close.
@@ -21,6 +21,8 @@ internal sealed class MapScreen : MyGuiScreenBase
 {
     private static MapScreen open;
     public static bool IsOpen => open != null;
+    /// <summary>The full map is the screen in front (no pop-up over it).</summary>
+    public static bool HasFocus => open != null && MyScreenManager.GetScreenWithFocus() == open;
 
     private readonly MapScene scene = new MapScene();
     private readonly GameCanvas canvas = new GameCanvas();
@@ -89,8 +91,8 @@ internal sealed class MapScreen : MyGuiScreenBase
             const string s = MapScene.Sep;
             var o = scene.Opt;
             return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system" + "\n"
-                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint up / down" + s + "Drag a flip point: bend the leg" + s + "Shift+right-click a bend: straighten" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
-                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
+                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint or detour (first: destination)" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint: up / down (Y) or sideways (X or Z)" + s + "Shift+right-drag it across" + s + "Right-click the destination or Del: clear route" + s + "Drag a flip point: bend the leg" + s + "Shift+right-click a bend: straighten" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
+                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + (Binds.PanelSide.IsNone ? "" : s + Binds.PanelSide.Display + " panel side") + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
 
@@ -119,8 +121,9 @@ internal sealed class MapScreen : MyGuiScreenBase
             Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (your travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
         }
         if (input.IsNewKeyPressed(MyKeys.C)) Toast(CopyFlip());
+        if (input.IsNewKeyPressed(MyKeys.Delete)) Toast(SidePreview.ClearRoute());
         if (input.IsNewKeyPressed(MyKeys.A)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
-        if (input.IsNewKeyPressed(MyKeys.R)) { SidePreview.Replan(); Toast("Route planned again from here."); }
+        if (input.IsNewKeyPressed(MyKeys.R)) { bool back = SidePreview.Tracker.Skipped.Count > 0; SidePreview.Replan(true); Toast("Route planned again from here" + (back ? ", with the detours you removed." : ".")); }
         if (input.IsNewKeyPressed(MyKeys.V))
         {
             Plugin.Settings.AvoidBodies = !Plugin.Settings.AvoidBodies;
@@ -136,6 +139,12 @@ internal sealed class MapScreen : MyGuiScreenBase
         if (input.IsNewKeyPressed(MyKeys.J)) o.Moons = !o.Moons;
         if (input.IsNewKeyPressed(MyKeys.K)) Toast(NextTheme());
         if (input.IsNewKeyPressed(MyKeys.Q)) Toast(SidePreview.NextPipCorner());
+        if (Binds.PanelSide.Pressed())
+        {
+            Plugin.Settings.PanelRight = !Plugin.Settings.PanelRight;
+            Plugin.SaveSettings();
+            Toast(Plugin.Settings.PanelRight ? "Route panel: right" : "Route panel: left");
+        }
 
         var m = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(MyGuiManager.MouseCursorPosition);
         bool left = input.IsLeftMousePressed();
@@ -172,7 +181,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             lastDraw = now;
             var full = MyGuiManager.GetFullscreenRectangle();
             var box = new Box(0, 0, full.Width, full.Height);
-            scene.Snap = SidePreview.Snap; scene.Path = SidePreview.Path; scene.Bends = SidePreview.Tracker.Bends;
+            scene.Snap = SidePreview.Snap; scene.Path = SidePreview.Path; scene.Bends = SidePreview.Tracker.Bends; scene.Original = SidePreview.FlownRoute;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H);
             if (!framed) { scene.FrameDefault(true); framed = true; }
             if (follow && scene.Snap.HasShip) { scene.Cam.GoalTarget = scene.Snap.ShipPos; scene.Cam.Target = scene.Snap.ShipPos; }
@@ -182,17 +191,18 @@ internal sealed class MapScreen : MyGuiScreenBase
             bool overPanel = controls.W > 0 && controls.Contains(m.X, m.Y) || panelGrab;
             scene.MouseX = overPanel ? float.NaN : m.X; scene.MouseY = overPanel ? float.NaN : m.Y;
             scene.Help = Help;
-            scene.Draw(canvas, box);
-            // the autopilot controls, as under the N list
             var input = MyInput.Static;
-            bool flying = AutopilotLink.Engaged(now);
+            bool wanted = MapControls.Prepare(scene, showControls, now, out bool card) && input != null;
+            if (input == null) scene.ControlsHeight = null;
+            scene.Draw(canvas, box);
+            // the autopilot controls: the card in the route panel's top slot, the route editor on the other side
             controls = default;
-            if ((showControls || flying) && SidePreview.Path != null && input != null)
+            if (wanted)
             {
-                float cpx = Math.Max(14f, full.Height / 52f);
-                ui.Input(canvas, m.X, m.Y, input.IsLeftMousePressed(), input.IsNewLeftMousePressed(), input.IsNewLeftMouseReleased());
-                // on the right: the route summary is top left
-                controls = SidePreview.MapControls(ui, canvas, box.W - cpx * 31.2f, box.H * 0.06f, box.H, cpx, out bool closeMap);
+                // a pop-up over the map takes the clicks: the buttons under it don't
+                bool focus = HasFocus;
+                ui.Input(canvas, m.X, m.Y, focus && input.IsLeftMousePressed(), focus && input.IsNewLeftMousePressed(), focus && input.IsNewLeftMouseReleased());
+                controls = MapControls.Draw(ui, scene, box, card, now, out bool closeMap);
                 if (closeMap) { CloseScreen(); return base.Draw(); }
             }
             if (toast != null && now < toastUntil)

@@ -8,9 +8,13 @@ namespace SDX2_SystemMap;
 /// is over it):
 ///  - drag: orbit; right-drag: pan; wheel: zoom; click: focus on a world, station or GPS point;
 ///  - Shift+click: make it Flip and Burn's destination (a waypoint while ADD WAYPOINT is on);
-///  - Shift+right-click: add a waypoint there (on one of yours: remove it; on a bend: straighten the leg);
+///  - Shift+right-click: add a waypoint there (on one of yours: remove it; on a detour: remove it, R brings it back;
+///    on a bend: straighten the leg; with no route
+///    yet it becomes the destination);
 ///  - Shift+right-drag: add one above or below the plane (tilt the view);
-///  - drag one of your waypoints (left, or Shift+right): raise or lower it;
+///  - drag one of your waypoints (or your point in space): along the screen's up / down raises or lowers it, side to
+///    side (or any way when looking down on it) moves it along the X or Z axis, whichever runs most along the drag; Shift+right-drag: anywhere across
+///    the level plane;
 ///  - drag a flip point or a bend: bend that leg up or down.
 /// A press only counts when it starts on the map, so dragging in from the N list or a panel does nothing.
 /// </summary>
@@ -28,14 +32,21 @@ internal sealed class MapMouse
     /// <summary>After a Shift+click set a destination (the full map opens its autopilot controls).</summary>
     public Action<Pick> Destination = _ => { };
     public double OrbitRate = 0.005;
+    /// <summary>How far (px, across + down) a press may wander and still count as a click: more for a finger.</summary>
+    public float ClickSlop = 6;
 
     private bool leftDown, rightDown, moved, rMoved;
     private float lastX, lastY, downX, downY, rDownX, rDownY;
 
     // a height drag: 0 none, 1 placing a new waypoint (Shift+right-drag), 2 raising / lowering one of yours,
-    // 3 bending a leg (its flip point or bend dragged up / down)
+    // 3 bending a leg (its flip point or bend dragged up / down), 4 moving the point in space you set as the destination.
+    // hFlat: across the level plane (Shift+right-drag) instead of up / down
     private int hMode;
-    private bool hRight, hWarned;
+    private bool hRight, hWarned, hFlat;
+    /// <summary>A left-drag of your waypoint or point: up / down or across is picked from the first move.</summary>
+    private bool hAuto;
+    /// <summary>A sideways left-drag: along one level axis only, X or Z (whichever runs most along the drag on screen), keeping the rest.</summary>
+    private bool hAxisLock, hAlongZ;
     private string hName;
     private V3 hBase, hPos;
 
@@ -52,9 +63,12 @@ internal sealed class MapMouse
     /// One frame of input. active = the mouse may act on the map (it's over the map, not over a panel or button; a
     /// drag that started on the map keeps it while held).
     /// </summary>
-    public void Handle(MapScene scene, IMyInput input, float mx, float my, bool active)
+    public void Handle(MapScene scene, IMyInput input, float mx, float my, bool active) => Handle(scene, MouseInput.From(input), mx, my, active);
+
+    /// <summary>One frame of input from buttons given directly (the second screen's mouse or touch).</summary>
+    public void Handle(MapScene scene, MouseInput input, float mx, float my, bool active)
     {
-        bool left = input.IsLeftMousePressed(), right = input.IsRightMousePressed();
+        bool left = input.Left, right = input.Right;
         float dx = mx - lastX, dy = my - lastY;
         if (!active)
         {
@@ -63,31 +77,39 @@ internal sealed class MapMouse
             lastX = mx; lastY = my;
             return;
         }
-        bool shift = input.IsAnyShiftKeyPressed();
-        bool newLeft = input.IsNewLeftMousePressed(), newRight = input.IsNewRightMousePressed();
+        bool shift = input.Shift;
+        bool newLeft = input.NewLeft, newRight = input.NewRight;
         if (newRight) { rDownX = mx; rDownY = my; rMoved = false; }
-        if (right && Math.Abs(mx - rDownX) + Math.Abs(my - rDownY) > 6) rMoved = true;
+        if (right && Math.Abs(mx - rDownX) + Math.Abs(my - rDownY) > ClickSlop) rMoved = true;
         if (newLeft) { downX = mx; downY = my; moved = false; }
-        if (left && Math.Abs(mx - downX) + Math.Abs(my - downY) > 6) moved = true;
+        if (left && Math.Abs(mx - downX) + Math.Abs(my - downY) > ClickSlop) moved = true;
 
         // height drags: a press on one of your waypoints (drag, or Shift+right-drag), a flip point or bend (bend the
         // leg), or Shift+right on empty space (a new waypoint)
+        // Shift+right-drag on one of your waypoints (or the point in space you set as the destination) moves it across
+        // the plane instead
         if (hMode == 0 && newLeft && scene.Hovered is Pick hp && hp.Kind == "Your waypoint" && SidePreview.UserWaypoint(hp.Name, out var hb))
-            StartHeight(2, false, hp.Name, hb);
+            { StartHeight(2, false, hp.Name, hb); hAuto = true; }
+        else if (hMode == 0 && newLeft && scene.Hovered is Pick dp && dp.Kind == DestKind && SidePreview.OwnDestination(dp.Name))
+            { StartHeight(4, false, dp.Name, dp.Pos); hAuto = true; }
         else if (hMode == 0 && newLeft && scene.Hovered is Pick fp && fp.Leg != null)
             StartHeight(3, false, fp.Leg, SidePreview.LegBend(fp.Leg, out var lb) ? lb : fp.Pos);
         else if (hMode == 0 && newRight && shift)
         {
-            if (scene.Hovered is Pick rp && rp.Kind == "Your waypoint" && SidePreview.UserWaypoint(rp.Name, out var rb)) StartHeight(2, true, rp.Name, rb);
+            if (scene.Hovered is Pick rp && rp.Kind == "Your waypoint" && SidePreview.UserWaypoint(rp.Name, out var rb)) StartHeight(2, true, rp.Name, rb, flat: true);
+            else if (scene.Hovered is Pick rd && rd.Kind == DestKind && SidePreview.OwnDestination(rd.Name)) StartHeight(4, true, rd.Name, rd.Pos, flat: true);
             else if (SidePreview.Path is RoutePath path && RouteClick.Place(scene.Cam, path.Points(), mx, my, 12 * scene.Unit, out var nb, out _)) StartHeight(1, true, null, nb);
+            else if (SidePreview.Path == null && !(scene.Hovered is Pick) && FirstPlace(scene, mx, my, out var fb)) StartHeight(1, true, null, fb);
         }
         if (hMode != 0)
         {
             bool held = hRight ? right : left, dragging = hRight ? rMoved : moved;
             if (dragging)
             {
-                if (RouteClick.HeightOnVertical(scene.Cam.Eye, scene.Cam.Ray(mx, my), hBase, out var hp2)) hPos = hp2;
-                else if (!hWarned) { hWarned = true; Toast("Tilt the view to set height"); }
+                if (hAuto) { hAuto = false; hFlat = hAxisLock = SideDrag(scene, hBase, mx - downX, my - downY, out hAlongZ); }
+                if (hAxisLock ? AlongAxis(scene, mx, my, hBase, hAlongZ, out var hp2)
+                    : hFlat ? FlatPlace(scene, mx, my, hBase, out hp2) : RouteClick.HeightOnVertical(scene.Cam.Eye, scene.Cam.Ray(mx, my), hBase, out hp2)) hPos = hp2;
+                else if (!hWarned) { hWarned = true; Toast(hAxisLock ? "Turn the view to move it along " + (hAlongZ ? "Z" : "X") : hFlat ? "Tilt the view down to move it across" : "Tilt the view to set height"); }
                 scene.Ghost = hPos; scene.GhostBase = hBase;
             }
             if (!held)
@@ -95,7 +117,11 @@ internal sealed class MapMouse
                 if (dragging)
                 {
                     double rise = hPos.Y - hBase.Y;
-                    Toast(hMode == 3 ? SidePreview.BendLeg(hName, hPos) : hMode == 2 ? SidePreview.MoveWaypoint(hName, hPos, rise) : SidePreview.InsertWaypoint(null, hPos));
+                    if (hMode == 1 && SidePreview.Path == null) FirstDestination(new Pick { Name = FirstName, Kind = "Waypoint", Pos = hPos });
+                    else Toast(hMode == 4 ? SidePreview.MoveDestination(hName, hBase, hPos, hFlat)
+                        : hMode == 3 ? SidePreview.BendLeg(hName, hPos)
+                        : hMode == 2 ? SidePreview.MoveWaypoint(hName, hPos, rise, hFlat)
+                        : SidePreview.InsertWaypoint(null, hPos));
                     hMode = 0; scene.Ghost = null;
                     leftDown = false; rightDown = false; lastX = mx; lastY = my;
                     return; // the release is used up
@@ -106,28 +132,77 @@ internal sealed class MapMouse
         bool hDrag = hMode != 0;
 
         if (left && leftDown && !hDrag) { scene.Cam.Orbit(-dx * OrbitRate, dy * OrbitRate); if (Turning()) Heading?.Turned(-dx * OrbitRate); }
-        if (input.IsNewRightMouseReleased() && !rMoved && shift && rightDown) AddWaypointAt(scene, mx, my);
+        if (input.RightReleased && !rMoved && shift && rightDown) AddWaypointAt(scene, mx, my);
+        else if (input.RightReleased && !rMoved && rightDown && scene.Hovered is Pick dr && dr.Kind == DestKind) Toast(SidePreview.ClearDestination());
         if (right && rightDown && !shift && !hDrag && Math.Abs(dx) + Math.Abs(dy) > 0)
         {
             scene.Cam.Pan(dx, dy);
             if (Following()) { Unfollow(); Toast("Follow ship: off (panned)"); }
         }
-        if (input.IsNewLeftMouseReleased() && !moved && leftDown && scene.Hovered is Pick p)
+        if (input.LeftReleased && !moved && leftDown && scene.Hovered is Pick p)
         {
             if (shift) { Toast(SidePreview.SetDestination(p.Name, p.Kind, p.Pos, p.Detail)); if (p.Kind != "Your ship") Destination(p); }
-            else { if (p.Kind != "Your ship") Unfollow(); scene.Cam.FlyTo(p.Pos, FlyDistance(p)); }
+            else { if (p.Kind != "Your ship") Unfollow(); scene.Cam.FlyTo(p.Pos, MapScene.FocusDistance(p)); }
         }
         // a press counts only when it starts here
         leftDown = left && (leftDown || newLeft);
         rightDown = right && (rightDown || newRight);
         lastX = mx; lastY = my;
-        int wheel = input.DeltaMouseScrollWheelValue();
-        if (wheel != 0) scene.Cam.Zoom(wheel / 120.0);
+        double notches = input.Notches;
+        if (notches != 0) scene.Cam.Zoom(notches);
     }
 
-    private void StartHeight(int mode, bool rightButton, string name, V3 basePos)
+    private void StartHeight(int mode, bool rightButton, string name, V3 basePos, bool flat = false)
     {
-        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false;
+        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false; hFlat = flat; hAuto = hAxisLock = false;
+    }
+
+    /// <summary>
+    /// A drag (dx, dy screen px) of the point at p: across the level plane, unless it runs along the screen's up / down
+    /// line through p (within 35°) with the view tilted enough to show height.
+    /// </summary>
+    internal static bool SideDrag(MapScene scene, V3 p, float dx, float dy, out bool alongZ)
+    {
+        alongZ = false;
+        var cam = scene.Cam;
+        double d = Math.Max(1, V3.Distance(cam.Eye, p)) * 0.1;
+        if (!cam.Project(p, out var bx, out var by, out _) || !cam.Project(p + new V3(0, d, 0), out var ux, out var uy, out _)) return false;
+        double vx = ux - bx, vy = uy - by, vl = Math.Sqrt(vx * vx + vy * vy), ml = Math.Sqrt(dx * dx + dy * dy);
+        // looking (nearly) straight down: height hardly shows, so any drag moves it across
+        double h = 0, xl = 0, zl = 0, xCos = 0, zCos = 0;
+        if (cam.Project(p + new V3(d, 0, 0), out var ax, out var ay, out _)) { xl = Math.Sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by)); if (xl > 0 && ml > 0) xCos = Math.Abs((ax - bx) * dx + (ay - by) * dy) / (xl * ml); }
+        if (cam.Project(p + new V3(0, 0, d), out var cx, out var cy, out _)) { zl = Math.Sqrt((cx - bx) * (cx - bx) + (cy - by) * (cy - by)); if (zl > 0 && ml > 0) zCos = Math.Abs((cx - bx) * dx + (cy - by) * dy) / (zl * ml); }
+        h = Math.Max(xl, zl);
+        // the level axis that runs most along the drag on screen (one seen end-on can't be dragged along)
+        alongZ = zl > 0.15 * h && (zCos > xCos || xl < 0.15 * h);
+        if (ml < 1 || vl < 0.2 * h) return true;
+        return Math.Abs(vx * dx + vy * dy) / (vl * ml) < Math.Cos(35 * Math.PI / 180);
+    }
+
+    private const string DestKind = "F&B destination";
+
+    /// <summary>
+    /// On the X (or Z) axis line through basePos, at the same height: the point on it nearest the mouse ray; false
+    /// when the view looks along that axis (the line is end-on) or the point is far off.
+    /// </summary>
+    private static bool AlongAxis(MapScene scene, float x, float y, V3 basePos, bool z, out V3 pos)
+    {
+        pos = basePos;
+        var eye = scene.Cam.Eye; var r = scene.Cam.Ray(x, y);
+        var w0 = basePos - eye;
+        double b = z ? r.Z : r.X, c = r.Dot(r), d = z ? w0.Z : w0.X, e = r.Dot(w0), den = c - b * b;
+        if (den < 0.02 * c) return false;
+        double t = (b * e - c * d) / den;
+        pos = z ? new V3(basePos.X, basePos.Y, basePos.Z + t) : new V3(basePos.X + t, basePos.Y, basePos.Z);
+        return V3.Distance(eye, pos) < 20 * Math.Max(1, V3.Distance(eye, basePos));
+    }
+
+    /// <summary>Across the level plane through basePos (a drag side to side); false when the view is too flat.</summary>
+    private static bool FlatPlace(MapScene scene, float x, float y, V3 basePos, out V3 pos)
+    {
+        var eye = scene.Cam.Eye;
+        return RouteClick.PlaneHit(eye, scene.Cam.Ray(x, y), basePos.Y, out pos)
+            && V3.Distance(eye, pos) < 20 * Math.Max(1, V3.Distance(eye, basePos));
     }
 
     /// <summary>
@@ -138,8 +213,17 @@ internal sealed class MapMouse
     private void AddWaypointAt(MapScene scene, float x, float y)
     {
         var path = SidePreview.Path;
-        if (path == null) { Toast("Set a destination first (Shift+click a point)"); return; }
+        if (path == null)
+        {
+            // no route yet: the first one is the destination (a world, station or GPS point, or a point in space)
+            if (scene.Hovered is Pick fp && fp.Kind != "Bend" && fp.Leg == null) { FirstDestination(fp); return; }
+            if (!FirstPlace(scene, x, y, out var first)) { Toast("Can't place a destination there: tilt the view"); return; }
+            FirstDestination(new Pick { Name = FirstName, Kind = "Waypoint", Pos = first });
+            return;
+        }
         if (scene.Hovered is Pick bp && bp.Kind == "Bend") { Toast(SidePreview.StraightenLeg(bp.Leg)); return; }
+        if (scene.Hovered is Pick dp && dp.Kind == DestKind) { Toast(SidePreview.ClearDestination()); return; }
+        if (scene.Hovered is Pick tp && tp.Kind != null && tp.Kind.StartsWith(MapScene.DetourKind)) { Toast(SidePreview.RemoveDetour(tp.Name, tp.Pos)); return; }
         if (scene.Hovered is Pick p && p.Kind != "Your ship")
         {
             Toast(SidePreview.RemoveWaypoint(p.Name, p.Pos) ?? SidePreview.InsertWaypoint(p.Name, p.Pos));
@@ -149,10 +233,38 @@ internal sealed class MapMouse
         Toast(SidePreview.InsertWaypoint(null, pos));
     }
 
-    /// <summary>A view that fits the picked thing: worlds by their size, everything else close up.</summary>
-    public static double FlyDistance(Pick p)
+    private const string FirstName = "Waypoint 1";
+
+    /// <summary>Shift+right-click with no route: the point becomes the destination, as Shift+click does.</summary>
+    private void FirstDestination(Pick p)
     {
-        var w = SystemData.FindWorld(p.Name);
-        return w != null ? Math.Max(w.Radius * 6, 2e5) : 1e5;
+        Toast(SidePreview.SetDestination(p.Name, p.Kind, p.Pos, p.Detail));
+        if (p.Kind != "Your ship") Destination(p);
     }
+
+    /// <summary>A point in space for the first click: on the level plane through your ship (or the view's centre).</summary>
+    private static bool FirstPlace(MapScene scene, float x, float y, out V3 pos)
+    {
+        var centre = scene.Snap != null && scene.Snap.HasShip ? scene.Snap.ShipPos : scene.Cam.Target;
+        var eye = scene.Cam.Eye;
+        // a nearly flat view meets the plane far away: keep it within reach
+        return RouteClick.PlaneHit(eye, scene.Cam.Ray(x, y), centre.Y, out pos)
+            && V3.Distance(eye, pos) < 20 * Math.Max(1, V3.Distance(eye, centre));
+    }
+
+}
+
+/// <summary>The mouse buttons and wheel for one frame of <see cref="MapMouse.Handle(MapScene, MouseInput, float, float, bool)"/>.</summary>
+internal struct MouseInput
+{
+    public bool Left, Right, NewLeft, NewRight, LeftReleased, RightReleased, Shift;
+    /// <summary>Wheel notches this frame (positive: closer).</summary>
+    public double Notches;
+
+    public static MouseInput From(IMyInput i) => new MouseInput
+    {
+        Left = i.IsLeftMousePressed(), Right = i.IsRightMousePressed(), NewLeft = i.IsNewLeftMousePressed(), NewRight = i.IsNewRightMousePressed(),
+        LeftReleased = i.IsNewLeftMouseReleased(), RightReleased = i.IsNewRightMouseReleased(), Shift = i.IsAnyShiftKeyPressed(),
+        Notches = OrbitCamera.WheelNotches(i.MouseScrollWheelValue(), i.PreviousMouseScrollWheelValue()),
+    };
 }

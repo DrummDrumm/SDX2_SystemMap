@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inner System Red chart</title>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&amp;family=Saira+Condensed:wght@600;700&amp;display=swap">
+<style>
+body{margin:0}
+.hexmask{-webkit-mask-image:url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNC42NCIgaGVpZ2h0PSI2MCIgdmlld0JveD0iMCAwIDM0LjY0IDYwIj48cGF0aCBkPSJNMTcuMzIgMCBMMzQuNjQgMTAgTDM0LjY0IDMwIEwxNy4zMiA0MCBMMCAzMCBMMCAxMCBaIE0xNy4zMiA0MCBMMTcuMzIgNjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9zdmc+Cg==);mask-image:url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNC42NCIgaGVpZ2h0PSI2MCIgdmlld0JveD0iMCAwIDM0LjY0IDYwIj48cGF0aCBkPSJNMTcuMzIgMCBMMzQuNjQgMTAgTDM0LjY0IDMwIEwxNy4zMiA0MCBMMCAzMCBMMCAxMCBaIE0xNy4zMiA0MCBMMTcuMzIgNjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9zdmc+Cg==);-webkit-mask-size:34.64px 60px;mask-size:34.64px 60px}
+</style>
+
+<style>html,body{margin:0;background:#000}</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+
+class DCLogic { constructor(props) { this.props = props || {}; } }
+function get(scope, path) {
+  if (/^\d+(\.\d+)?$/.test(path)) return Number(path);
+  return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, scope);
+}
+function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function render(tpl, scope) {
+  tpl = tpl.replace(/<sc-for list="\{\{\s*([\w.$]+)\s*\}\}" as="(\w+)"[^>]*>([\s\S]*?)<\/sc-for>/g, function (m, path, as, body) {
+    return (get(scope, path) || []).map(function (it, i) { var s = Object.assign({}, scope); s[as] = it; s.$index = i; return render(body, s); }).join('');
+  });
+  return tpl.replace(/\{\{\s*([\w.$]+)\s*\}\}/g, function (m, p) { return esc(get(scope, p)); });
+}
+
+var Theme = (function () { 
+class Component extends DCLogic {
+  renderVals() {
+    var t = {'name': 'INNER RED', 'tag': 'DX1 SOL // SYSTEM CHART', 'title': '#fff0f0', 'bezel': '#22070a', 'bg': '#1a0507', 'panel': '#1d0609', 'ring': '#f0e0e0', 'grid': '#c06070', 'text': '#f8e8e8', 'sub': '#cf9ea4', 'planet': '#3a1218', 'box': 'rgba(110,30,40,0.75)', 'hi': '#ffb3a8', 'burn': '#ff9a5a', 'brake': '#ffd6cf', 'hexA': 0.07, 'secs': ['#ff6a6a', '#f0e0e0', '#f0e0e0', '#f0e0e0', '#8a5a60']};
+    t.line = this.props.line ?? '#d68f98';
+    t.warm = this.props.warm ?? '#ff6a6a';
+    t.alert = this.props.alert ?? '#ff3a4a';
+    return { theme: t };
+  }
+}
+
+return Component; })();
+var Hud = (function () { 
+class Component extends DCLogic {
+  renderVals() {
+    var DEF = {
+      name: 'CONTACT', tag: 'MCRN // CONTACT PLOT', title: '#f2f6c4',
+      bezel: '#141d0a', bg: '#0b1205', panel: '#0e160a', line: '#c9d65a', ring: '#dfe57a', grid: '#9aab3a',
+      text: '#eef3c0', sub: '#b8c47e', planet: '#1d2a0c', box: 'rgba(80,100,25,0.55)',
+      hi: '#a6f04e', warm: '#f5e94a', alert: '#ff6a3a', burn: '#ff9a2e', brake: '#f5e94a', hexA: 0.06,
+      secs: ['#f5e94a', '#7fe36a', '#7fe36a', '#7fe36a', '#8a9a6a']
+    };
+    var t = Object.assign({}, DEF, this.props.theme || {});
+    var hx = function (h, a) {
+      var n = parseInt(String(h).replace('#', ''), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    };
+    var ch = function (n, m) {
+      return 'polygon(' + n + 'px 0, calc(100% - ' + m + 'px) 0, 100% ' + m + 'px, 100% calc(100% - ' + n + 'px), calc(100% - ' + n + 'px) 100%, ' + n + 'px 100%, 0 calc(100% - ' + n + 'px), 0 ' + n + 'px)';
+    };
+    var S = [330, 440];
+    var circ = function (cx, cy, r, b) { return { l: cx - r, t: cy - r, s: 2 * r, b: b }; };
+    var R = function (a) { return hx(t.ring, a); };
+
+    var rings = [
+      circ(S[0], S[1], 780, '40px solid ' + R(0.05)),
+      circ(S[0], S[1], 120, '1.5px dashed ' + R(0.7)),
+      circ(S[0], S[1], 230, '1.5px solid ' + R(0.85)),
+      circ(S[0], S[1], 380, '1.5px dashed ' + R(0.7)),
+      circ(S[0], S[1], 560, '1.5px solid ' + R(0.85)),
+      circ(S[0], S[1], 740, '1px dashed ' + R(0.5)),
+      circ(S[0], S[1], 780, '1px dashed ' + R(0.5)),
+      circ(S[0], S[1], 1000, '2px solid ' + R(0.9)),
+      circ(S[0], S[1], 44, '5px solid ' + t.ring),
+      circ(S[0], S[1], 58, '1.5px solid ' + R(0.6))
+    ];
+    var worlds = [
+      { n: 'Mercury', x: 217, y: 399, r: 8 }, { n: 'Venus', x: 409, y: 656, r: 11 }, { n: 'Earth', x: 641, y: 222, r: 14 },
+      { n: 'Mars', x: 878, y: 556, r: 12 }, { n: 'Ceres', x: 1053, y: 205, r: 9 }, { n: 'Jupiter', x: 1258, y: 548, r: 30 }
+    ];
+    var discs = [
+      { l: S[0] - 28, t: S[1] - 28, s: 56, f: 'radial-gradient(circle at 42% 40%, ' + R(0.55) + ', ' + R(0.18) + ' 70%)', b: '3px solid ' + t.ring, sh: '0 0 30px ' + R(0.45) }
+    ];
+    worlds.forEach(function (w) {
+      rings.push(circ(w.x, w.y, w.r + 8, '1px solid ' + R(0.8)));
+      rings.push(circ(w.x, w.y, w.r + 24, '1px dashed ' + R(0.5)));
+      discs.push({ l: w.x - w.r, t: w.y - w.r, s: 2 * w.r, f: t.planet, b: '2px solid ' + t.ring, sh: '0 0 8px ' + R(0.35) });
+      discs.push({ l: w.x - w.r * 0.5, t: w.y - w.r * 0.5, s: w.r, f: R(0.4), b: '0 solid transparent', sh: 'none' });
+    });
+    [[612, 254, 4], [904, 540, 3], [856, 580, 3]].forEach(function (m) {
+      rings.push(circ(m[0], m[1], m[2] + 5, '1px solid ' + R(0.7)));
+      discs.push({ l: m[0] - m[2], t: m[1] - m[2], s: 2 * m[2], f: t.ring, b: '0 solid transparent', sh: 'none' });
+    });
+
+    var seg = function (x1, y1, x2, y2, th, c, sh) {
+      var dx = x2 - x1, dy = y2 - y1;
+      return { l: x1, t: y1 - th / 2, w: Math.hypot(dx, dy), h: th, c: c, r: Math.atan2(dy, dx) * 180 / Math.PI, sh: sh };
+    };
+    var segs = [
+      seg(690, 212, 871.5, 208.5, 3, t.burn, '0 0 8px ' + hx(t.burn, 0.8)),
+      seg(871.5, 208.5, 1053, 205, 3, t.brake, '0 0 8px ' + hx(t.brake, 0.8))
+    ];
+
+    var hexes = [[262, 520], [282, 531], [700, 150], [720, 139], [930, 600], [950, 611], [940, 631], [1044, 700], [1064, 711], [1092, 176]]
+      .map(function (p) { return { l: p[0] - 10, t: p[1] - 11.5 }; });
+
+    var N = function (x, y, txt, c) { return { x: x, y: y, txt: txt, c: c || t.text }; };
+    var names = [
+      N(378, 390, 'SOL'), N(175, 350, 'MERCURY'), N(450, 638, 'VENUS'), N(612, 164, 'EARTH'),
+      N(905, 498, 'MARS'), N(1030, 152, 'CERES', t.warm), N(1220, 486, 'JUPITER')
+    ];
+    var B = function (x, y, txt, c) { return { x: x, y: y, txt: txt, c: c || t.ring }; };
+    var boxes = [
+      B(378, 412, 'DX1 SOL\n800 km NO-FLY', t.alert),
+      B(60, 420, 'DX3 MERCURY\nR 250 km'),
+      B(450, 660, 'DX3 VENUS\nR 500 km'),
+      B(440, 250, 'DX4 EARTH\nUN HOME · R 750 km'),
+      B(700, 600, 'DX2 MARS\nMCR HOME · R 750 km'),
+      B(1088, 214, 'DX5 CERES\nOPA HOME · R 750 km\nDEST · 12.71 Mm', t.warm),
+      B(1206, 610, 'DX7 JUPITER\nR 2,500 km'),
+      B(1080, 716, 'TYCHO STN\nDX6 THE BELT\n8 km NO-FLY')
+    ];
+
+    var tri = function (dir, c) {
+      var s = '9px solid transparent', f = '16px solid ' + c, z = '0 solid transparent';
+      if (dir === 'r') return { bl: f, br: z, bt: s, bb: s, w: 16, h: 18 };
+      if (dir === 'l') return { bl: z, br: f, bt: s, bb: s, w: 16, h: 18 };
+      if (dir === 'u') return { bl: s, br: s, bt: z, bb: f, w: 18, h: 16 };
+      return { bl: s, br: s, bt: f, bb: z, w: 18, h: 16 };
+    };
+    var K = function (x, y, dir, c, id, txt, lx, ly) {
+      var g = tri(dir, c);
+      return { tl: x - g.w / 2, tt: y - g.h / 2, bl: g.bl, br: g.br, bt: g.bt, bb: g.bb, c: c, id: id, txt: txt, lx: x + lx, ly: y + ly };
+    };
+    var contacts = [
+      K(690, 212, 'r', t.hi, 'ROCINANTE', 'YOU · DX4 EARTH\nSPD 2.75 km/s  HDG 088', 16, 12),
+      K(560, 520, 'l', t.hi, 'GPS-01', 'YOUR MARKER · DX1\nDIST 3.41 Mm  BRG 214', 14, -10),
+      K(820, 760, 'u', t.hi, 'GPS-02', 'YOUR MARKER · DX6\nDIST 9.80 Mm  BRG 131', 16, -14),
+      K(900, 16, 'u', t.sub, 'DX10 TROJANS', 'SECTOR · R 1,500 km\nDIST 10.06 Mm', 16, -6),
+      K(1302, 110, 'r', t.sub, 'DX8 SATURN', 'SECTOR · R 2,500 km\nDIST 24.96 Mm', -172, -8),
+      K(14, 640, 'l', t.sub, 'DX11 GREEKS', 'SECTOR · R 1,500 km\nDIST 14.53 Mm', 14, -12)
+    ];
+
+    var secNames = [['DX4 EARTH', 'HERE'], ['DX2 MARS', '6.1 Mm'], ['DX5 CERES', 'DEST'], ['DX6 BELT', '8.4 Mm'], ['DX1 SOL', 'OUTER']];
+    var secRows = secNames.map(function (s, i) {
+      return { n: s[0], d: s[1], c: t.secs[i], bg: i === 0 ? hx(t.line, 0.16) : 'transparent', bd: i === 0 ? hx(t.line, 0.7) : hx(t.line, 0.3) };
+    });
+    var modeRows = [
+      { n: 'RANGE RINGS', c: t.warm, o: 1, tc: t.warm },
+      { n: 'TRACK LABELS', c: t.hi, o: 1, tc: t.text },
+      { n: 'VECTOR LINES', c: t.burn, o: 1, tc: t.text },
+      { n: 'GRID', c: t.line, o: 1, tc: t.text },
+      { n: 'HEX OVERLAY', c: t.line, o: 0.35, tc: t.sub }
+    ];
+
+    var g = hx(t.grid, 0.16), dot = hx(t.grid, 0.55);
+    var mapBg = 'radial-gradient(circle, ' + dot + ' 0 1.2px, transparent 1.7px) 0 -22px / 44px 44px, '
+      + 'repeating-linear-gradient(0deg, ' + g + ' 0 1px, transparent 1px 44px), '
+      + 'repeating-linear-gradient(90deg, ' + g + ' 0 1px, transparent 1px 44px) 22px 0, '
+      + 'radial-gradient(circle at 330px 440px, ' + hx(t.line, 0.1) + ', transparent 55%), ' + t.bg;
+
+    return {
+      t: t, rings: rings, discs: discs, segs: segs, hexes: hexes, names: names, boxes: boxes, contacts: contacts,
+      secRows: secRows, modeRows: modeRows, mapBg: mapBg, gridPos: '',
+      rootBg: 'linear-gradient(180deg, ' + t.bezel + ', #000 140%)',
+      chOuter: ch(26, 70), chMap: ch(18, 56), chPanel: ch(10, 10),
+      bezelLine: hx(t.line, 0.55), panelLine: hx(t.line, 0.6), btnBg: hx(t.line, 0.08),
+      hexC: hx(t.ring, t.hexA), crossC: hx(t.line, 0.55), leaderC: hx(t.line, 0.55)
+    };
+  }
+}
+
+return Component; })();
+var theme = new Theme({"line": "#d68f98", "warm": "#ff6a6a", "alert": "#ff3a4a"}).renderVals().theme;
+var tpl = "\n\n<div style=\"position: relative; width: 1600px; height: 900px; overflow: hidden; background: {{rootBg}}; font-family: 'Chakra Petch', ui-monospace, monospace; color: {{t.text}}; font-size: 12px; line-height: 1.3\">\n\n  <!-- ===== bezel and map frame ===== -->\n  <div style=\"position: absolute; left: 16px; top: 16px; width: 1352px; height: 868px; clip-path: {{chOuter}}; background: {{bezelLine}}\">\n    <div style=\"position: absolute; inset: 2px; clip-path: {{chOuter}}; background: {{t.bezel}}\"></div>\n  </div>\n  <div style=\"position: absolute; left: 8px; top: 200px; width: 5px; height: 150px; background: {{t.line}}; opacity: 0.7\"></div>\n  <div style=\"position: absolute; left: 8px; top: 560px; width: 5px; height: 150px; background: {{t.line}}; opacity: 0.7\"></div>\n  <div style=\"position: absolute; left: 360px; top: 6px; width: 520px; height: 4px; background: {{t.line}}; opacity: 0.55\"></div>\n  <div style=\"position: absolute; left: 30px; top: 30px; width: 1324px; height: 840px; clip-path: {{chMap}}; background: {{t.line}}\">\n    <div style=\"position: absolute; left: 2px; top: 2px; width: 1320px; height: 836px; clip-path: {{chMap}}; overflow: hidden; background: {{mapBg}}; background-position: {{gridPos}}\">\n\n      <!-- hex texture -->\n      <div class=\"hexmask\" style=\"position: absolute; inset: 0; background: {{hexC}}\"></div>\n\n      <!-- crosshair through Sol -->\n      <div style=\"position: absolute; left: 0; top: 440px; width: 1320px; height: 1px; background: {{crossC}}\"></div>\n      <div style=\"position: absolute; left: 330px; top: 0; width: 1px; height: 836px; background: {{crossC}}\"></div>\n\n      <!-- orbits, belt band, spheres of influence -->\n      <sc-for list=\"{{rings}}\" as=\"o\" hint-placeholder-count=\"20\">\n        <div style=\"position: absolute; box-sizing: border-box; border-radius: 50%; left: {{o.l}}px; top: {{o.t}}px; width: {{o.s}}px; height: {{o.s}}px; border: {{o.b}}\"></div>\n      </sc-for>\n\n      <!-- route -->\n      <sc-for list=\"{{segs}}\" as=\"s\" hint-placeholder-count=\"2\">\n        <div style=\"position: absolute; left: {{s.l}}px; top: {{s.t}}px; width: {{s.w}}px; height: {{s.h}}px; background: {{s.c}}; transform-origin: 0 50%; transform: rotate({{s.r}}deg); box-shadow: {{s.sh}}\"></div>\n      </sc-for>\n      <div style=\"position: absolute; left: 865px; top: 202px; width: 12px; height: 12px; box-sizing: border-box; border: 2px solid {{t.brake}}; background: {{t.bg}}; transform: rotate(45deg)\"></div>\n      <div style=\"position: absolute; left: 832px; top: 180px; font-size: 11px; color: {{t.brake}}\">FLIP T+16:48</div>\n\n      <!-- worlds -->\n      <sc-for list=\"{{discs}}\" as=\"d\" hint-placeholder-count=\"12\">\n        <div style=\"position: absolute; box-sizing: border-box; border-radius: 50%; left: {{d.l}}px; top: {{d.t}}px; width: {{d.s}}px; height: {{d.s}}px; background: {{d.f}}; border: {{d.b}}; box-shadow: {{d.sh}}\"></div>\n      </sc-for>\n\n      <!-- stations and trojans -->\n      <sc-for list=\"{{hexes}}\" as=\"h\" hint-placeholder-count=\"9\">\n        <div style=\"position: absolute; left: {{h.l}}px; top: {{h.t}}px; width: 20px; height: 23px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: {{t.ring}}\">\n          <div style=\"position: absolute; inset: 1.5px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: {{t.bg}}\"></div>\n        </div>\n      </sc-for>\n\n      <!-- destination brackets on Ceres -->\n      <div style=\"position: absolute; left: 1029px; top: 181px; width: 12px; height: 12px; border-left: 2px solid {{t.warm}}; border-top: 2px solid {{t.warm}}\"></div>\n      <div style=\"position: absolute; left: 1063px; top: 181px; width: 12px; height: 12px; border-right: 2px solid {{t.warm}}; border-top: 2px solid {{t.warm}}\"></div>\n      <div style=\"position: absolute; left: 1029px; top: 215px; width: 12px; height: 12px; border-left: 2px solid {{t.warm}}; border-bottom: 2px solid {{t.warm}}\"></div>\n      <div style=\"position: absolute; left: 1063px; top: 215px; width: 12px; height: 12px; border-right: 2px solid {{t.warm}}; border-bottom: 2px solid {{t.warm}}\"></div>\n\n      <!-- world names and info boxes -->\n      <sc-for list=\"{{names}}\" as=\"n\" hint-placeholder-count=\"8\">\n        <div style=\"position: absolute; white-space: nowrap; left: {{n.x}}px; top: {{n.y}}px; font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.06em; color: {{n.c}}\">{{n.txt}}</div>\n      </sc-for>\n      <sc-for list=\"{{boxes}}\" as=\"b\" hint-placeholder-count=\"8\">\n        <div style=\"position: absolute; white-space: pre-line; left: {{b.x}}px; top: {{b.y}}px; padding: 3px 8px; background: {{t.box}}; border-left: 2px solid {{b.c}}; font-size: 11px; color: {{t.text}}\">{{b.txt}}</div>\n      </sc-for>\n\n      <!-- contacts: your ship, GPS points, sectors off the chart -->\n      <sc-for list=\"{{contacts}}\" as=\"k\" hint-placeholder-count=\"6\">\n        <div style=\"position: absolute; width: 0; height: 0; left: {{k.tl}}px; top: {{k.tt}}px; border-left: {{k.bl}}; border-right: {{k.br}}; border-top: {{k.bt}}; border-bottom: {{k.bb}}; filter: drop-shadow(0 0 4px {{k.c}})\"></div>\n        <div style=\"position: absolute; white-space: pre-line; left: {{k.lx}}px; top: {{k.ly}}px; padding-bottom: 2px; border-bottom: 1px solid {{leaderC}}; font-size: 12px; color: {{t.text}}\"><span style=\"color: {{k.c}}; font-weight: 600\">{{k.id}}</span>\n{{k.txt}}</div>\n      </sc-for>\n\n      <!-- bearings -->\n      <div style=\"position: absolute; left: 312px; top: 6px; padding: 0 4px; background: {{t.bg}}; font-size: 13px; color: {{t.text}}\">000</div>\n      <div style=\"position: absolute; left: 312px; top: 810px; padding: 0 4px; background: {{t.bg}}; font-size: 13px; color: {{t.text}}\">180</div>\n      <div style=\"position: absolute; left: 6px; top: 430px; padding: 0 4px; background: {{t.bg}}; font-size: 13px; color: {{t.text}}\">270</div>\n      <div style=\"position: absolute; left: 1276px; top: 430px; padding: 0 4px; background: {{t.bg}}; font-size: 13px; color: {{t.text}}\">090</div>\n\n      <!-- title -->\n      <div style=\"position: absolute; left: 28px; top: 20px; display: flex; flex-direction: column; gap: 0\">\n        <div style=\"font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 46px; line-height: 1; letter-spacing: 0.05em; color: {{t.title}}\">INNER SYSTEM</div>\n        <div style=\"font-size: 11px; letter-spacing: 0.08em; color: {{t.sub}}\">NOT TO SCALE \u00b7 {{t.tag}}</div>\n      </div>\n\n      <!-- legend -->\n      <div style=\"position: absolute; left: 380px; top: 806px; display: flex; gap: 16px; align-items: center; font-size: 11px; color: {{t.sub}}\">\n        <span style=\"display: flex; gap: 6px; align-items: center\"><span style=\"width: 18px; height: 3px; background: {{t.burn}}\"></span>BURN</span>\n        <span style=\"display: flex; gap: 6px; align-items: center\"><span style=\"width: 18px; height: 3px; background: {{t.brake}}\"></span>BRAKE</span>\n        <span style=\"display: flex; gap: 6px; align-items: center\"><span style=\"width: 10px; height: 10px; border-radius: 50%; border: 1px dashed {{t.ring}}\"></span>SECTOR</span>\n        <span style=\"display: flex; gap: 6px; align-items: center\"><span style=\"width: 9px; height: 10px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: {{t.ring}}\"></span>STATION</span>\n        <span style=\"display: flex; gap: 6px; align-items: center\"><span style=\"width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 9px solid {{t.hi}}\"></span>CONTACT</span>\n      </div>\n    </div>\n  </div>\n\n  <!-- ===== sidebar ===== -->\n  <div style=\"position: absolute; left: 1384px; top: 16px; width: 200px; height: 112px; clip-path: {{chPanel}}; background: {{panelLine}}\">\n    <div style=\"position: absolute; inset: 1.5px; clip-path: {{chPanel}}; background: {{t.panel}}; display: grid; grid-template-columns: 54px 1fr; gap: 4px 8px; padding: 14px 14px; box-sizing: border-box; align-content: start; font-size: 13px\">\n      <span style=\"color: {{t.sub}}\">SECTOR</span><span>DX4 EARTH</span>\n      <span style=\"color: {{t.sub}}\">DEST</span><span style=\"color: {{t.warm}}\">DX5 CERES</span>\n      <span style=\"color: {{t.sub}}\">DIST</span><span>12.71 Mm</span>\n      <span style=\"color: {{t.sub}}\">ETA</span><span>00:33:37</span>\n    </div>\n  </div>\n\n  <div style=\"position: absolute; left: 1384px; top: 140px; width: 200px; height: 172px; clip-path: {{chPanel}}; background: {{panelLine}}\">\n    <div style=\"position: absolute; inset: 1.5px; clip-path: {{chPanel}}; background: {{t.panel}}; display: flex; flex-direction: column; gap: 8px; padding: 12px 10px; box-sizing: border-box\">\n      <div style=\"height: 2px; background: {{t.line}}; opacity: 0.7\"></div>\n      <button type=\"button\" style=\"display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 10px; background: {{btnBg}}; border: 1px solid {{panelLine}}; color: {{t.text}}; font-family: 'Chakra Petch', monospace; font-weight: 600; font-size: 13px; letter-spacing: 0.04em; cursor: pointer\"><span>ROUTE PLAN</span><span style=\"color: {{t.sub}}\">[</span></button>\n      <button type=\"button\" style=\"display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 10px; background: {{btnBg}}; border: 1px solid {{panelLine}}; color: {{t.text}}; font-family: 'Chakra Petch', monospace; font-weight: 600; font-size: 13px; letter-spacing: 0.04em; cursor: pointer\"><span>LAYERS</span><span style=\"color: {{t.sub}}\">[</span></button>\n      <button type=\"button\" style=\"display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 10px; background: {{btnBg}}; border: 1px solid {{panelLine}}; color: {{t.text}}; font-family: 'Chakra Petch', monospace; font-weight: 600; font-size: 13px; letter-spacing: 0.04em; cursor: pointer\"><span>NAV SOLUTION</span><span style=\"color: {{t.sub}}\">[</span></button>\n    </div>\n  </div>\n\n  <div style=\"position: absolute; left: 1384px; top: 324px; width: 200px; height: 282px; clip-path: {{chPanel}}; background: {{panelLine}}\">\n    <div style=\"position: absolute; inset: 1.5px; clip-path: {{chPanel}}; background: {{t.panel}}; display: flex; flex-direction: column; gap: 6px; padding: 12px 10px; box-sizing: border-box\">\n      <div style=\"font-weight: 600; font-size: 13px; letter-spacing: 0.06em; padding: 0 4px 4px\">SECTORS</div>\n      <sc-for list=\"{{secRows}}\" as=\"r\" hint-placeholder-count=\"5\">\n        <div style=\"display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 0 10px 0 0; background: {{r.bg}}; border: 1px solid {{r.bd}}\">\n          <div style=\"display: flex; align-items: center; gap: 12px; height: 100%\">\n            <div style=\"width: 6px; height: 100%; background: {{r.c}}\"></div>\n            <span style=\"font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 18px; letter-spacing: 0.04em\">{{r.n}}</span>\n          </div>\n          <span style=\"color: {{t.sub}}\">{{r.d}}</span>\n        </div>\n      </sc-for>\n    </div>\n  </div>\n\n  <div style=\"position: absolute; left: 1384px; top: 618px; width: 200px; height: 266px; clip-path: {{chPanel}}; background: {{panelLine}}\">\n    <div style=\"position: absolute; inset: 1.5px; clip-path: {{chPanel}}; background: {{t.panel}}; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; box-sizing: border-box\">\n      <div style=\"font-weight: 600; font-size: 13px; letter-spacing: 0.06em\">MODE</div>\n      <sc-for list=\"{{modeRows}}\" as=\"m\" hint-placeholder-count=\"5\">\n        <div style=\"display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: {{m.tc}}\">\n          <span>{{m.n}}</span>\n          <div style=\"width: 11px; height: 11px; background: {{m.c}}; opacity: {{m.o}}\"></div>\n        </div>\n      </sc-for>\n      <div style=\"height: 1px; background: {{panelLine}}; margin-top: 4px\"></div>\n      <div style=\"display: grid; grid-template-columns: 54px 1fr; gap: 3px 8px; font-size: 12px\">\n        <span style=\"color: {{t.sub}}\">PEAK</span><span>12.6 km/s</span>\n        <span style=\"color: {{t.sub}}\">ACCEL</span><span>12.5 m/s\u00b2</span>\n      </div>\n    </div>\n  </div>\n</div>\n";
+document.getElementById('root').innerHTML = render(tpl, new Hud({ theme: theme }).renderVals());
+</script>
+</body>
+</html>

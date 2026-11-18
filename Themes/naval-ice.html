@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Naval Ice HUD theme</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap">
+<style>html,body{margin:0;background:#000}</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+
+class DCLogic { constructor(props) { this.props = props || {}; } }
+function get(scope, path) {
+  if (/^\d+(\.\d+)?$/.test(path)) return Number(path);
+  return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, scope);
+}
+function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function render(tpl, scope) {
+  tpl = tpl.replace(/<sc-for list="\{\{\s*([\w.$]+)\s*\}\}" as="(\w+)"[^>]*>([\s\S]*?)<\/sc-for>/g, function (m, path, as, body) {
+    return (get(scope, path) || []).map(function (it, i) { var s = Object.assign({}, scope); s[as] = it; s.$index = i; return render(body, s); }).join('');
+  });
+  return tpl.replace(/\{\{\s*([\w.$]+)\s*\}\}/g, function (m, p) { return esc(get(scope, p)); });
+}
+
+var Theme = (function () { 
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: {
+        name: 'NAVAL ICE', code: 'UNN', tag: 'UNN // FLEET PLOTTING TABLE',
+        bg: '#030914', neb: '#3c78dc', sub: '#a4bfe2', text: '#e6f1ff', hi: '#c4e2ff',
+        burn: '#ff9f43', coast: '#f2f8ff', brake: '#7fe8a8',
+        line: this.props.line ?? '#8ec3ff', warm: this.props.warm ?? '#e8c25a', alert: this.props.alert ?? '#ff5a5a'
+      }
+    };
+  }
+}
+
+return Component; })();
+var Hud = (function () { 
+class Component extends DCLogic {
+  renderVals() {
+    var DEF = { name: 'PHOSPHOR', code: 'PHX', tag: 'MCRN // TACTICAL PLOT', bg: '#030803', neb: '#4f9a22', line: '#9bd85a', sub: '#a9d488', text: '#e2f8c0', hi: '#d6fb6e', warm: '#f5d63c', alert: '#e8382c', burn: '#ff9a2e', coast: '#effde0', brake: '#f5d63c' };
+    var t = Object.assign({}, DEF, this.props.theme || {});
+    var hx = function (h, a) {
+      var n = parseInt(String(h).replace('#', ''), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    };
+    var seg = function (x1, y1, x2, y2, th, c, sh) {
+      var dx = x2 - x1, dy = y2 - y1;
+      return { l: x1, t: y1 - th / 2, w: Math.hypot(dx, dy), h: th, c: c, r: Math.atan2(dy, dx) * 180 / Math.PI, sh: sh || 'none' };
+    };
+    var dash = function (c, on, off) { return 'repeating-linear-gradient(90deg, ' + c + ' 0 ' + on + 'px, transparent ' + on + 'px ' + (on + off) + 'px)'; };
+    var ell = function (cx, cy, a, b, bw, bc) { return { l: cx - a, t: cy - b, w: 2 * a, h: 2 * b, b: bw, bc: bc }; };
+
+    var S = [237, 502], D = [528, 380];
+    var faint = hx(t.line, 0.32);
+    var ells = [
+      ell(S[0], S[1], 60, 30, '1px solid', hx(t.line, 0.45)),
+      ell(S[0], S[1], 110, 55, '1px solid', hx(t.line, 0.45)),
+      ell(S[0], S[1], 180, 90, '1px solid', hx(t.line, 0.6)),
+      ell(S[0], S[1], 260, 130, '1px solid', hx(t.line, 0.45)),
+      ell(S[0], S[1], 366, 183, '1px dashed', hx(t.line, 0.3)),
+      ell(S[0], S[1], 394, 197, '1px dashed', hx(t.line, 0.3)),
+      ell(S[0], S[1], 380, 190, '2.5px solid', t.alert + ' transparent transparent transparent'),
+      ell(S[0], S[1], 380, 190, '2.5px dashed', 'transparent transparent ' + hx(t.alert, 0.7) + ' transparent'),
+      ell(S[0], S[1], 550, 275, '1px solid', hx(t.line, 0.35)),
+      ell(S[0], S[1], 750, 375, '1px dashed', hx(t.line, 0.28)),
+      ell(S[0], S[1], 950, 475, '1px dashed', hx(t.line, 0.2)),
+      ell(S[0], S[1], 22, 22, '1px solid', hx(t.warm, 0.5)),
+      ell(D[0], D[1], 40, 40, '1.5px solid', t.line),
+      ell(D[0], D[1], 100, 100, '1px dashed', hx(t.line, 0.6)),
+      ell(D[0], D[1], 150, 150, '1.5px dashed', t.alert),
+      ell(D[0], D[1], 235, 235, '1px dashed', hx(t.line, 0.4)),
+      ell(D[0], D[1], 330, 330, '1px dashed', hx(t.line, 0.28)),
+      ell(D[0], D[1], 440, 440, '1px dotted', hx(t.line, 0.28)),
+      ell(68, 471, 34, 34, '1px dashed', faint),
+      ell(332, 474.5, 26, 26, '1px dashed', faint),
+      ell(148, 624, 34, 34, '1px dashed', faint),
+      ell(285, 228, 60, 60, '1px dashed', faint),
+      ell(812, 261, 60, 60, '1px dashed', faint),
+      ell(754, 596, 46, 46, '1px dashed', faint),
+      ell(68, 471, 10, 10, '2px solid', t.warm)
+    ];
+
+    var segs = [
+      seg(0, 380, 1056, 380, 1, dash(hx(t.line, 0.35), 6, 6)),
+      seg(528, 0, 528, 752, 1, dash(hx(t.line, 0.35), 6, 6)),
+      seg(-4, 7, 1060, 753, 1, dash(hx(t.line, 0.2), 4, 8)),
+      seg(-4, 753, 1060, 7, 1, dash(hx(t.line, 0.2), 4, 8)),
+      seg(68, 471, 298, 425.5, 3, t.burn, '0 0 8px ' + hx(t.burn, 0.8)),
+      seg(298, 425.5, 528, 380, 3, t.brake, '0 0 8px ' + hx(t.brake, 0.8)),
+      seg(600, 380, 690, 380, 2, dash(t.warm, 3, 4))
+    ];
+
+    var body = function (x, y, r, c, g) { return { l: x - r, t: y - r, s: 2 * r, c: c, g: g }; };
+    var bodies = [
+      body(S[0], S[1], 9, t.warm, 26),
+      body(185, 517, 3, t.text, 4),
+      body(332, 474.5, 4, t.hi, 6),
+      body(68, 471, 4, t.hi, 6),
+      body(148, 624, 4, t.hi, 6),
+      body(285, 228, 7, t.hi, 10),
+      body(812, 261, 6, t.hi, 8),
+      body(528, 380, 4, t.warm, 10)
+    ];
+    var dia = function (x, y, s, c) { return { l: x - s / 2, t: y - s / 2, s: s, c: c }; };
+    var diamonds = [dia(298, 425.5, 13, t.warm), dia(427, 337.5, 10, t.line), dia(754, 596, 10, t.line)];
+
+    var L = function (x, y, txt, c, fs) { return { x: x, y: y, txt: txt, c: c, fs: fs || 12 }; };
+    var labels = [
+      L(252, 507, 'SOL', t.warm, 13),
+      L(146, 526, 'Mercury', t.sub),
+      L(342, 480, 'Venus', t.text),
+      L(306, 503, 'DX3 VENUS', t.sub, 10),
+      L(18, 478, 'Earth', t.text),
+      L(40, 426, 'DX4 EARTH', t.sub, 10),
+      L(86, 484, 'ROCINANTE  2.75 KM/S', t.warm, 12),
+      L(158, 630, 'Mars', t.text),
+      L(122, 580, 'DX2 MARS', t.sub, 10),
+      L(297, 233, 'Jupiter', t.text),
+      L(254, 158, 'DX7 JUPITER', t.sub, 10),
+      L(824, 266, 'Saturn', t.text),
+      L(782, 191, 'DX8 SATURN', t.sub, 10),
+      L(722, 540, 'DX11 GREEKS', t.sub, 10),
+      L(352, 331, 'Pallas STN', t.sub, 11),
+      L(272, 440, 'FLIP  T+16:48', t.warm, 12)
+    ];
+
+    var topLabels = [], botLabels = [];
+    for (var i = 0; i < 9; i++) {
+      var deg = String(i * 30); while (deg.length < 3) deg = '0' + deg;
+      topLabels.push({ x: 272 + i * 120 - 20 + 48, tx: 272 + i * 120 + 48 - 4, txt: deg });
+      var mm = (i - 4) * 5;
+      botLabels.push({ x: 272 + i * 132 - 32, txt: (mm > 0 ? '+' : '') + mm + ' Mm' });
+    }
+    botLabels[0].x += 32; botLabels[8].x -= 32;
+
+    var rulerBg = 'repeating-linear-gradient(90deg, ' + t.line + ' 0 1px, transparent 1px 12px) left bottom / 100% 5px no-repeat, repeating-linear-gradient(90deg, ' + t.line + ' 0 2px, transparent 2px 120px) 48px bottom / 100% 12px no-repeat';
+    var rulerBgDown = 'repeating-linear-gradient(90deg, ' + t.line + ' 0 1px, transparent 1px 11px) left top / 100% 5px no-repeat, repeating-linear-gradient(90deg, ' + t.line + ' 0 2px, transparent 2px 132px) left top / 100% 12px no-repeat';
+
+    var stars = [[97, 89, 13, 27, 0.75], [131, 117, 71, 40, 0.55], [173, 157, 40, 120, 0.8], [211, 193, 150, 20, 0.5], [61, 73, 30, 50, 0.35], [251, 229, 200, 180, 0.9]].map(function (s) {
+      return 'radial-gradient(circle at ' + s[2] + 'px ' + s[3] + 'px, ' + hx(t.text, s[4]) + ' 0 1px, transparent 1.6px) 0 0 / ' + s[0] + 'px ' + s[1] + 'px';
+    });
+    var neb = [
+      'radial-gradient(ellipse 420px 170px at 470px 600px, ' + hx(t.neb, 0.34) + ', transparent 70%)',
+      'radial-gradient(ellipse 520px 200px at 760px 470px, ' + hx(t.neb, 0.2) + ', transparent 70%)',
+      'radial-gradient(ellipse 420px 160px at 1080px 300px, ' + hx(t.neb, 0.16) + ', transparent 70%)',
+      'radial-gradient(ellipse 360px 150px at 1260px 150px, ' + hx(t.neb, 0.14) + ', transparent 70%)'
+    ];
+    var bg = stars.concat(neb).join(', ') + ', ' + t.bg;
+
+    return {
+      t: t, bg: bg, ells: ells, segs: segs, bodies: bodies, diamonds: diamonds, labels: labels,
+      topLabels: topLabels, botLabels: botLabels, rulerBg: rulerBg, rulerBgDown: rulerBgDown,
+      sysRows: [
+        { k: 'DRV', v: '100', p: 100 }, { k: 'RCS', v: '100', p: 100 }, { k: 'H2O', v: '076', p: 76 },
+        { k: 'PWR', v: '092', p: 92 }, { k: 'GYR', v: '100', p: 100 }, { k: 'SIG', v: '064', p: 64 },
+        { k: 'PB', v: '0.11', p: 22 }
+      ],
+      gridC: hx(t.line, 0.2), lineFaint: hx(t.line, 0.35), headBg: hx(t.line, 0.24),
+      frameGlow: hx(t.line, 0.14), hiFaint: hx(t.hi, 0.12),
+      wedge: 'conic-gradient(from -35deg, ' + hx(t.warm, 0.42) + ' 0deg 70deg, transparent 70deg)',
+      overlay: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px), radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.45) 100%)'
+    };
+  }
+}
+
+return Component; })();
+var theme = new Theme({"line": "#8ec3ff", "warm": "#e8c25a", "alert": "#ff5a5a"}).renderVals().theme;
+var tpl = "\n\n<div style=\"position: relative; width: 1600px; height: 900px; overflow: hidden; background: {{bg}}; font-family: 'Share Tech Mono', ui-monospace, monospace; color: {{t.text}}; font-size: 13px; letter-spacing: 0.04em; line-height: 1.25\">\n\n  <!-- ===== top bearing ruler ===== -->\n  <div style=\"position: absolute; left: 272px; top: 34px; width: 1056px; height: 12px; background: {{rulerBg}}\"></div>\n  <sc-for list=\"{{topLabels}}\" as=\"lb\" hint-placeholder-count=\"9\">\n    <div style=\"position: absolute; top: 10px; left: {{lb.x}}px; width: 40px; text-align: center; font-size: 13px; color: {{t.sub}}\">{{lb.txt}}</div>\n    <div style=\"position: absolute; top: 26px; left: {{lb.tx}}px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid {{t.line}}\"></div>\n  </sc-for>\n  <div style=\"position: absolute; left: 272px; top: 6px; font-size: 11px; color: {{t.sub}}\">BRG\u00b0</div>\n\n  <!-- ===== map frame ===== -->\n  <div style=\"position: absolute; left: 272px; top: 50px; width: 1056px; height: 752px; overflow: hidden; box-sizing: border-box; border: 1.5px solid {{t.line}}; box-shadow: inset 0 0 60px {{frameGlow}}\">\n\n    <!-- grid boxes -->\n    <div style=\"position: absolute; left: 300px; top: 140px; width: 456px; height: 480px; border: 1px solid {{gridC}}; box-sizing: border-box\"></div>\n    <div style=\"position: absolute; left: 390px; top: 230px; width: 276px; height: 300px; border: 1px solid {{gridC}}; box-sizing: border-box\"></div>\n\n    <!-- dashed lines: crosshair, diagonals, route, stop marker -->\n    <sc-for list=\"{{segs}}\" as=\"s\" hint-placeholder-count=\"7\">\n      <div style=\"position: absolute; left: {{s.l}}px; top: {{s.t}}px; width: {{s.w}}px; height: {{s.h}}px; background: {{s.c}}; transform-origin: 0 50%; transform: rotate({{s.r}}deg); box-shadow: {{s.sh}}\"></div>\n    </sc-for>\n\n    <!-- orbits, belt arcs, range rings, sector spheres -->\n    <sc-for list=\"{{ells}}\" as=\"o\" hint-placeholder-count=\"20\">\n      <div style=\"position: absolute; box-sizing: border-box; border-radius: 50%; left: {{o.l}}px; top: {{o.t}}px; width: {{o.w}}px; height: {{o.h}}px; border: {{o.b}}; border-color: {{o.bc}}\"></div>\n    </sc-for>\n\n    <!-- target wedge + thick lock arc -->\n    <div style=\"position: absolute; left: 416px; top: 268px; width: 224px; height: 224px; border-radius: 50%; background: {{wedge}}; -webkit-mask: radial-gradient(circle, transparent 0 74px, #000 75px); mask: radial-gradient(circle, transparent 0 74px, #000 75px)\"></div>\n    <div style=\"position: absolute; left: 458px; top: 310px; width: 140px; height: 140px; box-sizing: border-box; border-radius: 50%; border: 7px solid {{t.hi}}; border-left-color: {{hiFaint}}; transform: rotate(40deg); filter: drop-shadow(0 0 6px {{t.hi}})\"></div>\n    <div style=\"position: absolute; left: 472px; top: 324px; width: 112px; height: 112px; box-sizing: border-box; border-radius: 50%; border: 1px solid {{t.warm}}\"></div>\n\n    <!-- centre cross + up chevrons -->\n    <div style=\"position: absolute; left: 518px; top: 379px; width: 20px; height: 2px; background: {{t.text}}\"></div>\n    <div style=\"position: absolute; left: 527px; top: 370px; width: 2px; height: 20px; background: {{t.text}}\"></div>\n    <div style=\"position: absolute; left: 517px; top: 344px; width: 18px; height: 18px; border-left: 5px solid {{t.hi}}; border-top: 5px solid {{t.hi}}; transform: rotate(45deg)\"></div>\n    <div style=\"position: absolute; left: 517px; top: 356px; width: 18px; height: 18px; border-left: 5px solid {{t.hi}}; border-top: 5px solid {{t.hi}}; transform: rotate(45deg); opacity: 0.55\"></div>\n\n    <!-- incoming chevrons (top) -->\n    <div style=\"position: absolute; left: 512px; top: 18px; width: 28px; height: 28px; border-right: 6px solid {{t.hi}}; border-bottom: 6px solid {{t.hi}}; transform: rotate(45deg); opacity: 0.45\"></div>\n    <div style=\"position: absolute; left: 512px; top: 38px; width: 28px; height: 28px; border-right: 6px solid {{t.hi}}; border-bottom: 6px solid {{t.hi}}; transform: rotate(45deg); opacity: 0.7\"></div>\n    <div style=\"position: absolute; left: 512px; top: 58px; width: 28px; height: 28px; border-right: 6px solid {{t.coast}}; border-bottom: 6px solid {{t.coast}}; transform: rotate(45deg); filter: drop-shadow(0 0 4px {{t.hi}})\"></div>\n\n    <!-- trajectory vector label with side chevrons -->\n    <div style=\"position: absolute; left: 398px; top: 205px; width: 18px; height: 18px; border-top: 7px solid {{t.hi}}; border-right: 7px solid {{t.hi}}; transform: rotate(45deg); opacity: 0.6\"></div>\n    <div style=\"position: absolute; left: 418px; top: 205px; width: 18px; height: 18px; border-top: 7px solid {{t.hi}}; border-right: 7px solid {{t.hi}}; transform: rotate(45deg)\"></div>\n    <div style=\"position: absolute; left: 620px; top: 205px; width: 18px; height: 18px; border-bottom: 7px solid {{t.hi}}; border-left: 7px solid {{t.hi}}; transform: rotate(45deg)\"></div>\n    <div style=\"position: absolute; left: 640px; top: 205px; width: 18px; height: 18px; border-bottom: 7px solid {{t.hi}}; border-left: 7px solid {{t.hi}}; transform: rotate(45deg); opacity: 0.6\"></div>\n    <div style=\"position: absolute; left: 448px; top: 186px; width: 160px; text-align: center; color: {{t.text}}\">\n      <div style=\"font-size: 17px; letter-spacing: 0.08em\">TRAJECTORY</div>\n      <div style=\"font-size: 17px; letter-spacing: 0.08em\">VECTOR</div>\n      <div style=\"font-size: 11px; color: {{t.sub}}\">RTE-0427 \u00b7 CERES</div>\n    </div>\n\n    <!-- stop marker label -->\n    <div style=\"position: absolute; left: 690px; top: 373px; width: 14px; height: 14px; box-sizing: border-box; border: 2px solid {{t.warm}}\"></div>\n    <div style=\"position: absolute; left: 640px; top: 352px; font-size: 11px; color: {{t.warm}}\">STOP 100 KM CLR</div>\n\n    <!-- worlds -->\n    <sc-for list=\"{{bodies}}\" as=\"b\" hint-placeholder-count=\"8\">\n      <div style=\"position: absolute; border-radius: 50%; left: {{b.l}}px; top: {{b.t}}px; width: {{b.s}}px; height: {{b.s}}px; background: {{b.c}}; box-shadow: 0 0 {{b.g}}px {{b.c}}\"></div>\n    </sc-for>\n    <sc-for list=\"{{diamonds}}\" as=\"d\" hint-placeholder-count=\"3\">\n      <div style=\"position: absolute; box-sizing: border-box; left: {{d.l}}px; top: {{d.t}}px; width: {{d.s}}px; height: {{d.s}}px; border: 2px solid {{d.c}}; transform: rotate(45deg)\"></div>\n    </sc-for>\n    <sc-for list=\"{{labels}}\" as=\"x\" hint-placeholder-count=\"16\">\n      <div style=\"position: absolute; white-space: nowrap; left: {{x.x}}px; top: {{x.y}}px; font-size: {{x.fs}}px; color: {{x.c}}\">{{x.txt}}</div>\n    </sc-for>\n\n    <!-- framing brackets -->\n    <div style=\"position: absolute; left: 290px; top: 80px; width: 50px; height: 50px; border-left: 2px solid {{t.line}}; border-top: 2px solid {{t.line}}\"></div>\n    <div style=\"position: absolute; left: 716px; top: 80px; width: 50px; height: 50px; border-right: 2px solid {{t.line}}; border-top: 2px solid {{t.line}}\"></div>\n    <div style=\"position: absolute; left: 290px; top: 650px; width: 50px; height: 50px; border-left: 2px solid {{t.line}}; border-bottom: 2px solid {{t.line}}\"></div>\n    <div style=\"position: absolute; left: 716px; top: 650px; width: 50px; height: 50px; border-right: 2px solid {{t.line}}; border-bottom: 2px solid {{t.line}}\"></div>\n\n    <!-- destination tag -->\n    <div style=\"position: absolute; left: 330px; top: 610px; width: 28px; height: 28px; box-sizing: border-box; border: 2px solid {{t.warm}}; display: flex; align-items: center; justify-content: center\">\n      <div style=\"width: 10px; height: 10px; border-radius: 50%; background: {{t.warm}}; box-shadow: 0 0 10px {{t.warm}}\"></div>\n    </div>\n    <div style=\"position: absolute; left: 372px; top: 600px; font-size: 34px; letter-spacing: 0.06em; color: {{t.hi}}\">CERES</div>\n    <div style=\"position: absolute; left: 374px; top: 642px; font-size: 17px; color: {{t.line}}\">DX5 CERES \u00b7 OPA HOME</div>\n\n    <div style=\"position: absolute; right: 14px; bottom: 10px; font-size: 11px; color: {{t.sub}}\">GRID 5,000 KM</div>\n  </div>\n\n  <!-- ===== bottom scale ruler ===== -->\n  <div style=\"position: absolute; left: 272px; top: 806px; width: 1056px; height: 12px; background: {{rulerBgDown}}\"></div>\n  <sc-for list=\"{{botLabels}}\" as=\"lb\" hint-placeholder-count=\"9\">\n    <div style=\"position: absolute; top: 818px; left: {{lb.x}}px; width: 64px; text-align: center; white-space: nowrap; font-size: 12px; color: {{t.sub}}\">{{lb.txt}}</div>\n  </sc-for>\n  <div style=\"position: absolute; left: 272px; top: 838px; width: 1056px; text-align: center; font-size: 11px; color: {{t.sub}}\">SHIFT+CLICK SET DEST \u00b7 SHIFT+RCLICK WAYPOINT \u00b7 R RE-PLAN \u00b7 V DETOURS \u00b7 S FOLLOW SHIP \u00b7 K THEME \u00b7 ESC CLOSE</div>\n\n  <!-- ===== left column ===== -->\n  <div style=\"position: absolute; left: 16px; top: 12px; width: 240px; display: flex; flex-direction: column; gap: 14px\">\n    <div style=\"display: flex; flex-direction: column; gap: 3px; padding-bottom: 6px; border-bottom: 1px solid {{lineFaint}}\">\n      <div style=\"font-size: 15px; color: {{t.hi}}\">// SDX2 SYSTEM MAP</div>\n      <div style=\"font-size: 11px; color: {{t.sub}}\">{{t.tag}}</div>\n      <div style=\"display: grid; grid-template-columns: 56px 1fr; gap: 2px 8px; margin-top: 4px\">\n        <span style=\"color: {{t.sub}}\">SHIP</span><span>ROCINANTE</span>\n        <span style=\"color: {{t.sub}}\">SECT</span><span>DX4 EARTH</span>\n        <span style=\"color: {{t.sub}}\">POS</span><span>-2.49 0.44 -4.31 Mm</span>\n      </div>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 6px\">\n      <div style=\"display: flex; justify-content: space-between; padding: 3px 6px; background: {{headBg}}; border-top: 1px solid {{t.line}}; color: {{t.text}}\"><span>SHIP SYSTEMS</span><span>+</span></div>\n      <sc-for list=\"{{sysRows}}\" as=\"r\" hint-placeholder-count=\"7\">\n        <div style=\"display: grid; grid-template-columns: 40px 44px 1fr; gap: 8px; align-items: center; padding: 0 6px\">\n          <span style=\"color: {{t.sub}}\">{{r.k}}</span>\n          <span style=\"color: {{t.hi}}\">{{r.v}}</span>\n          <div style=\"height: 6px; border-top: 1px solid {{lineFaint}}; border-bottom: 1px solid {{lineFaint}}; box-sizing: border-box; position: relative\">\n            <div style=\"position: absolute; left: 0; top: 1px; height: 2px; width: {{r.p}}%; background: {{t.line}}\"></div>\n          </div>\n        </div>\n      </sc-for>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 6px; padding: 8px 6px; border-top: 1px solid {{lineFaint}}; border-bottom: 1px solid {{lineFaint}}\">\n      <div style=\"display: flex; align-items: center; gap: 8px\">\n        <div style=\"width: 10px; height: 10px; border-radius: 50%; background: {{t.warm}}; box-shadow: 0 0 8px {{t.warm}}\"></div>\n        <span>NEXT PICK IN N</span>\n      </div>\n      <div style=\"color: {{t.hi}}; padding-left: 18px\">CERES \u00b7 LEG 1 OF 1</div>\n      <div style=\"height: 10px; box-sizing: border-box; border: 1px solid {{t.line}}; padding: 2px\">\n        <div style=\"height: 100%; width: 8%; background: {{t.hi}}\"></div>\n      </div>\n      <div style=\"display: flex; justify-content: space-between; font-size: 13px\">\n        <span style=\"color: {{t.sub}}\">MANUAL</span>\n        <span style=\"color: {{t.warm}}\">AUTOPILOT</span>\n        <span style=\"color: {{t.sub}}\">TRACK</span>\n      </div>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 6px; align-items: center\">\n      <div style=\"align-self: stretch; display: flex; justify-content: space-between; font-size: 11px; color: {{t.sub}}\"><span>DRIVE SIGNATURE</span><span>W 4.0</span></div>\n      <div style=\"position: relative; width: 170px; height: 170px\">\n        <div style=\"position: absolute; inset: 0; border-radius: 50%; border: 1px solid {{t.line}}\"></div>\n        <div style=\"position: absolute; inset: 28px; border-radius: 50%; border: 1px solid {{lineFaint}}\"></div>\n        <div style=\"position: absolute; inset: 56px; border-radius: 50%; border: 1px solid {{lineFaint}}\"></div>\n        <div style=\"position: absolute; left: 84px; top: -6px; width: 1px; height: 182px; background: {{lineFaint}}\"></div>\n        <div style=\"position: absolute; left: -6px; top: 84px; width: 182px; height: 1px; background: {{lineFaint}}\"></div>\n        <div style=\"position: absolute; left: 76px; top: 76px; width: 18px; height: 18px; box-sizing: border-box; border: 1px solid {{t.text}}\"></div>\n        <div style=\"position: absolute; left: 128px; top: 26px; width: 10px; height: 10px; border-radius: 50%; background: {{t.coast}}; box-shadow: 0 0 6px {{t.coast}}\"></div>\n        <div style=\"position: absolute; left: 150px; top: 118px; width: 10px; height: 10px; border-radius: 50%; background: {{t.coast}}\"></div>\n      </div>\n      <div style=\"align-self: stretch; display: flex; justify-content: space-between; font-size: 12px\"><span style=\"color: {{t.sub}}\">THRUST <span style=\"color: {{t.text}}\">196 km</span></span><span style=\"color: {{t.sub}}\">THERMAL <span style=\"color: {{t.text}}\">48 km</span></span></div>\n    </div>\n\n    <div style=\"display: flex; justify-content: space-between; align-items: center; padding: 0 6px; font-size: 13px\">\n      <span style=\"color: {{t.sub}}\">LEGS</span>\n      <span style=\"padding: 1px 6px; background: {{t.line}}; color: {{t.bg}}\">FLIP&amp;BURN</span>\n      <span style=\"color: {{t.text}}\">PARABOLIC</span>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 6px\">\n      <div style=\"display: flex; justify-content: space-between; padding: 3px 6px; background: {{headBg}}; border-top: 1px solid {{t.line}}\"><span>SPECTRUM</span><span>+</span></div>\n      <div style=\"display: grid; grid-template-columns: 56px 1fr 1fr; gap: 4px 8px; padding: 0 6px\">\n        <span style=\"color: {{t.sub}}\">BAND</span><span style=\"color: {{t.warm}}\">OPTICAL</span><span style=\"color: {{t.sub}}\">RADIO</span>\n        <span style=\"color: {{t.sub}}\">DET</span><span>DIRECT</span><span>1.4x</span>\n        <span style=\"color: {{t.sub}}\">TIER</span><span>STRONG</span><span style=\"color: {{t.sub}}\">0.42</span>\n      </div>\n    </div>\n  </div>\n\n  <!-- ===== right column ===== -->\n  <div style=\"position: absolute; left: 1344px; top: 12px; width: 240px; display: flex; flex-direction: column; gap: 14px\">\n    <div style=\"display: grid; grid-template-columns: 56px 1fr 18px; gap: 3px 8px; padding-bottom: 6px; border-bottom: 1px solid {{lineFaint}}\">\n      <span style=\"color: {{t.sub}}\">T+</span><span>00:00:00</span><span style=\"color: {{t.sub}}\">//</span>\n      <span style=\"color: {{t.sub}}\">ETA</span><span style=\"color: {{t.hi}}\">00:33:37</span><span style=\"color: {{t.sub}}\">//</span>\n      <span style=\"color: {{t.sub}}\">F&amp;B</span><span>HIGHSPEED</span><span style=\"color: {{t.sub}}\">//</span>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 4px\">\n      <div style=\"display: flex; justify-content: space-between; padding: 3px 6px; background: {{headBg}}; border-top: 1px solid {{t.line}}\"><span>TARGET DATA</span><span>+</span></div>\n      <div style=\"font-size: 22px; color: {{t.warm}}; padding: 4px 6px 2px\">CERES</div>\n      <div style=\"display: grid; grid-template-columns: 64px 1fr; gap: 3px 8px; padding: 0 6px 0 16px\">\n        <span style=\"color: {{t.sub}}\">SECTOR</span><span>DX5 CERES</span>\n        <span style=\"color: {{t.sub}}\">TYPE</span><span>PLANET</span>\n        <span style=\"color: {{t.sub}}\">DIST</span><span>12.71 Mm</span>\n        <span style=\"color: {{t.sub}}\">BRG</span><span>020.0\u00b0</span>\n        <span style=\"color: {{t.sub}}\">ELV</span><span>+2.5\u00b0</span>\n        <span style=\"color: {{t.sub}}\">STOP</span><span>100 km clr</span>\n      </div>\n      <div style=\"font-size: 18px; color: {{t.hi}}; padding: 8px 6px 2px\">ROCINANTE</div>\n      <div style=\"display: grid; grid-template-columns: 64px 1fr; gap: 3px 8px; padding: 0 6px 0 16px\">\n        <span style=\"color: {{t.sub}}\">SECTOR</span><span>DX4 EARTH</span>\n        <span style=\"color: {{t.sub}}\">SPD</span><span>2.75 km/s</span>\n        <span style=\"color: {{t.sub}}\">VREL</span><span>2.71 km/s</span>\n      </div>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 4px\">\n      <div style=\"display: flex; justify-content: space-between; padding: 3px 6px; background: {{headBg}}; border-top: 1px solid {{t.line}}\"><span>TRAJECTORY</span><span>+</span></div>\n      <div style=\"display: grid; grid-template-columns: 64px 1fr; gap: 3px 8px; padding: 4px 6px 0 16px\">\n        <span style=\"color: {{t.sub}}\">PEAK</span><span>12.6 km/s</span>\n        <span style=\"color: {{t.sub}}\">ACCEL</span><span>12.5 m/s\u00b2</span>\n        <span style=\"color: {{t.sub}}\">BURN</span><span style=\"color: {{t.burn}}\">16m 48s</span>\n        <span style=\"color: {{t.sub}}\">FLIP</span><span>6,355 km</span>\n        <span style=\"color: {{t.sub}}\">BRAKE</span><span style=\"color: {{t.brake}}\">16m 48s</span>\n        <span style=\"color: {{t.sub}}\">BORDER</span><span>DX4 \u2192 DX1 750 km</span>\n        <span style=\"color: {{t.sub}}\">STATUS</span><span style=\"color: {{t.warm}}\">NOMINAL</span>\n      </div>\n    </div>\n\n    <div style=\"display: flex; flex-direction: column; gap: 6px\">\n      <div style=\"display: flex; justify-content: space-between; padding: 3px 6px; background: {{headBg}}; border-top: 1px solid {{t.line}}\"><span>STARMAP</span><span>+</span></div>\n      <div style=\"position: relative; height: 92px\">\n        <div style=\"position: absolute; left: 50px; top: 26px; width: 140px; height: 50px; border-radius: 50%; border: 1px solid {{t.line}}\"></div>\n        <div style=\"position: absolute; left: 80px; top: 38px; width: 80px; height: 28px; border-radius: 50%; border: 1px solid {{lineFaint}}\"></div>\n        <div style=\"position: absolute; left: 20px; top: 14px; width: 200px; height: 74px; border-radius: 50%; border: 1px dashed {{lineFaint}}\"></div>\n        <div style=\"position: absolute; left: 113px; top: 45px; width: 14px; height: 14px; border-radius: 50%; background: {{t.warm}}; box-shadow: 0 0 10px {{t.warm}}\"></div>\n        <div style=\"position: absolute; left: 184px; top: 18px; width: 12px; height: 12px; box-sizing: border-box; border: 2px solid {{t.warm}}\"></div>\n        <div style=\"position: absolute; left: 76px; top: 64px; width: 6px; height: 6px; border-radius: 50%; background: {{t.hi}}\"></div>\n      </div>\n      <div style=\"display: grid; grid-template-columns: 64px 1fr 1fr 1fr; gap: 6px 4px; padding: 0 6px; align-items: center\">\n        <span style=\"color: {{t.sub}}\">ZOOM</span><span>1x</span><span style=\"padding: 0 4px; background: {{t.line}}; color: {{t.bg}}\">5x</span><span>10x</span>\n        <span style=\"color: {{t.sub}}\">VIEW</span><span>ORBIT</span><span style=\"padding: 0 4px; background: {{t.line}}; color: {{t.bg}}\">FOLLOW</span><span>TOP</span>\n        <span style=\"color: {{t.sub}}\">GRID</span><span style=\"padding: 0 4px; background: {{t.line}}; color: {{t.bg}}\">ON</span><span>OFF</span><span></span>\n      </div>\n    </div>\n  </div>\n\n  <!-- ===== status bar ===== -->\n  <div style=\"position: absolute; left: 16px; right: 16px; top: 864px; height: 24px; display: flex; align-items: center; gap: 18px; font-size: 13px; border-top: 1px solid {{lineFaint}}; padding-top: 4px; white-space: nowrap\">\n    <span style=\"color: {{t.line}}\">////</span>\n    <span><span style=\"color: {{t.sub}}\">SDX2//{{t.code}}</span> {{t.name}}</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">SECTOR</span> DX4 EARTH</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">REF</span> SOL</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">SCALE</span> 5,000 KM/DIV</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">ROUTE</span> PLANNED \u00b7 NO DETOURS</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">WATER</span> 76%</span><span style=\"color: {{lineFaint}}\">|</span>\n    <span><span style=\"color: {{t.sub}}\">PB</span> 0.11 ms</span>\n    <span style=\"flex-grow: 1\"></span>\n    <span><span style=\"color: {{t.burn}}\">\u2501</span> BURN <span style=\"color: {{t.coast}}\">\u2501</span> COAST <span style=\"color: {{t.brake}}\">\u2501</span> BRAKE</span>\n    <span style=\"color: {{t.line}}\">////</span>\n  </div>\n\n  <!-- scanlines + vignette -->\n  <div style=\"position: absolute; inset: 0; pointer-events: none; background: {{overlay}}\"></div>\n</div>\n";
+document.getElementById('root').innerHTML = render(tpl, new Hud({ theme: theme }).renderVals());
+</script>
+</body>
+</html>

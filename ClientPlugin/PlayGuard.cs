@@ -33,6 +33,9 @@ internal static class PlayGuard
 
     public static void Reset() { lastInput = -1; Reason = null; axisSeen = null; }
 
+    /// <summary>Input the game doesn't see (a touch or click on the second screen's map) counts as being here too.</summary>
+    public static void NoteInput(double now) { if (lastInput >= 0) lastInput = now; }
+
     /// <summary>Every frame, before anything else (Plugin.Update).</summary>
     public static void Update(double now)
     {

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Belter chart</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #030703">
+<dc-import name="ChartMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line": {"editor": "color", "default": "#5fd36a"}, "warm": {"editor": "color", "default": "#f2e25a"}, "alert": {"editor": "color", "default": "#ff5a4a"}, "$preview": {"width": 1600, "height": 900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var t = {'name': 'BELTER', 'tag': 'OPA // BELT PILOT CHART', 'title': '#ecffe6', 'bezel': '#0c160c', 'bg': '#070d07', 'panel': '#0a140a', 'ring': '#a8f0a0', 'grid': '#3a7a3a', 'text': '#e0f8dc', 'sub': '#90c08a', 'planet': '#122a14', 'box': 'rgba(30,90,40,0.55)', 'hi': '#4ae8c8', 'burn': '#ff9a3a', 'brake': '#4ae8c8', 'hexA': 0.14, 'secs': ['#f2e25a', '#4ae8c8', '#4ae8c8', '#4ae8c8', '#5a7a58']};
+    t.line = this.props.line ?? '#5fd36a';
+    t.warm = this.props.warm ?? '#f2e25a';
+    t.alert = this.props.alert ?? '#ff5a4a';
+    return { theme: t };
+  }
+}
+</script>
+</body>
+</html>

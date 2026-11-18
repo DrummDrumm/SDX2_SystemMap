@@ -16,6 +16,8 @@ internal static class GameState
 
     private static V3 V(Vector3D v) => new V3(v.X, v.Y, v.Z);
 
+    private static double water, waterCap, waterRate;
+
     public static void Fill(MapSnapshot s, double now)
     {
         var session = MySession.Static;
@@ -43,12 +45,15 @@ internal static class GameState
                 state = grid != null ? FlipAndBurnLink.State(grid) : "";
                 maxSpeed = FlipAndBurnLink.MaxSpeed();
                 driveWeight = ReadSignature(grid, s.Signature);
+                water = waterCap = waterRate = 0;
+                try { if (grid != null) DriveCheck.Water(grid, out water, out waterCap, out waterRate); } catch { }
                 shipClass = grid != null ? ReadCoreClass(grid) : "";
                 try { factionTag = session.Factions?.TryGetPlayerFaction(session.LocalPlayerId)?.Tag ?? ""; } catch { factionTag = ""; }
             }
         }
         s.ShipClass = top != null ? shipClass : ""; s.FactionTag = factionTag;
         s.MaxAccel = accel; s.FnbState = state; s.MaxSpeed = maxSpeed; s.DriveWeight = driveWeight;
+        s.Water = top != null ? water : 0; s.WaterCap = top != null ? waterCap : 0; s.WaterRate = top != null ? waterRate : 0;
         SpectrumLink.Search(now);
         SpectrumLink.ReadLive(grid, s.Signature);
         s.FnbReady = FlipAndBurnLink.Found || FlipAndBurnLink.ApiReady;

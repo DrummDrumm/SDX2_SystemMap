@@ -24,16 +24,18 @@ namespace PbCheck
         /// <summary>Game ticks between PB runs: 10 is Update10 (the script). SIM_RUN_TICKS=60 tries once a second.</summary>
         static readonly int RunTicks = int.Parse(Environment.GetEnvironmentVariable("SIM_RUN_TICKS") ?? "10");
 
-        class Result { public bool Arrived; public double Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
+        class Result { public bool Arrived; public int Reversals, Toggles, Flips; public double CruiseSwing, Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
 
         static Nav.Wp W(Vector3D p, double arrive, string kind) { return new Nav.Wp { Pos = p, Arrive = arrive, Kind = kind, Name = kind }; }
 
-        static Result Fly(List<Nav.Wp> route, Vector3D start, Vector3D startDrive, double aMax, double shipTurnRate, Vector3D g, double limit, Vector3D watch, double burnCap = 1, double brakeCap = 1)
+        static Result Fly(List<Nav.Wp> route, Vector3D start, Vector3D startDrive, double aMax, double shipTurnRate, Vector3D g, double limit, Vector3D watch, double burnCap = 1, double brakeCap = 1, Vector3D v0 = default(Vector3D), double alpha = 0.6)
         {
             var s = new Nav.Settings();
             var est = new Nav.VelocityEstimator();
-            Vector3D p = start, v = Vector3D.Zero, drive = Vector3D.Normalize(startDrive), w = Vector3D.Zero;
-            double dt = RunTicks / 60.0; const double alpha = 0.6; // gyro angular acceleration, rad/s²
+            Vector3D p = start, v = v0, drive = Vector3D.Normalize(startDrive), w = Vector3D.Zero, wLast = Vector3D.Zero;
+            double dt = RunTicks / 60.0; // alpha: gyro angular acceleration, rad/s²
+            bool thrOn = false, flipped = false;
+            if (v0.LengthSquared() > 0) est.Update(p - v0, Vector3D.Normalize(v0) * 100, -1); // already moving: a second of history
             int idx = 0; double t = 0;
             var r = new Result { ClosestTo = double.MaxValue };
             Nav.Cmd cmd = new Nav.Cmd();
@@ -42,10 +44,24 @@ namespace PbCheck
                 var phys = v.Length() > 100 ? Vector3D.Normalize(v) * 100 : v;
                 var vEst = est.Update(p, phys, t);
                 if (cmd.W.Length() >= s.TurnRate * 0.99) s.Observed = Math.Max(s.Observed, w.Length());
+                s.Learn(cmd.W, w, t);
                 cmd = Nav.Steer(p, vEst, g, drive, aMax, burnCap, brakeCap, route, idx, 50000 * 0.98, s); cmd = Written(cmd);
                 idx = cmd.Idx;
                 if (Environment.GetEnvironmentVariable("SIM_TRACE") != null && Vector3D.Distance(p, watch) < 40e3) Console.WriteLine("  t " + t.ToString("0") + " d " + Vector3D.Distance(p, watch).ToString("0") + " v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
                 if (cmd.Arrived) { r.Arrived = true; break; }
+                // wobble: the turn reversing, the throttle switching off and on
+                if (w.Length() > 0.03 && wLast.Length() > 0.03 && Vector3D.Dot(w, wLast) < 0) { r.Reversals++; if (Environment.GetEnvironmentVariable("SIM_REV_TRACE") != null && aMax > 300) Console.WriteLine("  rev t " + t.ToString("0") + " v " + v.Length().ToString("0") + " rem " + (cmd.Remaining / 1000).ToString("0") + " km thr " + cmd.Throttle.ToString("0.00")); }
+                if (w.Length() > 0.03) wLast = w;
+                if (!thrOn && cmd.Throttle > 0.3) { thrOn = true; r.Toggles++; } else if (thrOn && cmd.Throttle < 0.05) thrOn = false;
+                // cruising (fast, far from the stop): how far the drives swing off the velocity, and turning to face back
+                if (v.Length() > 40000 && cmd.Remaining > v.LengthSquared() / aMax + 500e3) // well before the flip to brake
+                {
+                    double off = Math.Acos(MathHelper.Clamp(Vector3D.Dot(drive, Vector3D.Normalize(v)), -1, 1)) * 180 / Math.PI;
+                    if (t > 20) r.CruiseSwing = Math.Max(r.CruiseSwing, off);
+                    if (Environment.GetEnvironmentVariable("SIM_CRUISE_TRACE") != null && aMax > 300 && t > 60 && t < 120)
+                        Console.WriteLine("  t " + t.ToString("0") + " off " + off.ToString("0.0") + " w " + w.Length().ToString("0.000") + " W " + cmd.W.Length().ToString("0.000") + " thr " + cmd.Throttle.ToString("0.00") + " burn " + s.Burning);
+                    if (off > 120 && !flipped) { r.Flips++; flipped = true; } else if (off < 60) flipped = false;
+                }
                 // gyros: reach the wanted rate at a limited angular acceleration, never past the ship's own limit
                 var want = cmd.W;
                 if (want.Length() > shipTurnRate) want = Vector3D.Normalize(want) * shipTurnRate;
@@ -213,6 +229,42 @@ namespace PbCheck
                 Check(r.Arrived && r.FinalDist < 500 && r.ClosestTo < 15e3 && r.SpeedAtClosest > 1000,
                     "parabolic: curves past the bend (within " + (r.ClosestTo / 1000).ToString("0.0") + " km) at speed (" + r.SpeedAtClosest.ToString("0") + " m/s, no stop) and stops at the target");
                 Check(r.Time < fb.Time * 0.9, "parabolic: quicker than stopping at the bend (" + r.Time.ToString("0") + " s vs " + fb.Time.ToString("0") + " s)");
+            }
+
+            // 3d) running in far too fast on a curve (the recording near Saturn): 15 km/s into a 3,000 km radius bend
+            //     of curve points every 20 km, weak RCS gyros (0.1 rad/s²). Brakes onto the curve without wobbling.
+            {
+                double R = 3000e3; var c = new Vector3D(0, R, 0);
+                route = new List<Nav.Wp>();
+                for (int i = 1; i <= 40; i++) { double th = i * 20e3 / R; route.Add(W(c + new Vector3D(Math.Sin(th), -Math.Cos(th), 0) * R, 500, "curve")); }
+                double te = 41 * 20e3 / R;
+                route.Add(W(c + new Vector3D(Math.Sin(te), -Math.Cos(te), 0) * R + new Vector3D(Math.Cos(te), Math.Sin(te), 0) * 600e3, 500, "target"));
+                foreach (var alphaG in new[] { 0.6, 0.1, 0.04 })
+                {
+                    r = Fly(route, Vector3D.Zero, new Vector3D(1, 0.1, 0), 10, 0.6, Vector3D.Zero, 6000, route[20].Pos, 1, 1, new Vector3D(15000, 0, 0), alphaG);
+                    Report("15 km/s into a curve, gyros " + alphaG + " rad/s2", r);
+                    Console.WriteLine("    turn reversals " + r.Reversals + ", throttle restarts " + r.Toggles);
+                    Check(r.Arrived && r.Reversals < 40 && r.Toggles < 15, "overspeed curve (" + alphaG + " rad/s2): arrives without wobbling (" + r.Reversals + " turn reversals, " + r.Toggles + " throttle restarts)");
+                }
+            }
+
+            // 3e) cruising at the cap on a nearly straight parabolic route (the recording to Pallas): 27 curve points
+            //     over 18,800 km, bent 300 km, 35 g drives, 49 km/s already. Holds its attitude: no flips, no wobble.
+            {
+                Vector3D a0 = Vector3D.Zero, b0 = new Vector3D(18800e3, 0, 0), bend = new Vector3D(9400e3, 300e3, 0);
+                var ctl = 2 * bend - (a0 + b0) / 2;
+                route = new List<Nav.Wp>();
+                for (int i = 1; i < 28; i++) { double u = i / 28.0; route.Add(W((1 - u) * (1 - u) * a0 + 2 * u * (1 - u) * ctl + u * u * b0, 500, "curve")); }
+                route.Add(W(b0, 500, "target"));
+                var v0 = Vector3D.Normalize(ctl - a0) * 49000;
+                foreach (var alphaG in new[] { 0.6, 0.15, 0.04 })
+                {
+                    r = Fly(route, a0, Vector3D.Normalize(ctl - a0), 350, 0.6, Vector3D.Zero, 2000, b0, 1, 1, v0, alphaG);
+                    Report("cruise at the cap, gyros " + alphaG + " rad/s2", r);
+                    Console.WriteLine("    turn reversals " + r.Reversals + ", throttle restarts " + r.Toggles + ", cruise flips " + r.Flips + ", worst cruise swing " + r.CruiseSwing.ToString("0") + " deg");
+                    Check(r.Arrived && r.FinalDist < 500 && r.Flips == 0 && r.Reversals < 20 && r.Toggles < 25 && r.CruiseSwing < 100,
+                        "cruise at the cap (" + alphaG + " rad/s2): steady (" + r.Reversals + " reversals, " + r.Toggles + " restarts, " + r.Flips + " flips, swing " + r.CruiseSwing.ToString("0") + " deg)");
+                }
             }
 
             // 4) asteroid dodge: a pass point 5 km beside a rock on the line, 600 km out, flown at speed

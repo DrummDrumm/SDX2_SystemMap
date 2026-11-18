@@ -23,6 +23,9 @@ public sealed class RouteLimits
     public bool Parabolic;
 
     public RouteLimits Clone() => (RouteLimits)MemberwiseClone();
+    /// <summary>The same limits as o (every field).</summary>
+    public bool SameAs(RouteLimits o) => o != null && MaxSpeed == o.MaxSpeed && BySignature == o.BySignature && ThrustPct == o.ThrustPct
+        && BrakePct == o.BrakePct && SignatureKm == o.SignatureKm && BrakeSignatureKm == o.BrakeSignatureKm && Parabolic == o.Parabolic;
 
     /// <summary>The share of the drives' thrust the autopilot may use burning toward a point. weight = the ship's summed drive signal weight.</summary>
     public double ThrustFraction(double weight, double gain = 4) => Fraction(ThrustPct, SignatureKm, weight, gain);

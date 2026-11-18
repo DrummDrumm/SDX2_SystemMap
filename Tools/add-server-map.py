@@ -6,7 +6,11 @@ are on the server:
 
 - every planet and moon that has a planet generator in the world's mods, at its server centre, written as a planet
   entity in SANDBOX_0_0_0_.sbs plus its small .vx2 storage file (an untouched procedural planet);
-- the station GPS points (Belt.Tycho.STN ...) for the local player.
+- the station GPS points (Belt.Tycho.STN ...) for the local player;
+- a stand-in grid at each station: the real stations are grids in the server's own world, not in any of its mods,
+  so each gets a static, unowned cross of armour arms (77.5 m across each way: something to fly round and stop
+  short of) with an Installation core, a battery and a beacon named after it ("Rhea Station (stand-in)"). Stations on
+  a world's ground (Rhea, Ganymede ...) sit on it as on the server, half buried.
 
 Not added: Sol (Real Stars is server-only, and Flip and Burn ignores it), Eros (no planet generator: it's a voxel
 asteroid on the server) and the Asteroid Ores zones (the server's own config).
@@ -15,8 +19,8 @@ Planet sizes: SystemData's radii (the community map's). The server's exact diame
 
 Run with the game closed:
     python Tools/add-server-map.py "<path to save folder>"
-It backs up the save into <save>/Backup/<timestamp> map-tool/ first, skips planets and GPS points that are already
-there, and deletes SANDBOX_0_0_0_.sbsB5 (the binary cache, which would otherwise be loaded instead of the edit).
+It backs up the save into <save>/Backup/<timestamp> map-tool/ first, skips planets, GPS points and stand-ins that
+are already there, and deletes SANDBOX_0_0_0_.sbsB5 (the binary cache, which would otherwise be loaded instead of the edit).
 """
 import datetime
 import glob
@@ -62,7 +66,7 @@ def read_system_data():
     num = r"(-?[\d.]+)"
     worlds = [(m[0], float(m[2]), float(m[3]), float(m[4]), float(m[5])) for m in re.findall(
         r'W\("([^"]+)", "([^"]*)", ' + num + ", " + num + ", " + num + ", " + num, src)]
-    stations = [(m[0], float(m[2]), float(m[3]), float(m[4])) for m in re.findall(
+    stations = [(m[0], m[1], float(m[2]), float(m[3]), float(m[4])) for m in re.findall(
         r'St\("([^"]+)", "([^"]+)", ' + num + ", " + num + ", " + num + r"\)", src)]
     return worlds, stations
 
@@ -230,6 +234,84 @@ def gps_xml(name, pos, color):
 """
 
 
+ARM = 15  # blocks out from the centre along each axis: 31 blocks (77.5 m) across
+
+
+def new_id(rng, ids):
+    eid = str(rng.randrange(1 << 62, 1 << 63))
+    while eid in ids:
+        eid = str(rng.randrange(1 << 62, 1 << 63))
+    ids.add(eid)
+    return eid
+
+
+def block_xml(kind, sub, pos, eid=None, extra=""):
+    x, y, z = pos
+    ident = f"\n          <EntityId>{eid}</EntityId>" if eid else ""
+    return (f'        <MyObjectBuilder_CubeBlock xsi:type="MyObjectBuilder_{kind}">\n'
+            f"          <SubtypeName>{sub}</SubtypeName>{ident}\n"
+            f'          <Min x="{x}" y="{y}" z="{z}" />\n'
+            f'          <BlockOrientation Forward="Forward" Up="Up" />\n'
+            f'          <ColorMaskHSV x="0.55" y="-0.6" z="0.05" />\n{extra}'
+            f"        </MyObjectBuilder_CubeBlock>\n")
+
+
+def standin_xml(rng, ids, name, pos):
+    """A static grid: armour arms along X, Y and Z through the station's position, and the working blocks by the centre."""
+    blocks = ""
+    cells = {(0, 0, 0)}
+    for a in range(1, ARM + 1):
+        for c in ((a, 0, 0), (-a, 0, 0), (0, a, 0), (0, -a, 0), (0, 0, a), (0, 0, -a)):
+            cells.add(c)
+    for c in sorted(cells):
+        blocks += block_xml("CubeBlock", "LargeBlockArmorBlock", c)
+    blocks += block_xml("FunctionalBlock", "sdx_shipcoreInstallation", (1, 0, 1), new_id(rng, ids),
+                        "          <Enabled>true</Enabled>\n")
+    blocks += block_xml("BatteryBlock", "LargeBlockBatteryBlock", (-1, 0, 1), new_id(rng, ids),
+                        "          <Enabled>true</Enabled>\n          <CurrentStoredPower>3</CurrentStoredPower>\n"
+                        "          <ProducerEnabled>true</ProducerEnabled>\n")
+    blocks += block_xml("Beacon", "LargeBlockBeacon", (1, 0, -1), new_id(rng, ids),
+                        f"          <CustomName>{name}</CustomName>\n          <Enabled>true</Enabled>\n"
+                        f"          <BroadcastRadius>20000</BroadcastRadius>\n          <HudText>{name}</HudText>\n")
+    eid = new_id(rng, ids)
+    return f"""    <MyObjectBuilder_EntityBase xsi:type="MyObjectBuilder_CubeGrid">
+      <SubtypeName />
+      <EntityId>{eid}</EntityId>
+      <PersistentFlags>CastShadows InScene</PersistentFlags>
+      <PositionAndOrientation>
+        <Position x="{f(pos[0])}" y="{f(pos[1])}" z="{f(pos[2])}" />
+        <Forward x="-0" y="-0" z="-1" />
+        <Up x="0" y="1" z="0" />
+        <Orientation>
+          <X>0</X>
+          <Y>0</Y>
+          <Z>0</Z>
+          <W>1</W>
+        </Orientation>
+      </PositionAndOrientation>
+      <LocalPositionAndOrientation xsi:nil="true" />
+      <GridSizeEnum>Large</GridSizeEnum>
+      <CubeBlocks>
+{blocks}      </CubeBlocks>
+      <IsStatic>true</IsStatic>
+      <IsUnsupportedStation>true</IsUnsupportedStation>
+      <Skeleton />
+      <LinearVelocity x="0" y="0" z="0" />
+      <AngularVelocity x="0" y="0" z="0" />
+      <XMirroxPlane xsi:nil="true" />
+      <YMirroxPlane xsi:nil="true" />
+      <ZMirroxPlane xsi:nil="true" />
+      <BlockGroups />
+      <Handbrake>false</Handbrake>
+      <DisplayName>{name}</DisplayName>
+      <DestructibleBlocks>true</DestructibleBlocks>
+      <IsRespawnGrid>false</IsRespawnGrid>
+      <LocalCoordSys>0</LocalCoordSys>
+      <TargetingTargets />
+    </MyObjectBuilder_EntityBase>
+"""
+
+
 def game_running():
     try:
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq SpaceEngineers.exe"], capture_output=True, text=True).stdout
@@ -285,6 +367,15 @@ def main():
         ids.add(eid)
         xml += planet_xml(eid, name, storage, corner, radius, gen, g)
         added.append(name)
+    # Stand-in station grids
+    grids = set(re.findall(r"<DisplayName>([^<]*)</DisplayName>", sbs))
+    placed = []
+    for _, title, x, y, z in stations:
+        name = f"{title} (stand-in)"
+        if name in grids:
+            continue
+        xml += standin_xml(rng, ids, name, (x, y, z))
+        placed.append(title)
     if xml:
         i = sbs.index("</SectorObjects>")
         sbs = sbs[:i] + xml.lstrip() + "  " + sbs[i:]
@@ -292,6 +383,7 @@ def main():
             fh.write(sbs)
     print(f"planets added ({len(added)}): {', '.join(added) or 'none'}")
     print(f"not added (no generator): {', '.join(skipped)}")
+    print(f"station stand-ins added ({len(placed)}): {', '.join(placed) or 'none'}")
 
     # Station GPS points for the local player (the identity of the first AllPlayersData entry).
     m = re.search(r"<AllPlayersData>.*?<IdentityId>(\d+)</IdentityId>", sbc, re.S)
@@ -299,7 +391,7 @@ def main():
         sys.exit("no player in Sandbox.sbc: GPS points not added")
     identity = m.group(1)
     have = set(re.findall(r"<name>([^<]*)</name>", sbc))
-    entries = "".join(gps_xml(n, (x, y, z), STATION_COLOR) for n, x, y, z in stations if n not in have)
+    entries = "".join(gps_xml(n, (x, y, z), STATION_COLOR) for n, _, x, y, z in stations if n not in have)
     if entries:
         item = re.search(r"<item>\s*<Key>" + identity + r"</Key>\s*<Value>\s*<Entries>(.*?)</Entries>", sbc, re.S)
         if item:
@@ -318,7 +410,7 @@ def main():
     print(f"station GPS added: {entries.count('<Entry>')}")
 
     b5 = sbs_path + "B5"
-    if os.path.exists(b5) and (added or entries):
+    if os.path.exists(b5) and (added or entries or placed):
         os.remove(b5)
         print("removed SANDBOX_0_0_0_.sbsB5 (the game rebuilds it on the next save)")
 

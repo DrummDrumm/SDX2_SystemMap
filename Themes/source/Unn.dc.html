@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Naval Ice HUD theme</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #030914">
+<dc-import name="HudMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line":{"editor":"color","default":"#8ec3ff"},"warm":{"editor":"color","default":"#e8c25a"},"alert":{"editor":"color","default":"#ff5a5a"},"$preview":{"width":1600,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: {
+        name: 'NAVAL ICE', code: 'UNN', tag: 'UNN // FLEET PLOTTING TABLE',
+        bg: '#030914', neb: '#3c78dc', sub: '#a4bfe2', text: '#e6f1ff', hi: '#c4e2ff',
+        burn: '#ff9f43', coast: '#f2f8ff', brake: '#7fe8a8',
+        line: this.props.line ?? '#8ec3ff', warm: this.props.warm ?? '#e8c25a', alert: this.props.alert ?? '#ff5a5a'
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

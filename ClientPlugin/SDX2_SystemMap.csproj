@@ -42,6 +42,20 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
 
+  <!-- The second screen's window (WinForms / GDI+): in the .NET Framework for Legacy, the Windows Desktop runtime for
+       Interim (Pulsar's Interim.runtimeconfig.json loads Microsoft.WindowsDesktop.App) -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <!-- Space Engineers only runs on Windows -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- The game-free map (also compiled by the tests) -->
     <Compile Include="..\Core\**\*.cs" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using SDX2_SystemMap;
 using SDX2_SystemMap.Tests;
 
@@ -15,6 +16,7 @@ internal static class Program
     {
         checks++;
         if (!ok) { fails++; Console.WriteLine("FAIL  " + what); }
+        else if (Environment.GetEnvironmentVariable("SHOWALL") == "1") Console.WriteLine("ok    " + what);
     }
 
     private static bool Near(double a, double b, double tol) => Math.Abs(a - b) <= tol;
@@ -31,6 +33,7 @@ internal static class Program
         Camera();
         Labels();
         Detours();
+        Fields();
         Tracker();
         Export();
         UserWaypoints();
@@ -44,6 +47,11 @@ internal static class Program
         Render(outDir, "-unn");
         MapTheme.Current = MapTheme.Opa;
         Render(outDir, "-opa");
+        MapTheme.Current = MapTheme.Protogen;
+        Render(outDir, "-protogen");
+        MapTheme.Current = MapTheme.Belter;
+        Render(outDir, "-belter");
+        ShipIconSheet(outDir);
         MapTheme.Current = MapTheme.Classic;
         Themes();
         HoverOnTop();
@@ -52,6 +60,8 @@ internal static class Program
         TurnWithShip();
         ShipLabelSteady();
         Curves();
+        Touch();
+        Recorded(outDir);
 
         Console.WriteLine($"{checks - fails}/{checks} checks passed");
         return fails == 0 ? 0 : 1;
@@ -63,6 +73,9 @@ internal static class Program
         Check(SystemData.SectorAt(new V3(8.5e6, 0, 0)).Dx == "DX6", "on the Belt's ring: DX6");
         Check(SystemData.SectorAt(new V3(8.5e6, 600e3, 0)).Dx == "DX1", "above the Belt's tube: DX1");
         Check(SystemData.SectorAt(V3.Zero).Dx == "DX1", "Sol: DX1");
+        var beltSector = Array.Find(SystemData.Sectors, x => x.Dx == "DX6");
+        Check(SystemData.Belt.Major == beltSector.Radius && SystemData.Belt.Minor == beltSector.HalfWidth, "Skylark's Belt torus matches DX6's sector");
+        Check(SystemData.SectorAt(SystemData.Belt.Center + new V3(SystemData.Belt.Major, SystemData.Belt.Minor * 0.9, 0)).Dx == "DX6", "inside the Skylark tube: DX6");
         Check(SystemData.SectorAt(SystemData.FindWorld("Ceres").Pos).Dx == "DX5", "Ceres sphere wins over the Belt torus");
         foreach (var s in SystemData.Stations)
             Check(SystemData.SectorAt(s.Pos).Dx != "", "station " + s.Name + " has a sector");
@@ -140,6 +153,12 @@ internal static class Program
         cam.Zoom(100);
         for (int i = 0; i < 400; i++) cam.Tick(1 / 60.0);
         Check(cam.Distance >= OrbitCamera.MinDistance - 1, "zoom stops at the minimum");
+        // the wheel: the game's total reset to 0 on focus loss (Windows key) isn't a huge zoom either way
+        Check(OrbitCamera.WheelNotches(0, 6000) == 0 && OrbitCamera.WheelNotches(6000, 0) == 0, "wheel: the total's reset on focus loss is ignored");
+        Check(OrbitCamera.WheelNotches(6120, 6000) == 1 && OrbitCamera.WheelNotches(120, 0) == 1 && OrbitCamera.WheelNotches(-120, 0) == -1, "wheel: a notch zooms one step");
+        Check(OrbitCamera.WheelNotches(9000, 1200) == OrbitCamera.MaxWheelNotches, "wheel: one frame zooms at most a few notches");
+        Check(MapScene.FocusDistance(new Pick { Name = "Earth", Kind = "Planet" }) > SystemData.FindWorld("Earth").Radius * 15
+            && MapScene.FocusDistance(new Pick { Name = "Trojans", Kind = MapScene.FieldKind }) > 1500e3 * 3, "click focus stands back far enough to see a world or field whole");
     }
 
     private static void Labels()
@@ -165,6 +184,60 @@ internal static class Program
     }
 
     private static string Km(double m) => (m / 1000).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " km";
+
+    /// <summary>Nearest a route (start, points, end) comes to the Belt's tube centreline (sampled).</summary>
+    private static double BeltLowest(V3 start, List<Waypoint> wps, V3 end)
+    {
+        var pts = new List<V3> { start }; foreach (var p in wps) pts.Add(p.Pos); pts.Add(end);
+        double min = double.MaxValue;
+        for (int i = 0; i + 1 < pts.Count; i++)
+            for (int k = 0; k <= 2000; k++) min = Math.Min(min, SystemData.BeltDistance(pts[i] + (pts[i + 1] - pts[i]) * (k / 2000.0)));
+        return min;
+    }
+
+    private static double RouteLength(V3 start, List<Waypoint> wps, V3 end)
+    {
+        double len = 0; V3 a = start;
+        foreach (var p in wps) { len += V3.Distance(a, p.Pos); a = p.Pos; }
+        return len + V3.Distance(a, end);
+    }
+
+    private static void Fields()
+    {
+        var earth = SystemData.FindWorld("Earth"); var jupiter = SystemData.FindWorld("Jupiter");
+        V3 from = earth.Pos + new V3(1000e3, 0, 0), to = jupiter.Pos + new V3(0, 0, 3000e3);
+        double m = SystemData.Belt.Minor + DetourPlanner.FieldGap;
+        var plain = DetourPlanner.Plan(from, to, "J");
+        var keep = DetourPlanner.Plan(from, to, "J", fields: true);
+        double inPlain = BeltLowest(from, plain, to), inKeep = BeltLowest(from, keep, to);
+        Check(inPlain < SystemData.Belt.Minor, "belt: without the option, Earth to Jupiter goes through the Belt (" + Km(inPlain) + " from its middle)");
+        Check(inKeep >= SystemData.Belt.Minor + DetourPlanner.FieldGap * 0.9 && keep.Exists(w => w.Around == SystemData.BeltField),
+              "belt: with it, over or under the tube (" + Km(inKeep - SystemData.Belt.Minor) + " outside, " + keep.Count + " points)");
+        double extra = RouteLength(from, keep, to) - RouteLength(from, plain, to);
+        Check(extra < 600e3, "belt: going over it costs little (" + Km(extra) + " more)");
+        // in the plane, straight across: over (or under) the tube
+        V3 inner = new V3(6000e3, 0, 0), outer = new V3(11000e3, 0, 0);
+        var flatCross = DetourPlanner.Plan(inner, outer, "O", fields: true);
+        Check(BeltLowest(inner, flatCross, outer) >= m * 0.9 && flatCross.Count >= 1, "belt: a crossing in its plane goes over it (" + flatCross.Count + " points)");
+        // starting in the Belt (Tycho Station): can't keep out of it, flown as before
+        var tycho = Array.Find(SystemData.Stations, x => x.Name == "Tycho Station");
+        var fromTycho = DetourPlanner.Plan(tycho.Pos + new V3(0, 0, 10e3), to, "J", fields: true);
+        Check(!fromTycho.Exists(w => w.Around == SystemData.BeltField), "belt: starting in it, no detour round it");
+        // through the Trojans: round the field's sphere
+        var tro = Array.Find(SystemData.Fields, f => f.Name == "Trojans");
+        V3 ta = tro.Pos + new V3(-4000e3, 0, 0), tb = tro.Pos + new V3(4000e3, 0, 0);
+        var round = DetourPlanner.Plan(ta, tb, "T", fields: true);
+        double trLow = LowestOver(ta, round, tb, tro);
+        Check(trLow >= tro.Radius + DetourPlanner.FieldGap - 1 && trLow < tro.Radius + DetourPlanner.FieldGap * 4, "trojans: gone round (" + Km(trLow - tro.Radius) + " outside)");
+        Check(DetourPlanner.Plan(ta, tb, "T").Count == 0, "trojans: without the option, straight through");
+        // to a station in the Greeks: flown into
+        var achilles = Array.Find(SystemData.Stations, x => x.Name == "Achilles Station");
+        var toGreek = DetourPlanner.Plan(achilles.Pos + new V3(0, 0, 4000e3), achilles.Pos, "A", fields: true);
+        Check(!toGreek.Exists(w => w.Around != null && w.Around.Name == "Greeks"), "greeks: flying to a station in them, not gone round");
+        // a removed detour (Shift+right-click) stays removed
+        var ign = DetourPlanner.Plan(from, to, "J", ignore: new HashSet<string> { "The Belt" }, fields: true);
+        Check(!ign.Exists(w => w.Around == SystemData.BeltField), "belt: its detour removed, flown through");
+    }
 
     private static void Detours()
     {
@@ -223,6 +296,129 @@ internal static class Program
         var up = DetourPlanner.Plan(ground, farSide, "F");
         Check(up.Count >= 2 && Math.Abs(V3.Distance(up[0].Pos, earth.Pos) - (R + 100e3)) < 1 && V3.Distance(up[0].Pos, earth.Pos + new V3(-200e3, 0, 0)) < 1, "take-off: climbs straight up to the clearance first");
         Check(LowestOver(up[0].Pos, up.GetRange(1, up.Count - 1), farSide, earth) >= R + 80e3, "take-off: then round, clear");
+        // taking off for somewhere off to the side: the climb leans toward it and meets the way on at a tangent,
+        // skimming the clearance instead of going straight up and then round with room to spare
+        {
+            var side = earth.Pos + new V3(300e3, 0, 600e3); // past the horizon, off to the side
+            var lean = DetourPlanner.Plan(ground, side, "S");
+            // (first straight up over the hills, then the climb)
+            int ci = lean.FindIndex(q => Math.Abs(V3.Distance(q.Pos, earth.Pos) - (R + 100e3)) < 1);
+            double leanDeg = ci >= 0 ? Math.Acos((lean[ci].Pos - earth.Pos).Normalized.Dot((ground - earth.Pos).Normalized)) * 180 / Math.PI : 0;
+            Check(ci >= 0 && leanDeg > 5 && (lean[ci].Pos - ground).Normalized.Dot((side - ground).Normalized) > 0,
+                  "take-off to the side: climbs leaning toward it (" + leanDeg.ToString("0") + " deg round), to the clearance");
+            double lowLean = ci < 0 ? 0 : LowestOver(lean[ci].Pos, lean.GetRange(ci + 1, lean.Count - ci - 1), side, earth);
+            Check(lowLean >= R + 80e3 && lowLean < R + 116e3, "take-off to the side: then skims the clearance (" + Km(lowLean - R) + " up)");
+        }
+        // a known gravity well: worlds are gone round about 5 km outside it, not by the clearance setting
+        {
+            double wasWell = earth.Well;
+            earth.Well = R * 1.6;
+            var across = DetourPlanner.Plan(earth.Pos + new V3(-900e3, 0, 0), earth.Pos + new V3(900e3, 0, 0), "X");
+            double lowW = LowestOver(earth.Pos + new V3(-900e3, 0, 0), across, earth.Pos + new V3(900e3, 0, 0), earth);
+            double corner = 0; foreach (var wp in across) corner = Math.Max(corner, V3.Distance(wp.Pos, earth.Pos));
+            Check(across.Count >= 1 && lowW >= earth.Well && lowW <= earth.Well + DetourPlanner.WellGap * 1.2,
+                  "gravity well: the route stays outside it (" + Km(lowW - earth.Well) + " outside)");
+            Check(across.Count >= 1 && corner < earth.Well + DetourPlanner.WellGap * 2, "gravity well: corners a few km outside it (" + Km(corner - earth.Well) + ")");
+            var wellUp = DetourPlanner.Plan(ground, farSide, "F");
+            Check(wellUp.Count >= 2 && Math.Abs(V3.Distance(wellUp[0].Pos, earth.Pos) - (earth.Well + DetourPlanner.WellGap)) < 1, "gravity well: take-off climbs to 5 km outside it");
+            earth.Well = wasWell;
+        }
+        // the ship's thrust against the world's gravity (1.5x margin): as low as 3 km over the hills when it holds,
+        // higher where it doesn't, outside the well when it can't hold anywhere in it; above any atmosphere
+        try
+        {
+            earth.Well = R * 1.6; earth.Hills = R * 1.04; earth.SurfaceG = 9.81; earth.Falloff = 7;
+            var ea = earth.Pos + new V3(-900e3, 0, 0); var eb = earth.Pos + new V3(900e3, 0, 0);
+            double Lowest(double accel) { DetourPlanner.ShipAccel = accel; var wp = DetourPlanner.Plan(ea, eb, "X"); return wp.Count == 0 ? 0 : LowestOver(ea, wp, eb, earth); }
+            double strong = Lowest(20), want = earth.Hills + DetourPlanner.SurfaceGap;
+            Check(strong >= want - 1 && strong < want + 3e3, "thrust holds (20 m/s² vs 1 g): round Earth 3 km over its hills (" + Km(strong - earth.Hills) + " over them)");
+            double weakR = DetourPlanner.SafeRadius(earth, 5), weak = Lowest(5);
+            Check(Near(weakR, earth.Hills * Math.Pow(1.5 * 9.81 / 5, 1 / 7.0), 1) && weak >= weakR - 1 && weak < weakR + 3e3
+                  && DetourPlanner.GravityAt(earth, weakR) * DetourPlanner.GravityMargin <= 5 + 1e-6,
+                  "weak thrust (5 m/s²): only as low as 1.5x the pull is held (" + Km(weak - R) + " up, " + (DetourPlanner.GravityAt(earth, weak) / 9.81).ToString("0.00") + " g)");
+            double none = Lowest(0.5);
+            Check(none >= earth.Well && none <= earth.Well + DetourPlanner.WellGap * 1.2, "too weak to hold anywhere in the well: outside it (" + Km(none - earth.Well) + " outside)");
+            double unknown = Lowest(0);
+            Check(unknown >= earth.Well, "thrust not known: outside the well");
+            DetourPlanner.ShipAccel = 20;
+            var tUp = DetourPlanner.Plan(ground, farSide, "F");
+            Check(tUp.Count >= 1 && Near(V3.Distance(tUp[0].Pos, earth.Pos), want, 1), "thrust holds: take-off climbs to 3 km over the hills (" + Km(V3.Distance(tUp[0].Pos, earth.Pos) - R) + " up)");
+            var tDown = DetourPlanner.Plan(lowStart, earth.Pos + new V3(101e3, 0, 0), "B");
+            Check(tDown.Count >= 1 && Near(V3.Distance(tDown[tDown.Count - 1].Pos, earth.Pos), want, 1), "thrust holds: landing comes down from 3 km over the hills");
+            var gStop = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), earth.Pos, 100e3, out var gWhy);
+            Check(gWhy == "well" && Near(V3.Distance(gStop, earth.Pos), earth.Well + RouteExport.WellMargin, 1), "pick Earth, thrust holds: still stops just outside its well (" + gWhy + ")");
+            // a base on Earth's ground: straight above it, 3 km up when the thrust holds there
+            var eBase = earth.Pos + new V3(0, R * 1.01, 0);
+            var bStop = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), eBase, 100e3, out var bWhy);
+            Check(bWhy == "surface" && Near(V3.Distance(bStop, eBase), DetourPlanner.SurfaceGap, 1) && (bStop - eBase).Normalized.Dot((eBase - earth.Pos).Normalized) > 0.9999,
+                  "base on Earth, thrust holds: stops 3 km straight above it (" + Km(V3.Distance(bStop, eBase)) + ")");
+            var oStop = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), eBase, 100e3, out _, 7000);
+            Check(Near(V3.Distance(oStop, eBase), 7000, 1), "base on Earth, offset 7 km: stops 7 km above it");
+            var o2Stop = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), eBase, 100e3, out _, 500);
+            Check(Near(V3.Distance(o2Stop, eBase), DetourPlanner.SurfaceGap, 1), "base on Earth, offset 0.5 km: still 3 km above it");
+            DetourPlanner.ShipAccel = 5;
+            var wkStop = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), eBase, 100e3, out _);
+            Check(Near(V3.Distance(wkStop, earth.Pos), earth.Hills * Math.Pow(1.5 * 9.81 / 5, 1 / 7.0), 1), "base on Earth, weak thrust: stops where 1.5x the pull is held (" + Km(V3.Distance(wkStop, eBase)) + " up)");
+            DetourPlanner.ShipAccel = 20;
+            DetourPlanner.ShipAccel = 0.5;
+            var wStop2 = RouteExport.StopNear(earth.Pos + new V3(0, 0, 2e6), earth.Pos, 100e3, out _);
+            Check(V3.Distance(wStop2, earth.Pos) > earth.Well, "pick Earth, too weak: stops outside the well");
+            Check(DetourPlanner.HoldsAtSurface(earth, 14.8) && !DetourPlanner.HoldsAtSurface(earth, 14.6) && !DetourPlanner.HoldsAtSurface(earth, 0), "holds at the surface: 1.5 g of thrust for 1 g");
+            // an atmosphere: kept above it, whatever the thrust
+            earth.Atmosphere = R * 1.3;
+            double atmo = Lowest(20);
+            Check(atmo >= earth.Atmosphere + DetourPlanner.SurfaceGap - 1 && atmo < earth.Atmosphere + 6e3, "atmosphere: route stays above it (" + Km(atmo - earth.Atmosphere) + " over its top)");
+            DetourPlanner.ShipAccel = 20;
+            var aUp = DetourPlanner.Plan(ground, farSide, "F");
+            Check(aUp.Count >= 1 && Near(V3.Distance(aUp[0].Pos, earth.Pos), earth.Atmosphere + DetourPlanner.SurfaceGap, 1), "atmosphere: take-off climbs out of it first");
+            earth.Atmosphere = R * 1.7; // past the well: outside the well, and the atmosphere's top is the limit still
+            double thick = Lowest(20);
+            Check(thick >= earth.Atmosphere + DetourPlanner.SurfaceGap - 1, "atmosphere past the well: still above the atmosphere (" + Km(thick - R) + " up)");
+        }
+        finally { earth.Well = 0; earth.Hills = earth.SurfaceG = earth.Falloff = earth.Atmosphere = 0; DetourPlanner.ShipAccel = 0; }
+        // a hop by a small moon's ground (the Rhea crash): from low over it to 3 km above a station 50 degrees round.
+        // The straight line stayed over its radius but went through a hill (hills reach 6% up): now over the hills
+        {
+            var rhea = SystemData.FindWorld("Rhea"); double rr = rhea.Radius;
+            V3 Dir(double deg) => new V3(Math.Cos(deg * Math.PI / 180), 0, Math.Sin(deg * Math.PI / 180));
+            var lowShip = rhea.Pos + Dir(0) * (rr * 1.04); var aboveStn = rhea.Pos + Dir(50) * (rr * 1.28);
+            var hop = DetourPlanner.Plan(lowShip, aboveStn, "Rhea Station");
+            Check(hop.Count >= 1 && V3.Distance(hop[0].Pos, rhea.Pos + Dir(0) * DetourPlanner.HillTop(rhea)) < 1, "moon hop: climbs straight up over the hills first (" + hop.Count + " points)");
+            Check(hop.Count >= 1 && LowestOver(hop[0].Pos, hop.GetRange(1, hop.Count - 1), aboveStn, rhea) >= DetourPlanner.Top(rhea) - 1,
+                  "moon hop: then stays over the hills (" + Km(LowestOver(hop[0].Pos, hop.GetRange(1, hop.Count - 1), aboveStn, rhea) - rr) + " up, hills to " + Km(rr * 0.06) + ")");
+            // two bases on its ground, opposite sides: over it, not through it
+            var b1 = rhea.Pos + Dir(0) * (rr * 1.01); var b2 = rhea.Pos + Dir(180) * (rr * 1.01);
+            var across = DetourPlanner.Plan(b1, b2, "B2");
+            Check(across.Count >= 3 && LowestOver(across[0].Pos, across.GetRange(1, across.Count - 2), across[across.Count - 1].Pos, rhea) >= DetourPlanner.Top(rhea) - 1
+                  && V3.Distance(across[across.Count - 1].Pos, rhea.Pos + Dir(180) * DetourPlanner.HillTop(rhea)) < 1,
+                  "base to base across a moon: up, over the hills, down from above (" + across.Count + " points)");
+            // Rhea Station is a ground facility: routes to it stop 8 km straight above it, and it gets no orbit line
+            var rs = Array.Find(SystemData.Stations, x => x.Name == "Rhea Station");
+            var rsStop = RouteExport.StopNear(rhea.Pos + Dir(90) * 60e3, rs.Pos, 100e3, out var rsWhy);
+            Check(rs.Above == 8000 && rsWhy == "station" && Near(V3.Distance(rsStop, rs.Pos), 8000, 1) && (rsStop - rs.Pos).Normalized.Dot((rs.Pos - rhea.Pos).Normalized) > 0.9999,
+                  "Rhea Station: stops 8 km straight above it (" + Km(V3.Distance(rsStop, rs.Pos)) + ")");
+            // every station within 5% of a world's radius from its centre (on its ground) is one; the rest aren't
+            foreach (var st in SystemData.Stations)
+            {
+                bool onGround = st.Name == "Hygeia Station" || Array.Exists(SystemData.Worlds, w => !w.IsStar && V3.Distance(st.Pos, w.Pos) > w.Radius * 0.9 && V3.Distance(st.Pos, w.Pos) < w.Radius * 1.05); // Hygeia's is inside it: treated as on it for now
+                var under = RouteExport.WorldUnder(st.Pos, 100e3);
+                var gStop = RouteExport.StopNear(st.Pos + new V3(0, 0, 500e3), st.Pos, 100e3, out _);
+                // (on an asteroid: no gravity, so 3 km above it; elsewhere, gravity not read here: its own 8 km)
+                double wantUp = under != null && under.IsAsteroid && V3.Distance(st.Pos, under.Pos) >= under.Radius * 0.99 ? DetourPlanner.SurfaceGap : 8000; // (buried, like Hygeia's: 8 km)
+                Check(onGround == (st.Above == 8000) && (!onGround || under != null && Near(V3.Distance(gStop, st.Pos), wantUp, 1) && (under.IsAsteroid || V3.Distance(gStop, under.Pos) > DetourPlanner.Top(under))),
+                      st.Name + ": " + (onGround ? "ground facility, stops " + Km(wantUp) + " straight above (on " + under?.Name + ")" : "ordinary station"));
+            }
+            // Hygeia Station sits inside Hygeia (under its listed radius): from the far side, round over it, down from above
+            {
+                var hy = SystemData.FindWorld("Hygeia"); var hs = Array.Find(SystemData.Stations, x => x.Name == "Hygeia Station");
+                var hup = (hs.Pos - hy.Pos).Normalized; var hFar = hy.Pos - hup * 60e3;
+                var hw = DetourPlanner.Plan(hFar, hs.Pos, hs.Name);
+                Check(hw.Count >= 2 && LowestOver(hFar, hw.GetRange(0, hw.Count - 1), hw[hw.Count - 1].Pos, hy) >= DetourPlanner.Top(hy) - 1 && (hw[hw.Count - 1].Pos - hy.Pos).Normalized.Dot(hup) > 0.999,
+                      "Hygeia Station from the hFar side: round the asteroid, then down from straight above (" + hw.Count + " points)");
+            }
+            // well clear of it: nothing added
+            Check(DetourPlanner.Plan(rhea.Pos + Dir(0) * (rr * 1.5), rhea.Pos + Dir(30) * (rr * 1.5), "C").Count == 0, "moon hop high over it: no points");
+        }
         // landing on the far side: round, then down from above it
         var base2 = earth.Pos + new V3(101e3, 0, 0);
         var down = DetourPlanner.Plan(lowStart, base2, "B");
@@ -230,8 +426,32 @@ internal static class Program
         Check(LowestOver(lowStart, down.GetRange(0, down.Count - 1), down[down.Count - 1].Pos, earth) >= R + 40e3 - 1, "landing: round, clear, before coming down");
         // picking Earth itself from low orbit: stop above you, never at the centre
         var stop = RouteExport.StopNear(lowStart, earth.Pos, 100e3, out var why);
-        Check(why == "world" && Math.Abs(V3.Distance(stop, earth.Pos) - 150e3) < 1 && stop.X < earth.Pos.X, "pick Earth from low orbit: stop where you are, not its centre");
+        Check(why == "world" && Near(V3.Distance(stop, earth.Pos), R + 100e3, 1) && stop.X < earth.Pos.X, "pick Earth, gravity not read: the fallback height on your side, not its centre");
         Check(DetourPlanner.Plan(lowStart, earth.Pos, "Earth").Count == 0, "pick Earth: no detours round Earth itself");
+        // with its gravity well known: picking Earth itself stops outside the well, from far off or from inside it
+        earth.Well = 250e3; // past the 100 km clearance stop (the guard only ever moves a stop out)
+        try
+        {
+            var farStart = earth.Pos + new V3(0, 0, 2e6);
+            var wStop = RouteExport.StopNear(farStart, earth.Pos, 100e3, out var wWhy);
+            Check(wWhy == "well" && Near(V3.Distance(wStop, earth.Pos), 252e3, 1) && wStop.Z > earth.Pos.Z, "pick Earth: stops 2 km outside its gravity well, on your side");
+            var inStop = RouteExport.StopNear(lowStart, earth.Pos, 100e3, out var inWhy);
+            Check(inWhy == "well" && Near(V3.Distance(inStop, earth.Pos), 252e3, 1), "pick Earth from inside its well: climbs out of it");
+            var spot = earth.Pos + new V3(0, 101e3, 0);
+            var sStop = RouteExport.StopNear(farStart, spot, 100e3, out var sWhy);
+            Check(sWhy == "surface" && V3.Distance(sStop, earth.Pos) > earth.Well, "a point on Earth, thrust not known: straight above it, outside the well");
+            // no well worth the name (too weak to reach past the hills): 3 km over them
+            earth.Well = R * 1.05;
+            var nStop = RouteExport.StopNear(farStart, earth.Pos, 100e3, out var nWhy);
+            Check(nWhy == "world" && Near(V3.Distance(nStop, earth.Pos), DetourPlanner.Top(earth) + DetourPlanner.SurfaceGap, 1), "pick a world with no well past its hills: 3 km over them");
+            var nWp = DetourPlanner.Plan(earth.Pos + new V3(-900e3, 0, 0), earth.Pos + new V3(900e3, 0, 0), "X");
+            double nLow = nWp.Count == 0 ? 0 : LowestOver(earth.Pos + new V3(-900e3, 0, 0), nWp, earth.Pos + new V3(900e3, 0, 0), earth);
+            Check(nLow >= DetourPlanner.Top(earth) + DetourPlanner.SurfaceGap * 0.79 && nLow < DetourPlanner.Top(earth) + 6e3, "no well: round it 3 km over the hills (" + Km(nLow - DetourPlanner.Top(earth)) + " over them)");
+            earth.Well = 250e3;
+            var ePath = RoutePath.Make("Earth", farStart, earth.Pos, V3.Zero, 20, 50e3, new List<Waypoint>(), 0, 100e3);
+            Check(Near(V3.Distance(RouteExport.StopPoint(ePath, out _), earth.Pos), 252e3, 1), "the exported route to Earth stops outside the well");
+        }
+        finally { earth.Well = 0; }
 
         // your own grids and the known stations: gone round outside their sphere, except the one you leave or fly to
         var o1 = earth.Pos + new V3(0, 0, 3e6);                     // well clear of Earth
@@ -308,6 +528,40 @@ internal static class Program
         t.Update(t.Waypoints[0].Name, t.Waypoints[0].Pos, true, t.Waypoints[0].Pos, V3.Zero, 10, 50000);
         Check(t.Next == 1 && t.Path.Legs.Count == n, "reaching a detour moves to the next " + t.Next);
         Check(t.NextPick == t.Waypoints[1].Name, "next pick is detour 2");
+        // the route sent to the PB says, per point, which detour it's on the way to; the PB's progress moves the plan on
+        {
+            var at = new RouteTracker();
+            at.Update("Far side", b, true, a, V3.Zero, 10, 50000);
+            int nw = at.Waypoints.Count;
+            string text = RouteExport.Build(at.Path, 1, out var marks, "engage");
+            int lines = 0; foreach (var l in text.Split('\n')) if (l.StartsWith("wp=")) lines++;
+            bool order = true; for (int i = 1; i < marks.Count; i++) order &= marks[i] >= marks[i - 1];
+            int firstD = text.Split('\n').Where(l => l.StartsWith("wp=")).ToList().FindIndex(l => l.Contains(",detour,"));
+            Check(marks.Count == lines && order && marks[marks.Count - 1] == nw && firstD >= 0 && marks[firstD] == 0,
+                "export marks: one per point sent, in order, the detours' own index, the stop after all of them (" + string.Join(",", marks) + ")");
+            int r0 = at.Revision;
+            Check(at.PassedTo(2) && at.Next == 2 && at.Revision == r0 && !at.PassedTo(1) && at.Next == 2 && !at.PassedTo(nw + 1),
+                "PB progress: the plan moves on to where the PB is (never back, no re-send)");
+            // flown by fast without coming near: the next update still holds the PB's progress
+            at.Update("Far side", b, true, a + new V3(0, 1e6, 0), V3.Zero, 10, 50000);
+            Check(at.Next == 2 && RouteExport.Build(at.Path, 2, out var m2, "update").Split('\n').Count(l => l.Contains(",detour,")) == nw - 2,
+                "PB progress: an update sends only the points still ahead (no flying back to detour 1)");
+        }
+        // removing a detour: straight past that world, also after a re-plan; Load puts it back
+        {
+            var d = new RouteTracker();
+            d.Update("Far side", b, true, a, V3.Zero, 10, 50000);
+            var saved = d.Save();
+            string w = d.RemoveDetour(0);
+            Check(w == "Earth" && d.Waypoints.Count == 0 && d.Skipped.Contains("Earth"), "remove detour: every detour round Earth goes (" + w + ", " + d.Waypoints.Count + " left)");
+            d.Replan(a);
+            Check(d.Waypoints.Count == 0, "remove detour: stays gone after a re-plan");
+            d.Load(saved); d.Replan(a);
+            Check(d.Waypoints.Count >= 2 && d.Skipped.Count == 0, "remove detour: undone by loading the saved plan");
+            d.RemoveDetour(0); d.Update("Elsewhere", earth + new V3(0, 900e3, 0), true, a, V3.Zero, 10, 50000);
+            Check(d.Skipped.Count == 0, "remove detour: a new destination brings detours back");
+            Check(d.RemoveDetour(99) == null, "remove detour: out of range is nothing");
+        }
         // a new destination re-plans
         t.Update("Elsewhere", earth + new V3(0, 900e3, 0), true, a, V3.Zero, 10, 50000);
         Check(t.Revision > rev && t.Next == 0, "new destination re-plans");
@@ -316,7 +570,9 @@ internal static class Program
         off.Update("Far side", b, true, a, V3.Zero, 10, 50000);
         Check(off.Waypoints.Count == 0 && off.Path.Legs.Count == 1 && off.Path.First.Hazards.Count > 0, "avoid off: straight, hazard shown");
         t.Update(null, V3.Zero, true, a, V3.Zero, 10, 50000);
-        Check(t.Path == null && t.Waypoints.Count == 0, "no pick: no route");
+        Check(t.Path != null && t.TargetName == "Elsewhere", "no pick: the route stays until cleared");
+        t.Cancel(null, V3.Zero); t.Update(null, V3.Zero, true, a, V3.Zero, 10, 50000);
+        Check(t.Path == null && t.Waypoints.Count == 0, "cleared: no route");
     }
 
     private static void Export()
@@ -353,7 +609,7 @@ internal static class Program
         var sp = RouteExport.StopPoint(ps, out why);
         Check(why == "station" && Near(V3.Distance(sp, tycho), RouteExport.StationStandoff, 1) && sp.X > tycho.X, "station stop 3 km short, on the near side");
         // a station near or on a world: stop above it (away from the world), round to it if you come from the world's side
-        var low = Array.Find(SystemData.Stations, x => RouteExport.WorldUnder(x.Pos, 100e3) != null);
+        var low = Array.Find(SystemData.Stations, x => x.Above == 0 && RouteExport.WorldUnder(x.Pos, 100e3) != null);
         Check(low != null, "a station sits near a world (" + (low?.Name ?? "none") + ")");
         if (low != null)
         {
@@ -376,7 +632,18 @@ internal static class Program
         Check(why == "world" && Near(V3.Distance(sp, mars.Pos), mars.Radius + 100e3, 1) && sp.Z > mars.Pos.Z, "world stop at the clearance, facing the approach");
         var open = new V3(3e6, 2e6, 1e6);
         var po = RoutePath.Make("Open", open + new V3(1e6, 0, 0), open, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3);
-        Check(V3.Distance(RouteExport.StopPoint(po, out why), open) < 0.01 && why == "point", "open space stops on the point");
+        double keepOffset = RouteExport.Offset;
+        try
+        {
+            RouteExport.Offset = 0;
+            var op = RouteExport.StopPoint(po, out why);
+            Check(Near(V3.Distance(op, open), RouteExport.MinOffset, 1) && why == "offset", "offset never under 0.5 km");
+            RouteExport.Offset = 4000;
+            op = RouteExport.StopPoint(po, out why);
+            Check(Near(V3.Distance(op, open), 4000, 1) && op.X > open.X && why == "offset", "open space: stops the offset short, on your side");
+            Check(V3.Distance(RouteExport.StopNear(open + new V3(1e6, 0, 0), open, 100e3, out why), open) < 0.01 && why == "point", "a waypoint on the way: on the point");
+        }
+        finally { RouteExport.Offset = keepOffset; }
 
         // engage with an asteroid dodge in front, stop order, PB status section
         var pass = new V3(1, 2, 3);
@@ -388,6 +655,11 @@ internal static class Program
         Check(st != null && st.Flying && st.Ack == 8 && st.Wp == 2 && st.Count == 3 && Near(st.Dist, 123456.5, 1e-6) && st.Msg == "Flying to Detour 2"
               && RouteExport.Parse(withStatus, out r) && r.Id == 7, "status section round-trips beside the route");
         Check(RouteExport.ParseStatus(merged) == null, "no status before the PB writes one");
+        {
+            Check(RouteExport.Parse(RouteExport.BuildCommand(11, "brake"), out var br) && br.Command == "brake" && br.Id == 11, "full stop order parses");
+            var bst = RouteExport.ParseStatus(RouteExport.Merge(merged, "[SDX2 Autopilot]\nstate=braking\nack=11\nspeed=2400\ndist=120000\neta=95\nmsg=Full stop from the map\n", RouteExport.StatusHeader));
+            Check(bst != null && bst.Braking && !bst.Flying && Near(bst.Speed, 2400, 1e-6), "full stop: the PB's braking status reads back");
+        }
 
         // asteroid dodge: a rock on the line gets a pass point that keeps both straight lines clear
         var a = new V3(0, 0, 0); var b = new V3(1000e3, 0, 0); var rock = new V3(400e3, 1000, 0);
@@ -576,13 +848,13 @@ internal static class Program
         using (var g = Graphics.FromImage(bmp))
         {
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
-            var st = scene.Picks.Find(q => q.Kind == "Trade station" && q.Name == "Ganymede Station");
+            var st = scene.Picks.Find(q => q.Name == "Ganymede Station" && (q.Kind == "Trade station" || q.Kind == "Ground facility"));
             var pl = scene.Picks.Find(q => q.Name == "Jupiter");
             if (st.Name == null || pl.Name == null) { Check(false, "hover: station and Jupiter on screen"); return; }
             // put the mouse on the station but inside Jupiter's disc if they overlap; else just on the station
             scene.MouseX = st.X; scene.MouseY = st.Y;
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
-            Check(scene.Hovered is Pick h && h.Kind == "Trade station", "hover: a station on top of a planet is picked first");
+            Check(scene.Hovered is Pick h && h.Name == "Ganymede Station", "hover: a station on top of a planet is picked first");
             scene.MouseX = pl.X; scene.MouseY = pl.Y;
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
             Check(scene.Hovered is Pick h2 && h2.Name == "Jupiter", "hover: the planet's centre still picks the planet");
@@ -592,10 +864,31 @@ internal static class Program
     private static void Themes()
     {
         Check(MapTheme.Find("tachi") == MapTheme.Tachi && MapTheme.Find("Solar HUD") == MapTheme.Tachi && MapTheme.Find("nonsense") == MapTheme.Classic, "themes: found by name, unknown = Classic");
-        Check(MapTheme.Classic.Next() == MapTheme.Tachi && MapTheme.Tachi.Next() == MapTheme.Unn && MapTheme.Unn.Next() == MapTheme.Opa && MapTheme.Opa.Next() == MapTheme.Classic, "themes: Next cycles through all four");
+        {
+            var leg = RoutePath.Make("T", V3.Zero, new V3(4e9, 0, 0), V3.Zero, 30, 50000, null, 0).First;
+            bool inv = true;
+            foreach (double f in new[] { 0.05, 0.3, 0.5, 0.8, 0.99 }) { double t = leg.Eta * f; inv &= Math.Abs(leg.TimeAt(leg.AlongAt(t)) - t) < 1; }
+            Check(inv, "route: TimeAt is the inverse of AlongAt (for the pinned T+ marks)");
+        }
+        {
+            // water: Canterbury 0.87 MW / (efficiency 10 x water 0.00156) = 55.8 L/s at 100 %, burning and braking only
+            double rate = 0.87 / (10 * 0.00156);
+            Check(Math.Abs(rate - 55.77) < 0.05, "fuel: Canterbury burns 55.8 L/s (the SDX2 sheet)");
+            var fp = RoutePath.Make("T", V3.Zero, new V3(4e9, 0, 0), V3.Zero, 30, 50000, null, 0);
+            var fl = fp.First;
+            double full = RouteFuel.Litres(fp, 30, rate), half = RouteFuel.Litres(fp, 60, rate);
+            Check(Math.Abs(full - (fl.BurnTime + fl.BrakeTime) * rate) < 1 && fl.CoastTime > 0, "fuel: litres = burn + brake time x rate (none on the coast)");
+            Check(Math.Abs(half - full / 2) < 1, "fuel: half the thrust share burns half the water");
+            Check(RouteFuel.Low(1000, 10000, 950) && !RouteFuel.Low(5000, 10000, 1000) && !RouteFuel.Low(1000, 0, 500) && RouteFuel.Low(100, 10000, 500),
+                "fuel: warns below 10 % left (and when it runs dry), not without tanks");
+            Check(RouteFuel.Volume(512) == "512 L" && RouteFuel.Volume(12_300) == "12.3 kL" && RouteFuel.Volume(2_500_000) == "2.50 ML", "fuel: volume text");
+        }
+        Check(MapTheme.Classic.Next() == MapTheme.Tachi && MapTheme.Tachi.Next() == MapTheme.Unn && MapTheme.Unn.Next() == MapTheme.Opa && MapTheme.Opa.Next() == MapTheme.Protogen && MapTheme.Protogen.Next() == MapTheme.Belter && MapTheme.Belter.Next() == MapTheme.Classic, "themes: Next cycles through all six");
+        Check(MapTheme.Find("belter") == MapTheme.Belter && MapTheme.Match("green") == MapTheme.Belter && MapTheme.Belter.Style == ThemeStyle.Contact && !MapTheme.Belter.Hud, "themes: Belter found by name and colour, the contact chart style");
+        Check(MapTheme.Find("protogen") == MapTheme.Protogen && MapTheme.Match("cyan") == MapTheme.Protogen && MapTheme.Protogen.Style == ThemeStyle.Protogen && !MapTheme.Protogen.Hud, "themes: Protogen found by name and colour, its own style");
         Check(MapTheme.Find("unn") == MapTheme.Unn && MapTheme.Find("OPA") == MapTheme.Opa, "themes: UNN and OPA found by name");
         Check(MapTheme.Match("mcrn") == MapTheme.Tachi && MapTheme.Match("navy") == MapTheme.Unn && MapTheme.Match("un") == MapTheme.Unn
-            && MapTheme.Match("belter") == MapTheme.Opa && MapTheme.Match("classic") == MapTheme.Classic && MapTheme.Match("purple") == null, "themes: faction words pick a theme");
+            && MapTheme.Match("belt") == MapTheme.Opa && MapTheme.Match("ceres") == MapTheme.Opa && MapTheme.Match("classic") == MapTheme.Classic && MapTheme.Match("purple") == null, "themes: faction words pick a theme");
         Check(MapTheme.Unn.Style == ThemeStyle.Naval && MapTheme.Opa.Style == ThemeStyle.Belter && MapTheme.Tachi.Hud && !MapTheme.Unn.Hud, "themes: each has its own style");
         var dir = Path.Combine(Path.GetTempPath(), "sdx2map-theme-test.ini");
         var st = new MapSettings { Theme = "Tachi" }; st.Save(dir);
@@ -604,6 +897,8 @@ internal static class Program
         var pst = new MapSettings { Pip = true, PipCorner = "BL", PipSize = 1.4f }; pst.Save(dir);
         var pl = MapSettings.Load(dir);
         Check(pl.Pip && pl.PipCorner == "BL" && Math.Abs(pl.PipSize - 1.4f) < 1e-4, "pip: saved and loaded");
+        { var hst = new MapSettings { HudX = 0.3f, HudY = 0.5f, HudSize = 1.4f }; hst.Save(dir); var hl = MapSettings.Load(dir);
+          Check(Math.Abs(hl.HudX - 0.3f) < 1e-4 && Math.Abs(hl.HudY - 0.5f) < 1e-4 && Math.Abs(hl.HudSize - 1.4f) < 1e-4, "autopilot line: place and size saved and loaded"); }
         Check(MapScene.GridStepFor(MapScene.ShipViewDistance) == 2e6, "no route: the view round your ship has a 2000 km grid");
         foreach (var g in MapSettings.GridChoicesKm)
         {
@@ -707,6 +1002,16 @@ internal static class Program
         var cv = RouteCurve.Build(a, new[] { bend }, b);
         double near = double.MaxValue; foreach (var q in cv) near = Math.Min(near, V3.Distance(q, bend));
         Check(V3.Distance(cv[0], a) < 1 && V3.Distance(cv[cv.Count - 1], b) < 1 && near < 1, "curve: starts, ends and passes through the bend (" + near.ToString("0") + " m)");
+
+        // a detour close to the start (Sol's on the way, the ship a fifth of the way there): the curve goes through it
+        // without swinging out behind the start first, so it isn't held to a U-turn's crawl
+        var far = O + new V3(18000e3, 0, 0); var side = O + new V3(3600e3, 900e3, 0);
+        var dc = RouteCurve.Build(a, new[] { side }, far);
+        double back = 0; foreach (var q in dc) back = Math.Min(back, (q - a).Dot(new V3(1, 0, 0)));
+        double nearSide = double.MaxValue; foreach (var q in dc) nearSide = Math.Min(nearSide, V3.Distance(q, side));
+        var dp = RoutePlan.Make("D", a, far, V3.Zero, 107, 50000, RoutePlan.DefaultClearance, 0, new[] { side });
+        Check(back > -50e3 && nearSide < 1 && dp.CornerSpeed > 20000 && dp.Eta < 3600,
+            "curve: a detour near the start doesn't swing back (" + (back / 1000).ToString("0") + " km behind, corner " + (dp.CornerSpeed / 1000).ToString("0.0") + " km/s, ETA " + (dp.Eta / 60).ToString("0") + " min)");
 
         // a bent leg: longer than the chord, planned along the arc, no faster than its corner speed
         var r = RoutePlan.Make("B", a, b, V3.Zero, 10, 50000, RoutePlan.DefaultClearance, 0, new[] { bend });
@@ -893,8 +1198,135 @@ internal static class Program
         Check(PoiMatch.Rank("Tycho Station", "Belt.Tycho.STN", "Belt.Tycho.STN", 200) == 0, "poi: station by its GPS name");
         Check(PoiMatch.Rank("Ganymede Station", null, "JU.Ganymede.STN", 2e4) == 2, "poi: station by key word");
         Check(PoiMatch.Rank("Greek.Achilles.STN", null, "Greek.Achilles.STN", 50) == 0, "poi: exact GPS name");
+        Check(PoiMatch.Rank("Enceladus Station", null, "Enceladus", 5190) == PoiMatch.NoMatch
+              && PoiMatch.Rank("Enceladus Station", null, "Enceladus-1234567890d5000", 5190) == PoiMatch.NoMatch
+              && PoiMatch.Rank("Enceladus Station", null, "SA.Enceladus.STN", 30) == 2, "poi: a ground facility doesn't match its moon");
         Check(PoiMatch.Rank("Vesta Station", "Belt.Vesta.STN", "Belt.Tycho.STN", 2e4) == PoiMatch.NoMatch, "poi: another Belt station isn't a match (belt is a generic word)");
         Check(PoiMatch.Rank("Somewhere", null, "Unrelated", 800) == 3 && PoiMatch.Rank("Mars", null, "Mars", 2e6) == PoiMatch.NoMatch, "poi: near anything within 5 km; names only within 1000 km");
+    }
+
+    /// <summary>The second screen's touch gestures, in the map's mouse terms.</summary>
+    private static void Touch()
+    {
+        var g = new TouchGestures();
+        g.Down(1, 100, 100, 0);
+        var f = g.Step(0.01);
+        Check(f.X == 100 && !f.Left && !f.NewLeft, "touch: the first frame only says where the finger is");
+        f = g.Step(0.04);
+        Check(f.Left && f.NewLeft && !f.Shift, "touch: then it presses");
+        g.Up(1, 102, 101);
+        f = g.Step(0.07);
+        Check(f.LeftReleased && !f.Shift && !f.Left, "touch: a tap lets go as a plain click (focus)");
+        Check(!g.Touching, "touch: idle after the tap");
+
+        g.Down(2, 50, 50, 1); g.Up(2, 50, 50);
+        var a = g.Step(1.01); var b = g.Step(1.04); var c = g.Step(1.07);
+        Check(!a.NewLeft && b.NewLeft && c.LeftReleased, "touch: a tap within one frame still presses, then lets go");
+
+        g.Down(3, 200, 200, 2); g.Step(2.01); g.Step(2.04);
+        f = g.Step(2.7);
+        Check(f.HoldStarted && f.Left, "touch: held still, it says so");
+        g.Up(3, 201, 200);
+        f = g.Step(2.75);
+        Check(f.LeftReleased && f.Shift, "touch: let go after a hold: Shift+click (set destination)");
+
+        g.Down(4, 200, 200, 3); g.Step(3.01); g.Step(3.04);
+        g.Move(4, 260, 200); f = g.Step(3.07);
+        Check(f.Left && f.X == 260, "touch: a drag holds the press");
+        g.Up(4, 260, 200); f = g.Step(3.8);
+        Check(f.LeftReleased && !f.Shift, "touch: a drag never sets the destination");
+
+        g.Mode = TapMode.Destination;
+        g.Down(5, 10, 10, 4); g.Step(4.01); g.Step(4.04); g.Up(5, 10, 10); f = g.Step(4.07);
+        Check(f.LeftReleased && f.Shift, "touch: TAP DESTINATION makes a tap a Shift+click");
+
+        g.Mode = TapMode.Waypoint;
+        g.Down(6, 10, 10, 5); g.Step(5.01); f = g.Step(5.04);
+        Check(f.NewRight && f.Right && f.Shift && !f.Left, "touch: TAP WAYPOINTS presses Shift+right");
+        g.Up(6, 10, 10); f = g.Step(5.07);
+        Check(f.RightReleased && !f.Right, "touch: and lets go of it");
+        g.Mode = TapMode.Focus;
+
+        g.Down(7, 100, 300, 6); g.Step(6.01); g.Step(6.04);
+        g.Down(8, 300, 300, 6.05); f = g.Step(6.07);
+        Check(f.Cancel && g.Pinching && !f.LeftReleased, "touch: a second finger drops the press without a click");
+        g.Move(7, 0, 300); g.Move(8, 400, 300); f = g.Step(6.1);
+        Check(Near(f.Spread, 2, 1e-6) && Near(f.PanX, 0, 1e-6) && Near(f.Twist, 0, 1e-6), "touch: spreading two fingers zooms by their spread " + f.Spread);
+        g.Move(7, 50, 350); g.Move(8, 450, 350); f = g.Step(6.13);
+        Check(Near(f.PanX, 50, 1e-4) && Near(f.PanY, 50, 1e-4) && Near(f.Spread, 1, 1e-6), "touch: moving both pans by their middle");
+        g.Move(8, 50, 750); f = g.Step(6.16);
+        Check(Near(f.Twist, Math.PI / 2, 1e-6), "touch: turning one round the other twists " + f.Twist);
+        g.Up(8, 50, 750); f = g.Step(6.2);
+        Check(!g.Pinching && !f.NewLeft && !f.Left, "touch: one finger left after a pinch does nothing");
+        g.Move(7, 90, 350); f = g.Step(6.23);
+        Check(!f.Left && float.IsNaN(f.X), "touch: still nothing until every finger is up");
+        g.Up(7, 90, 350); g.Step(6.26);
+        g.Down(9, 5, 5, 7); g.Step(7.01); f = g.Step(7.04);
+        Check(f.NewLeft, "touch: a fresh finger presses again");
+    }
+
+    /// <summary>The second screen records the map on the game thread and plays it back in its window: the same picture.</summary>
+    private static void Recorded(string outDir)
+    {
+        var snap = new MapSnapshot { HasShip = true, ShipName = "Rocinante", ShipPos = SystemData.FindWorld("Ceres").Pos + new V3(300e3, 0, 0), ShipVel = new V3(500, 0, 0), MaxAccel = 10 };
+        MapScene Scene()
+        {
+            var sc = new MapScene { Snap = snap, Help = "TOUCH|Drag orbit" + MapScene.Sep + "Pinch zoom" };
+            sc.Cam.Yaw = 0.9; sc.Cam.Pitch = 0.62; sc.Cam.Setup(0, 0, 1280, 800); sc.FrameDefault(true); sc.MouseX = float.NaN;
+            return sc;
+        }
+        using var direct = new Bitmap(1280, 800);
+        using (var g = Graphics.FromImage(direct)) { g.Clear(Color.Black); Scene().Draw(new GdiMapCanvas(g), new Box(0, 0, 1280, 800)); }
+        using var played = new Bitmap(1280, 800);
+        using var mbmp = new Bitmap(1, 1);
+        using var mg = Graphics.FromImage(mbmp);
+        var measure = new GdiMapCanvas(mg);
+        var list = new DrawList { Measure = measure.TextWidth };
+        list.Clear(1280, 800);
+        Scene().Draw(list, new Box(0, 0, 1280, 800));
+        Check(list.Count > 100, "recorded frame has the map in it (" + list.Count + " calls)");
+        using (var g = Graphics.FromImage(played)) { g.Clear(Color.Black); list.Replay(new GdiMapCanvas(g)); }
+        int diff = 0;
+        for (int y = 0; y < 800; y += 2) for (int x = 0; x < 1280; x += 2) if (direct.GetPixel(x, y) != played.GetPixel(x, y)) diff++;
+        Check(diff < 50, "played back frame matches the direct one (" + diff + " pixels differ)");
+        played.Save(Path.Combine(outDir, "second-screen.png"), ImageFormat.Png);
+    }
+
+    /// <summary>Every class's ship icon in every theme, with each theme's trajectory marker (previews/ship-icons.png).</summary>
+    private static void ShipIconSheet(string outDir)
+    {
+        var themes = new[] { MapTheme.Classic, MapTheme.Tachi, MapTheme.Unn, MapTheme.Opa, MapTheme.Protogen, MapTheme.Belter };
+        float rowH = 220, w = 1800;
+        using var bmp = new Bitmap((int)w, (int)(rowH * (themes.Length + 2)));
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var c = new GdiMapCanvas(g);
+        var was = MapTheme.Current;
+        for (int i = 0; i < themes.Length; i++)
+        {
+            MapTheme.Current = themes[i];
+            new MapScene().ShipSheet(c, 0, i * rowH, w, rowH);
+        }
+        // the icons taken from real ships, in two themes
+        MapTheme.Current = MapTheme.Classic; new MapScene().ShipSheet(c, 0, themes.Length * rowH, w, rowH, true);
+        MapTheme.Current = MapTheme.Protogen; new MapScene().ShipSheet(c, 0, (themes.Length + 1) * rowH, w, rowH, true);
+        MapTheme.Current = was;
+        bmp.Save(Path.Combine(outDir, "ship-icons.png"), ImageFormat.Png);
+        foreach (var cls in new[] { "Skiff", "Barge", "Hauler", "Picket", "Corvette", "Frigate", "Cruiser", "Battleship", "Carrier", "Dreadnought", "Outpost", "Installation", "Station Admin" })
+            Check(ShipIcons.For(cls) != null, "ship icon for " + cls);
+        foreach (var cls in new[] { "Skiff", "Barge", "Hauler", "Picket", "Corvette", "Frigate", "Installation" })
+        {
+            var sm = ShipIcons.Sampled(cls);
+            Check(sm != null && sm.Runs.Count > 5 && sm.Details.Length >= 8 && sm.From != null, "real ship icon for " + cls + " (" + sm?.From + ")");
+        }
+        Check(ShipIcons.Pick("Cruiser", true) == ShipIcons.For("Cruiser"), "no real Cruiser sampled: the drawn icon");
+        var sq2 = ShipIcons.FromMask("T", "t", new[] { "##", "##" });
+        Check(sq2.Runs.Count == 2 && sq2.Details.Length == 8, "real ship icon: a 2x2 mask is two runs and a 4-sided outline");
+        Check(ShipIcons.For("") == null && ShipIcons.For("Nonsense") == null, "no class: the plain marker");
+        // the fill rows: a square from -1 to 1 is 2 wide on every row
+        var sq = new (float X, float Y)[] { (-1, -1), (1, -1), (1, 1), (-1, 1) };
+        var row = ShipIcons.Row(sq, 0.3f);
+        Check(row.Count == 2 && Math.Abs(row[0] + 1) < 1e-5 && Math.Abs(row[1] - 1) < 1e-5, "ship icon fill: a row across a square");
     }
 
     private static void Render(string outDir, string sfx)
@@ -906,6 +1338,7 @@ internal static class Program
         {
             HasShip = true, ShipName = "Rocinante", ShipPos = ship, ShipVel = new V3(900, 40, 2600), FnbReady = true, FnbState = "HighSpeed",
             FnbTargetName = "Belt.Tycho.STN", FnbTarget = SystemData.Stations[3].Pos, MaxAccel = 12.5,
+            Water = 400e3, WaterCap = 1e6, WaterRate = 55.8,
         };
         snap.Gps.Add(new MapSnapshot.Marker { Name = "Ice Field", Pos = earth + new V3(500e3, -80e3, 300e3), Color = MapColor.Rgb(0x75C9FF) });
         snap.Gps.Add(new MapSnapshot.Marker { Name = "Old Wreck", Pos = earth + new V3(-200e3, 60e3, 420e3), Color = MapColor.Rgb(0xFFB060) });
@@ -936,6 +1369,53 @@ internal static class Program
             Check(scene.Picks.Exists(p => p.Kind == "F&B destination"), "full map: destination is pickable");
             bmp.Save(Path.Combine(outDir, "full-map" + sfx + ".png"), ImageFormat.Png);
 
+            // the autopilot card sits in the route panel's top slot; the panel key mirrors the whole panel to the right
+            {
+                var left = scene.PanelBox;
+                bool noSlot = scene.ControlsSlot.W <= 0;
+                Check(noSlot, "panel" + sfx + ": no autopilot slot without the card");
+                scene.ControlsHeight = p => AutopilotPanel.MapCardHeight(p, false);
+                var ui = new PanelUi();
+                void Shot(bool right, string name)
+                {
+                    scene.PanelOnRight = right;
+                    g.Clear(Color.FromArgb(30, 34, 40));
+                    var gc = new GdiMapCanvas(g);
+                    scene.Draw(gc, new Box(0, 0, 1920, 1080));
+                    ui.Input(gc, float.NaN, float.NaN, false, false, false);
+                    AutopilotPanel.MapCard(ui, scene.ControlsSlot, scene.PanelPx, "Ceres Station", false, false, true, "1.2 Mm  ETA 2 h 10 min");
+                    bmp.Save(Path.Combine(outDir, name + sfx + ".png"), ImageFormat.Png);
+                }
+                Shot(false, "full-map-card");
+                if (sfx == "")
+                {
+                    // the card while flying (STOP AUTOPILOT / FULL STOP) and while braking to a standstill
+                    foreach (var (engagedNow, brakingNow, name) in new[] { (true, false, "full-map-card-flying"), (false, true, "full-map-card-braking") })
+                    {
+                        g.Clear(Color.FromArgb(30, 34, 40));
+                        var gc = new GdiMapCanvas(g);
+                        scene.PanelOnRight = false;
+                        scene.Draw(gc, new Box(0, 0, 1920, 1080));
+                        ui.Input(gc, float.NaN, float.NaN, false, false, false);
+                        AutopilotPanel.MapCard(ui, scene.ControlsSlot, scene.PanelPx, "Ceres Station", engagedNow, false, true,
+                            brakingNow ? "2.40 km/s  stops in 120 km  dampeners on under 50 m/s" : "Moving the controls also hands the ship back", brakingNow);
+                        bmp.Save(Path.Combine(outDir, name + ".png"), ImageFormat.Png);
+                    }
+                    var probeUi = new PanelUi(); var mc = new MeasureCanvas();
+                    probeUi.Input(mc, float.NaN, float.NaN, false, false, false);
+                    Check(AutopilotPanel.MapCard(probeUi, new Box(0, 0, 300, 200), 14, "X", true, false, true, "h").Equals(default(AutopilotPanel.CardHit)), "card: no click, no action");
+                }
+                var withCard = scene.PanelBox; var slotL = scene.ControlsSlot;
+                Check(slotL.W > 0 && slotL.H > 0, "panel" + sfx + ": the autopilot card has a slot");
+                Check(slotL.X >= withCard.X - 1 && slotL.Right <= withCard.Right + 1 && slotL.Y >= withCard.Y - 1 && slotL.Y < withCard.Y + withCard.H * 0.5f, "panel" + sfx + ": the card's slot is at the top of the panel");
+                Check(Math.Abs(withCard.X - left.X) < 1, "panel" + sfx + ": the card doesn't move the panel sideways");
+                Shot(true, "full-map-panel-right");
+                var right = scene.PanelBox; var slotR = scene.ControlsSlot;
+                Check(Math.Abs((1920 - right.Right) - withCard.X) < 1 && Math.Abs(right.W - withCard.W) < 1, "panel" + sfx + ": on the right it keeps the same gap from the edge");
+                Check(Math.Abs((1920 - slotR.Right) - slotL.X) < 1 && Math.Abs(slotR.Y - slotL.Y) < 1, "panel" + sfx + ": the card's slot is mirrored");
+                scene.PanelOnRight = false; scene.ControlsHeight = null;
+            }
+
             // the same view while Shift+right-dragging a new waypoint 150 km above the route's first leg
             if (sfx == "")
             {
@@ -945,6 +1425,49 @@ internal static class Program
                 scene.Ghost = scene.GhostBase + new V3(0, 150e3, 0);
                 scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
                 bmp.Save(Path.Combine(outDir, "full-map-height-drag.png"), ImageFormat.Png);
+                scene.Ghost = null;
+
+                // the route's water: burn and brake at the thrust used, none on the coast
+                var wl = scene.RouteLinesText().Find(x => x.Text.StartsWith("Water"));
+                double wantL = RouteFuel.Litres(route, snap.MaxAccel, snap.WaterRate);
+                Check(wl.Text != null && wantL > 0 && wl.Text.StartsWith("Water  now 40 % → " + Fmt.Num(RouteFuel.LeftAfter(snap.Water, snap.WaterCap, wantL) * 100, "0") + " % @ ") && wl.Text.EndsWith(", max 100 % thrust"), "fuel: the route panel shows the water it burns (" + wl.Text + ")");
+                snap.Water = wantL * 0.5;
+                Check(scene.RouteLinesText().Find(x => x.Text.StartsWith("Water")).Text.Contains("→ dry before "), "fuel: short of water, it says so");
+                snap.Water = 400e3;
+                // at the route's thrust cap: the same route planned at 60 % thrust and brake
+                var capped = tracker.PathWith(0.6, 0.6, 0, snap.ShipVel, snap.MaxAccel, 50000);
+                double cappedL = RouteFuel.Litres(capped, snap.MaxAccel, snap.WaterRate);
+                Check(capped != null && Near(capped.First.MaxAccel, snap.MaxAccel * 0.6, 1e-6) && cappedL > 0, "fuel: the route planned at its thrust cap (" + RouteFuel.Volume(cappedL) + " at 60 %, " + RouteFuel.Volume(wantL) + " at 100 %)");
+                snap.WaterUse = cappedL; snap.WaterThrust = 0.6;
+                var wl2 = scene.RouteLinesText().Find(x => x.Text.StartsWith("Water")).Text;
+                Check(wl2.Contains("→ " + Fmt.Num(RouteFuel.LeftAfter(snap.Water, snap.WaterCap, cappedL) * 100, "0") + " % @ ") && wl2.EndsWith(", max 60 % thrust"), "fuel: the panel shows the capped estimate and the thrust (" + wl2 + ")");
+                snap.WaterUse = snap.WaterThrust = double.NaN;
+                Check(wl.Text.Contains(" % @ Tycho, max"), "fuel: the destination's short name (" + wl.Text + ")");
+                Check(MapScene.ShortName("Tycho Station") == "Tycho" && MapScene.ShortName("Andromeda Station") == "Andromeda" && MapScene.ShortName("Belt.Tycho.STN") == "Tycho"
+                      && MapScene.ShortName("JU.Ganymede.STN") == "Ganymede" && MapScene.ShortName("Waypoint 1") == "Waypoint 1" && MapScene.ShortName("Station") == "Station", "fuel: short destination names");
+                // gravity: no row without a well; the route going into one, and the ship in one
+                Check(scene.GravityLine() == null && !scene.RouteLinesText().Exists(x => x.Text.StartsWith("GRAVITY")), "gravity: no row with no well");
+                snap.GravityEntry = route.Final.Target; snap.GravityEntryName = "Mars"; snap.GravityAlong = 1.2e6;
+                Check(scene.RouteLinesText().Exists(x => x.Text == "GRAVITY  route enters Mars's well in " + Fmt.Dist(1.2e6)), "gravity: the route enters a well (" + scene.GravityLine() + ")");
+                snap.GravityEntry = null; snap.InGravity = true; snap.GravityName = "Earth"; snap.GravityG = 0.42;
+                Check(scene.GravityLine() == "GRAVITY  in Earth's well, 0.42 g", "gravity: the ship in a well (" + scene.GravityLine() + ")");
+                snap.InGravity = false; snap.GravityName = null; snap.GravityG = 0;
+                // local orbits: moons round Saturn, stations round their moons
+                Check(MapScene.StationParent(Array.Find(SystemData.Stations, s => s.Name == "Andromeda Station").Pos)?.Name == "Venus", "orbits: Andromeda Station orbits Venus");
+                Check(MapScene.StationParent(Array.Find(SystemData.Stations, s => s.Name == "Ganymede Station").Pos)?.Name == "Ganymede", "orbits: Ganymede Station orbits Ganymede");
+                Check(MapScene.StationParent(Array.Find(SystemData.Stations, s => s.Name == "Tycho Station").Pos) == null, "orbits: Tycho Station is out in the Belt");
+                var saturn = SystemData.FindWorld("Saturn").Pos;
+                var keepT = scene.Cam.Target; double keepD = scene.Cam.Distance;
+                scene.Cam.Target = scene.Cam.GoalTarget = saturn; scene.Cam.Distance = scene.Cam.GoalDistance = 3e6;
+                g.Clear(Color.FromArgb(30, 34, 40));
+                scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+                bmp.Save(Path.Combine(outDir, "full-map-orbits-saturn.png"), ImageFormat.Png);
+                var enc = SystemData.FindWorld("Enceladus").Pos;
+                scene.Cam.Target = scene.Cam.GoalTarget = enc; scene.Cam.Distance = scene.Cam.GoalDistance = 60e3;
+                g.Clear(Color.FromArgb(30, 34, 40));
+                scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+                bmp.Save(Path.Combine(outDir, "full-map-orbits-station.png"), ImageFormat.Png);
+                scene.Cam.Target = scene.Cam.GoalTarget = keepT; scene.Cam.Distance = scene.Cam.GoalDistance = keepD;
             }
         }
         // the autopilot PB's script-browser thumbnail (512 x 512): the map on the route, with the autopilot status line
@@ -977,6 +1500,31 @@ internal static class Program
             scene.MouseX = float.NaN;
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
             bmp.Save(Path.Combine(outDir, "system" + sfx + ".png"), ImageFormat.Png);
+            Check(scene.Picks.Exists(p => p.Kind == MapScene.FieldKind && p.Name == "Trojans") && scene.Picks.Exists(p => p.Kind == MapScene.FieldKind && p.Name == "Greeks"), "system" + sfx + ": the Trojans and Greeks fields are pickable");
+            // the mouse on the Belt picks the spot on its middle line under it
+            var spot = new V3(Math.Cos(2.0), 0, Math.Sin(2.0)) * SystemData.Belt.Major;
+            scene.Cam.Project(spot, out var bx, out var by, out _);
+            scene.MouseX = bx; scene.MouseY = by;
+            scene.Draw(new MeasureCanvas(), new Box(0, 0, 1920, 1080));
+            Check(scene.Hovered is Pick bp && bp.Kind == MapScene.BeltKind && V3.Distance(bp.Pos, spot) < SystemData.Belt.Minor, "system" + sfx + ": the Belt under the mouse is picked at that spot");
+            scene.MouseX = float.NaN;
+            var pc = new PropCanvas();
+            scene.Draw(pc, new Box(0, 0, 1920, 1080));
+            Check(pc.Texts.Exists(t => t.Text == MapScene.ShortName(route.Final.TargetName)), "system" + sfx + ": the destination's short name is drawn by its mark (" + MapScene.ShortName(route.Final.TargetName) + ")");
+        }
+        // a field close up: its rocks fill the view
+        if (sfx == "" || sfx == "-opa" || sfx == "-protogen")
+        using (var bmp = new Bitmap(1920, 1080))
+        using (var g = Graphics.FromImage(bmp))
+        {
+            var scene = new MapScene { Snap = snap, Path = route, Help = "" };
+            scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.5;
+            scene.Cam.Setup(0, 0, 1920, 1080);
+            var tro = Array.Find(SystemData.Sectors, s => s.Name == "Trojans");
+            scene.Cam.FlyTo(tro.Center, MapScene.FocusDistance(new Pick { Name = "Trojans", Kind = MapScene.FieldKind })); scene.Cam.Snap();
+            scene.MouseX = float.NaN;
+            scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+            bmp.Save(Path.Combine(outDir, "field" + sfx + ".png"), ImageFormat.Png);
         }
 
         // 2) side window beside a mock of F&B's 600x500 navigation list
@@ -993,9 +1541,9 @@ internal static class Program
                 for (int i = 0; i < rows.Length; i++) g.DrawString(rows[i], f, i == 2 ? Brushes.LightGreen : Brushes.Gainsboro, 690, 350 + i * 34);
             }
             var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\nKEYS|Shift+M map, full map, off" + MapScene.Sep + "Ctrl+M autopilot" + MapScene.Sep + "Alt+M pin on screen" };
-            var box = SideBox(1920, 1080);
+            var box = SideBox(1920, 1080, scene, new GdiMapCanvas(g));
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
-            scene.Cam.Setup(box.X, box.Y, box.W, box.H);
+            scene.Cam.Setup(box.X, box.Y, box.W, box.H - scene.Strip);
             scene.FrameDefault(true);
             scene.MouseX = scene.Picks.Count > 0 ? scene.Picks[0].X : float.NaN;
             scene.Draw(new GdiMapCanvas(g), box);
@@ -1032,9 +1580,9 @@ internal static class Program
             snap.Asteroids.Add(new MapSnapshot.Marker { Name = "Asteroid", Pos = rock, Color = MapScene.HazardCol });
             snap.Dodges.Add(dodge.Value);
             var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "Shift+M map, full map, off · Ctrl+M autopilot" };
-            var box = SideBox(1920, 1080);
+            var box = SideBox(1920, 1080, scene, new GdiMapCanvas(g));
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
-            scene.Cam.Setup(box.X, box.Y, box.W, box.H);
+            scene.Cam.Setup(box.X, box.Y, box.W, box.H - scene.Strip);
             scene.FrameDefault(true);
             scene.MouseX = float.NaN;
             scene.Draw(c, box);
@@ -1070,7 +1618,8 @@ internal static class Program
     }
 
     /// <summary>Same layout rule as the plugin's SidePreview: right of centre, clear of F&amp;B's 600 px wide list.</summary>
-    private static Box SideBox(float w, float h) => SideLayout.Box(w, h, 1f);
+    /// <summary>The side window as the plugin lays it out: the map box, grown by the info strip that hangs below it.</summary>
+    private static Box SideBox(float w, float h, MapScene scene, IMapCanvas c) => SideLayout.Box(w, h, 1f, false, scene.MeasureStrip(c, SideLayout.Box(w, h, 1f)));
 }
 
 /// <summary>A canvas that draws nothing, with proportional digits ('1' narrow), remembering where text went.</summary>

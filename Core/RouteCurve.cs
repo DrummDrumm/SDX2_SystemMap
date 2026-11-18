@@ -18,7 +18,11 @@ public static class RouteCurve
     public static List<V3> Build(V3 a, IList<V3> through, V3 b, int perSpan = 32)
     {
         var res = new List<V3>();
-        if (through.Count == 1)
+        // one point near the middle (a leg you bent): a parabola with it at its middle. One well off the middle (a
+        // detour close to the ship, say) would pull the parabola's control point out behind the start, sending the
+        // ship backwards into a U-turn first: that goes through the smooth curve below instead.
+        double d1 = through.Count == 1 ? V3.Distance(a, through[0]) : 0, d2 = through.Count == 1 ? V3.Distance(through[0], b) : 0;
+        if (through.Count == 1 && d1 + d2 > 0 && Math.Abs(d1 / (d1 + d2) - 0.5) < 0.15)
         {
             var c = through[0] * 2 - (a + b) * 0.5;
             int n = perSpan * 2;

@@ -26,6 +26,8 @@ public sealed class RouteTracker
     public readonly List<(string Name, V3 Pos)> UserPoints = new List<(string, V3)>();
 
     public bool Avoid = true;
+    /// <summary>Keep out of the asteroid fields (the Belt, the Trojans, the Greeks) when the way can go round them.</summary>
+    public bool AvoidFields;
     public double Clearance = RoutePlan.DefaultClearance;
     /// <summary>A detour counts as reached within this distance (less for short legs: <see cref="ReachOf"/>).</summary>
     public double ArriveRadius = 25e3;
@@ -44,6 +46,31 @@ public sealed class RouteTracker
     private bool curved;
     /// <summary>Legs you bent (dragged their flip point): the point each curves through, by the leg's end name.</summary>
     public readonly Dictionary<string, V3> Bends = new Dictionary<string, V3>();
+    /// <summary>Worlds (by name) whose detours you removed: the route isn't planned round them until the destination changes or R re-plans.</summary>
+    public readonly HashSet<string> Skipped = new HashSet<string>();
+
+    /// <summary>
+    /// Removes the detour at Waypoints[index] (not one of your waypoints): every detour round that world goes, and stays
+    /// gone when the route is planned again. Returns the world's name (or the detour's, for one taken back from the PB
+    /// with no world on it); null when it isn't a detour.
+    /// </summary>
+    public string RemoveDetour(int index)
+    {
+        if (index < 0 || index >= Waypoints.Count || Waypoints[index].User) return null;
+        var around = Waypoints[index].Around?.Name;
+        if (around == null)
+        {
+            string n = Waypoints[index].Name;
+            Waypoints.RemoveAt(index);
+            if (Next > index) Next--;
+            Revision++;
+            return n;
+        }
+        Skipped.Add(around);
+        if (hasShip) Replan(lastShip);
+        else { Waypoints.RemoveAll(w => !w.User && w.Around?.Name == around); Next = Math.Min(Next, Waypoints.Count); Revision++; }
+        return around;
+    }
 
     /// <summary>Bends the leg ending at <paramref name="end"/> through <paramref name="at"/> (null: straight again).</summary>
     public void Bend(string end, V3? at)
@@ -62,7 +89,7 @@ public sealed class RouteTracker
     {
         lastSel = null;
         if (TargetName == null && Waypoints.Count == 0 && UserPoints.Count == 0) { Path = null; return; }
-        TargetName = null; Waypoints.Clear(); UserPoints.Clear(); Bends.Clear(); Next = 0; Path = null; Revision++;
+        TargetName = null; Waypoints.Clear(); UserPoints.Clear(); Bends.Clear(); Skipped.Clear(); Next = 0; Path = null; Revision++;
     }
 
     /// <summary>
@@ -98,6 +125,10 @@ public sealed class RouteTracker
         }
         Next = next;
         lastSel = selectedName; lastSelPos = selectedPos;
+        // a parabolic route goes to the PB as one curve (its detours only as curve points): plan the detours again
+        // from here, so the map shows the way round worlds and Sol's no-fly instead of a line through them
+        bool curve = r.Points.Exists(pt => pt.Kind == "curve");
+        if (curve && Avoid && !Waypoints.Exists(w => !w.User)) { lastShip = ship; Replan(ship); }
         Revision++;
         return true;
     }
@@ -111,6 +142,7 @@ public sealed class RouteTracker
         internal readonly List<Waypoint> Waypoints = new List<Waypoint>();
         internal readonly List<(string Name, V3 Pos)> UserPoints = new List<(string, V3)>();
         internal readonly Dictionary<string, V3> Bends = new Dictionary<string, V3>();
+        internal readonly HashSet<string> Skipped = new HashSet<string>();
     }
 
     public State Save()
@@ -118,6 +150,7 @@ public sealed class RouteTracker
         var st = new State { TargetName = TargetName, Target = Target, Next = Next };
         st.Waypoints.AddRange(Waypoints); st.UserPoints.AddRange(UserPoints);
         foreach (var kv in Bends) st.Bends[kv.Key] = kv.Value;
+        st.Skipped.UnionWith(Skipped);
         return st;
     }
 
@@ -129,6 +162,7 @@ public sealed class RouteTracker
         Waypoints.Clear(); Waypoints.AddRange(st.Waypoints);
         UserPoints.Clear(); UserPoints.AddRange(st.UserPoints);
         Bends.Clear(); foreach (var kv in st.Bends) Bends[kv.Key] = kv.Value;
+        Skipped.Clear(); Skipped.UnionWith(st.Skipped);
         Next = Math.Min(st.Next, Waypoints.Count);
         if (TargetName == null) Path = null;
         Revision++;
@@ -208,21 +242,21 @@ public sealed class RouteTracker
         var from = ship;
         foreach (var u in UserPoints)
         {
-            var det = Avoid ? DetourPlanner.Plan(from, u.Pos, u.Name, Clearance, Obstacles) : new List<Waypoint>();
+            var det = Avoid ? DetourPlanner.Plan(from, u.Pos, u.Name, Clearance, Obstacles, Skipped, AvoidFields) : new List<Waypoint>();
             Waypoints.AddRange(det);
             var last = det.Count > 0 ? det[det.Count - 1].Pos : from;
             var stop = RouteExport.StopNear(last, u.Pos, Clearance, out _);
             Waypoints.Add(new Waypoint { Name = u.Name, Pos = stop, Pick = u.Pos, User = true });
             from = stop;
         }
-        if (Avoid) Waypoints.AddRange(DetourPlanner.Plan(from, Target, TargetName, Clearance, Obstacles));
+        if (Avoid) Waypoints.AddRange(DetourPlanner.Plan(from, Target, TargetName, Clearance, Obstacles, Skipped, AvoidFields));
         // number the detours across the whole route
         int total = 0, k = 0;
         foreach (var w in Waypoints) if (!w.User) total++;
         for (int i = 0; i < Waypoints.Count; i++)
         {
             if (Waypoints[i].User) continue;
-            var w = Waypoints[i]; w.Name = "Detour " + (++k) + " of " + total + " - " + TargetName; Waypoints[i] = w;
+            var w = Waypoints[i]; w.Name = "Detour " + (++k) + " of " + total + " - " + MapScene.ShortName(TargetName); Waypoints[i] = w;
         }
         Next = 0;
         Revision++;
@@ -239,7 +273,8 @@ public sealed class RouteTracker
         bool changed = selectedName != lastSel || selectedName != null && V3.Distance(selectedPos, lastSelPos) > 100;
         lastSel = selectedName; lastSelPos = selectedPos;
 
-        if (selectedName == null) { if (!Hold && TargetName != null) { Clear(); return; } }
+        // no pick in Flip and Burn: the route stays until it's cleared (Clear / Cancel) or flown
+        if (selectedName == null) { }
         else if (changed)
         {
             int ours = IndexOf(selectedName, selectedPos);
@@ -250,7 +285,7 @@ public sealed class RouteTracker
             else
             {
                 TargetName = selectedName; Target = selectedPos;
-                UserPoints.Clear(); Bends.Clear();
+                UserPoints.Clear(); Bends.Clear(); Skipped.Clear();
                 Replan(ship);
             }
         }
@@ -259,6 +294,17 @@ public sealed class RouteTracker
         while (Next < Waypoints.Count && (V3.Distance(ship, Waypoints[Next].Pos) < ReachOf(Next) || Curved && GoneBy(Next, ship, velocity))) Next++;
         double cap = SpeedCap > 0 && (maxSpeed <= 0 || SpeedCap < maxSpeed) ? SpeedCap : maxSpeed;
         Path = RoutePath.Make(TargetName, ship, Target, velocity, accel * AccelScale, cap, Waypoints, Next, Clearance, accel * BrakeScale, Curved, Bends);
+    }
+
+    /// <summary>
+    /// The same route planned at other thrust and brake shares and speed cap (what the autopilot would fly with the
+    /// route's limits), from the ship's last position: for the water estimate. Null with no route.
+    /// </summary>
+    public RoutePath PathWith(double accelScale, double brakeScale, double speedCap, V3 velocity, double accel, double maxSpeed)
+    {
+        if (TargetName == null || !hasShip) return null;
+        double cap = speedCap > 0 && (maxSpeed <= 0 || speedCap < maxSpeed) ? speedCap : maxSpeed;
+        return RoutePath.Make(TargetName, lastShip, Target, velocity, accel * accelScale, cap, Waypoints, Next, Clearance, accel * brakeScale, Curved, Bends);
     }
 
     /// <summary>
@@ -271,6 +317,18 @@ public sealed class RouteTracker
         var next = i + 1 < Waypoints.Count ? Waypoints[i + 1].Pos : Target;
         var at = Waypoints[i].Pos;
         return Math.Min(ArriveRadius, 0.25 * Math.Min(V3.Distance(prev, at), V3.Distance(at, next)));
+    }
+
+    /// <summary>
+    /// The autopilot says it has flown past the first <paramref name="next"/> waypoints (it flies toward that one now):
+    /// the plan moves on with it, so a later update doesn't send the ship back to points it went by without coming
+    /// near enough to count them here. Never goes back.
+    /// </summary>
+    public bool PassedTo(int next)
+    {
+        if (next <= Next || next > Waypoints.Count) return false;
+        Next = next;
+        return true;
     }
 
     /// <summary>Parabolic legs fly through a point at speed: it's passed once the ship is beyond it, heading on.</summary>

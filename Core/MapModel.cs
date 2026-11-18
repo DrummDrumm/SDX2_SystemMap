@@ -7,6 +7,15 @@ namespace SDX2_SystemMap;
 public sealed class MapSnapshot
 {
     public bool HasShip;
+    /// <summary>
+    /// Gravity (set by the plugin once a second): InGravity = the ship is in a planet's or moon's well (GravityG, in g;
+    /// GravityName = whose); GravityEntry = where the route ahead first goes into a well (null = it doesn't), GravityAlong
+    /// metres along the route from the ship, GravityEntryName = whose.
+    /// </summary>
+    public bool InGravity;
+    public double GravityG, GravityAlong;
+    public string GravityName, GravityEntryName;
+    public V3? GravityEntry;
     public string ShipName = "YOU";
     public V3 ShipPos, ShipVel;
     /// <summary>The way your cockpit (or you) face.</summary>
@@ -56,6 +65,10 @@ public sealed class MapSnapshot
     public V3 FnbTarget;
     /// <summary>Max acceleration toward the target in m/s² (0 = unknown).</summary>
     public double MaxAccel;
+    /// <summary>Water in the tanks and their capacity (L), and the fusion drives' water use at full thrust (L/s); 0 = unknown.</summary>
+    public double Water, WaterCap, WaterRate;
+    /// <summary>The route's water (L) at its thrust and brake caps, and the thrust share it was worked out at; NaN = not worked out (the map works it from the route as drawn).</summary>
+    public double WaterUse = double.NaN, WaterThrust = double.NaN;
     public double MaxSpeed = RoutePlan.DefaultMaxSpeed;
     /// <summary>Summed signal weight of the ship's fusion drives (Spectrum signature), 0 = none.</summary>
     public double DriveWeight;

@@ -20,12 +20,27 @@ public static class SystemData
     public sealed class World
     {
         public string Name, Parent; public V3 Pos; public double Radius; public MapColor Color;
+        /// <summary>
+        /// Where its gravity well ends (metres from the centre, the game's own limit, set by the plugin from the loaded
+        /// planet); 0 = not known. A route to the world itself stops outside it (<see cref="RouteExport.StopNear"/>).
+        /// </summary>
+        public double Well;
+        /// <summary>
+        /// The game's gravity numbers for the loaded planet (set by the plugin; 0 = not known): its surface gravity in
+        /// m/s² (the same from the ground up to <see cref="Hills"/>), how fast it falls off past that
+        /// (g = surface × (r / Hills)^-falloff), and the radius its highest hills reach (the gravity's full-strength radius).
+        /// </summary>
+        public double SurfaceG, Falloff, Hills;
+        /// <summary>Where its atmosphere ends (metres from the centre, set by the plugin); 0 = none, or not known. Routes keep above it.</summary>
+        public double Atmosphere;
         public bool IsPlanet => Parent == "";
         public bool IsAsteroid => Parent == "Belt";
         /// <summary>Not a world: a grid or station the route keeps out of (Radius already has the margin; no clearance on top).</summary>
         public bool IsObstacle => Parent == ObstacleParent || Parent == StationParent;
         /// <summary>A known station (kept apart from your grids when nearby spheres are merged).</summary>
         public bool IsStation => Parent == StationParent;
+        /// <summary>An asteroid field a route may keep out of (the Trojans, the Greeks, the Belt): not a world, no clearance or ground.</summary>
+        public bool IsField => Parent == FieldParent;
         /// <summary>The star. Routes don't use its own clearance: it's the fixed no-fly sphere <see cref="SolZone"/>.</summary>
         public bool IsStar => Name == "Sol" && Parent == "";
     }
@@ -33,10 +48,29 @@ public static class SystemData
     public sealed class Station
     {
         public string Gps, Name; public V3 Pos;
+        /// <summary>
+        /// A ground facility: the built-in approach stops this far straight above it (away from its world's centre),
+        /// instead of the usual <see cref="RouteExport.StationStandoff"/>. 0 = an ordinary station.
+        /// </summary>
+        public double Above;
     }
 
     private static Sector S(string dx, string name, double x, double y, double z, double r, int rgb, SectorShape shape = SectorShape.Sphere, double half = 0) =>
         new Sector { Dx = dx, Name = name, Center = new V3(x, y, z), Radius = r, HalfWidth = half, Shape = shape, Color = MapColor.Rgb(rgb) };
+
+    /// <summary>
+    /// The Belt's asteroid torus as the Skylark Belt plugin draws it in game (its SkylarkBelt.cfg): centred on Sol, the
+    /// tube's centreline 8,500 km out, the tube 500 km in radius, its axis straight up (flat to the ecliptic). The same
+    /// torus as DX6's sector below.
+    /// </summary>
+    public static readonly BeltTorus Belt = new BeltTorus { Center = V3.Zero, Normal = new V3(0, 1, 0), Major = 8500e3, Minor = 500e3 };
+
+    public sealed class BeltTorus
+    {
+        public V3 Center, Normal;
+        /// <summary>Radius of the tube's centreline, and of the tube itself (m).</summary>
+        public double Major, Minor;
+    }
 
     /// <summary>Order matters for SectorAt: spheres first, then the Belt torus, then Sol (everything else).</summary>
     public static readonly Sector[] Sectors = {
@@ -73,7 +107,24 @@ public static class SystemData
     private static World W(string n, string parent, double x, double y, double z, double r, int rgb = 0x9AA4AE) =>
         new World { Name = n, Parent = parent, Pos = new V3(x, y, z), Radius = r, Color = MapColor.Rgb(rgb) };
 
-    public const string ObstacleParent = "(obstacle)", StationParent = "(station)";
+    public const string ObstacleParent = "(obstacle)", StationParent = "(station)", FieldParent = "(field)";
+
+    /// <summary>The Trojans and the Greeks as spheres (their sectors), for routes that keep out of the asteroid fields.</summary>
+    public static World[] Fields => fields ?? (fields = Array.ConvertAll(Array.FindAll(Sectors, s => s.Name == "Trojans" || s.Name == "Greeks"),
+        s => new World { Name = s.Name, Parent = FieldParent, Pos = s.Center, Radius = s.Radius }));
+    private static World[] fields;
+
+    /// <summary>The Belt's torus, as what its detours go round (its Pos is Sol's centre, Radius the tube's).</summary>
+    public static World BeltField => beltField ?? (beltField = new World { Name = "The Belt", Parent = FieldParent, Pos = Belt.Center, Radius = Belt.Minor });
+    private static World beltField;
+
+    /// <summary>How far p is from the Belt tube's centreline (under <see cref="BeltTorus.Minor"/>: in the Belt).</summary>
+    public static double BeltDistance(V3 p)
+    {
+        var rel = p - Belt.Center; var n = Belt.Normal.Normalized;
+        double y = rel.Dot(n), rho = (rel - n * y).Length - Belt.Major;
+        return Math.Sqrt(rho * rho + y * y);
+    }
 
     /// <summary>
     /// SDX2's base cores (SDX2: Core, Data/Cores/StationCores): sdx_shipcoreOutpost and sdx_shipcoreInstallation. A grid
@@ -144,22 +195,24 @@ public static class SystemData
         W("Charon", "Pluto", -27846502.5, 12902129.5, -39562004.5, 15000),
     };
 
+    private static Station Ground(Station s, double above) { s.Above = above; return s; }
+
     private static Station St(string gps, string name, double x, double y, double z) => new Station { Gps = gps, Name = name, Pos = new V3(x, y, z) };
 
     public static readonly Station[] Stations = {
-        St("Belt.2Pallas.STN", "2 Pallas Station", 0, 0, 0),
+        Ground(St("Belt.2Pallas.STN", "2 Pallas Station", 0, 0, 0), 8000), // on Pallas's ground
         St("Belt.Eros.STN", "Eros Station", 0, 0, 0),
-        St("Belt.Hygeia.STN", "Hygeia Station", 0, 0, 0),
+        Ground(St("Belt.Hygeia.STN", "Hygeia Station", 0, 0, 0), 8000), // in Hygeia (2 km under its listed radius): treated as on its ground for now
         St("Belt.Tycho.STN", "Tycho Station", 0, 0, 0),
         St("Belt.Vesta.STN", "Vesta Station", 0, 0, 0),
         St("Ve.Andromeda.STN", "Andromeda Station", 0, 0, 0),
-        St("JU.Ganymede.STN", "Ganymede Station", 0, 0, 0),
-        St("JU.IoHeliumRef.STN", "Io Helium Refinery", 0, 0, 0),
-        St("SA.Enceladus.STN", "Enceladus Station", 0, 0, 0),
+        Ground(St("JU.Ganymede.STN", "Ganymede Station", 0, 0, 0), 8000), // on Ganymede's ground
+        Ground(St("JU.IoHeliumRef.STN", "Io Helium Refinery", 0, 0, 0), 8000), // on Io's ground
+        Ground(St("SA.Enceladus.STN", "Enceladus Station", 0, 0, 0), 8000), // on Enceladus's ground
         St("SA.Iapetus.STN", "Iapetus Station", 0, 0, 0),
         St("SA.Mimas.STN", "Mimas Station", 0, 0, 0),
-        St("SA.Rhea.STN", "Rhea Station", 0, 0, 0),
-        St("NE.TriDALab.STN", "TriDA Lab", 0, 0, 0),
+        Ground(St("SA.Rhea.STN", "Rhea Station", 0, 0, 0), 8000), // on Rhea's ground
+        Ground(St("NE.TriDALab.STN", "TriDA Lab", 0, 0, 0), 8000), // on Triton's ground
         St("Greek.Achilles.STN", "Achilles Station", 0, 0, 0),
         St("Tro.Paris.STN", "Paris Station", 0, 0, 0),
         St("CE.Aventine.STN", "Aventine Station", 0, 0, 0),

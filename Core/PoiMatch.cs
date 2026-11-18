@@ -7,7 +7,8 @@ namespace SDX2_SystemMap;
 /// better; the nearest of the best rank wins.
 ///   0: the same name, or the alternative name (a station's GPS name such as JU.Ganymede.STN), within 1000 km;
 ///   1: the entry's name starts with the name ("Mars-12345d..." is how the game names the planet Mars), within 1000 km;
-///   2: the entry's name holds the point's key word ("Ganymede" for "Ganymede Station"), within 1000 km;
+///   2: the entry's name holds the point's key word ("Ganymede" for "Ganymede Station"), within 1000 km, but isn't
+///      the world of that name (the moon Ganymede isn't Ganymede Station);
 ///   3: anything within 5 km;
 ///   NoMatch otherwise.
 /// </summary>
@@ -24,7 +25,8 @@ public static class PoiMatch
             if (Same(pn, name) || altName != null && Same(pn, altName)) return 0;
             if (StartsWord(pn, name) || altName != null && StartsWord(pn, altName)) return 1;
             string key = KeyWord(name);
-            if (key != null && pn.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0) return 2;
+            // the world the key word names ("Enceladus", "Enceladus-123..." for Enceladus Station) is not the place on it
+            if (key != null && pn.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0 && !Same(pn, key) && !StartsWord(pn, key)) return 2;
         }
         return distance < NearRange ? 3 : NoMatch;
     }

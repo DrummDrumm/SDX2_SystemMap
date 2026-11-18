@@ -84,6 +84,22 @@ public sealed class OrbitCamera
         GoalDistance = Clamp(GoalDistance * Math.Pow(0.82, notches));
     }
 
+    /// <summary>The most wheel notches one frame can zoom by.</summary>
+    public const double MaxWheelNotches = 4;
+
+    /// <summary>
+    /// Wheel notches this frame from the game's wheel totals. When the game loses focus (the Windows key, Alt+Tab) it
+    /// resets its total to 0, so the frames either side report the whole total as one huge turn (zooming far out, then
+    /// far in): a change to or from 0 bigger than two notches is ignored, and any frame is held to <see cref="MaxWheelNotches"/>.
+    /// </summary>
+    public static double WheelNotches(int total, int previous)
+    {
+        int d = total - previous;
+        if (d == 0) return 0;
+        if ((total == 0 || previous == 0) && Math.Abs(d) > 240) return 0;
+        return Math.Max(-MaxWheelNotches, Math.Min(MaxWheelNotches, d / 120.0));
+    }
+
     public void FlyTo(V3 target, double distance)
     {
         GoalTarget = target;

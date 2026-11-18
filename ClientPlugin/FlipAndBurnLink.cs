@@ -71,6 +71,9 @@ internal static class FlipAndBurnLink
             isNavMenuOpen = d.TryGetValue("IsNavMenuOpen", out var b) ? b as Func<bool> : null;
             setNavMenuOpen = d.TryGetValue("SetNavMenuOpen", out var c) ? c as Action<bool, bool> : null;
             setPoints = d.TryGetValue("SetPointsOfInterest", out var e) ? e as Action<string, byte[]> : null;
+            // F&B opens its list on N only when no cursor shows, but the game's cursor flag can miss a screen that takes
+            // typing (the terminal's search box): N typed there opened the list behind it. F&B asks its open hooks first.
+            if (d.TryGetValue("RegisterNavMenuOpenHook", out var h) && h is Action<bool, Func<bool>> register) register(true, MayOpenNavMenu);
             ApiReady = true;
             Plugin.Log("Flip and Burn API connected");
         }
@@ -254,7 +257,24 @@ internal static class FlipAndBurnLink
 
     public static void OpenNavMenu()
     {
+        if (!MayOpenNavMenu()) return;
         try { setNavMenuOpen?.Invoke(true, false); } catch { }
+    }
+
+    /// <summary>
+    /// The N list may open: nothing but the game view (or the full map, or a pop-up that is closing) has focus, and chat
+    /// isn't open. Not while the terminal, the inventory or any other screen that takes typing is up.
+    /// </summary>
+    public static bool MayOpenNavMenu()
+    {
+        try
+        {
+            if (MyAPIGateway.Gui?.ChatEntryVisible ?? false) return false;
+            var s = Sandbox.Graphics.GUI.MyScreenManager.GetScreenWithFocus();
+            return s == null || s is Sandbox.Game.Gui.MyGuiScreenGamePlay || s is MapScreen
+                || s.State != Sandbox.Graphics.GUI.MyGuiScreenState.OPENED;
+        }
+        catch { return true; }
     }
 
     /// <summary>Closes the N list (F&amp;B's own Close, as its close button does).</summary>
@@ -371,6 +391,41 @@ internal static class FlipAndBurnLink
             return true;
         }
         catch (Exception e) { error = "Can't set Flip and Burn's destination: " + (e.InnerException ?? e).Message; return false; }
+    }
+
+    /// <summary>
+    /// Moves our own custom point (a point in space set from the map) and keeps it the destination: the old entry is
+    /// replaced in F&amp;B's list and selected again.
+    /// </summary>
+    public static bool MovePoint(string name, Vector3D pos, out string error)
+    {
+        error = null;
+        try
+        {
+            if (setPoints == null) { error = "Flip and Burn can't take custom points"; return false; }
+            if (!ClearSelection(out error)) return false;
+            var one = new List<FnbPoi> { new FnbPoi { Id = TargetPoiId, Name = name, Position = pos, IconSubtypeId = "PointOfInterest" } };
+            setPoints(TargetCollection, MyAPIGateway.Utilities.SerializeToBinary(one));
+            return SelectPoint(name, pos, out error);
+        }
+        catch (Exception e) { error = "Can't move the destination: " + (e.InnerException ?? e).Message; return false; }
+    }
+
+    /// <summary>No destination in Flip and Burn (selecting the selected entry again clears it). True when none is left.</summary>
+    public static bool ClearSelection(out string error)
+    {
+        error = null;
+        try
+        {
+            var hud = Hud;
+            var menu = hud == null || hudNavMenu == null ? null : hudNavMenu.GetValue(hud);
+            var onSelect = menu?.GetType().GetField("OnSelect", Any)?.GetValue(menu) as Delegate;
+            if (onSelect == null) { error = "Flip and Burn's list isn't ready"; return false; }
+            var sel = hudSelection.GetValue(hud);
+            if (sel != null) onSelect.DynamicInvoke(sel);
+            return true;
+        }
+        catch (Exception e) { error = "Can't clear Flip and Burn's destination: " + (e.InnerException ?? e).Message; return false; }
     }
 
     /// <summary>

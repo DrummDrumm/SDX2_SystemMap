@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inner System Red chart</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #0c0203">
+<dc-import name="ChartMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line": {"editor": "color", "default": "#d68f98"}, "warm": {"editor": "color", "default": "#ff6a6a"}, "alert": {"editor": "color", "default": "#ff3a4a"}, "$preview": {"width": 1600, "height": 900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var t = {'name': 'INNER RED', 'tag': 'DX1 SOL // SYSTEM CHART', 'title': '#fff0f0', 'bezel': '#22070a', 'bg': '#1a0507', 'panel': '#1d0609', 'ring': '#f0e0e0', 'grid': '#c06070', 'text': '#f8e8e8', 'sub': '#cf9ea4', 'planet': '#3a1218', 'box': 'rgba(110,30,40,0.75)', 'hi': '#ffb3a8', 'burn': '#ff9a5a', 'brake': '#ffd6cf', 'hexA': 0.07, 'secs': ['#ff6a6a', '#f0e0e0', '#f0e0e0', '#f0e0e0', '#8a5a60']};
+    t.line = this.props.line ?? '#d68f98';
+    t.warm = this.props.warm ?? '#ff6a6a';
+    t.alert = this.props.alert ?? '#ff3a4a';
+    return { theme: t };
+  }
+}
+</script>
+</body>
+</html>

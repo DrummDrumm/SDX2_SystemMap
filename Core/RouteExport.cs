@@ -39,23 +39,33 @@ public static class RouteExport
     public const double PassArrive = 1000, DetourArrive = 2000, TargetArrive = 500;
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    /// <summary>Where the autopilot should stop at the end of the route: see <see cref="StopNear"/>.</summary>
-    public static V3 StopPoint(RoutePath p, out string why) =>
-        StopNear(p.Waypoints.Count > 0 ? p.Waypoints[p.Waypoints.Count - 1].Pos : p.Start, p.Target, p.Clearance, out why);
+    /// <summary>
+    /// The Offset setting (metres, 500 m at the least): how far short of the destination a route stops. A base or
+    /// station on a world's ground is never stopped closer than <see cref="DetourPlanner.SurfaceGap"/> above.
+    /// </summary>
+    public static double Offset = StationStandoff;
+    public const double MinOffset = 500;
 
-    /// <summary>Where to stop when flying from <paramref name="from"/> to <paramref name="to"/>: short of a station
-    /// (F&amp;B's 5 km exclusion), at the clearance above a world (planet or moon), or at the point itself.</summary>
-    public static V3 StopNear(V3 from, V3 to, double clearance, out string why)
+    /// <summary>Where the autopilot should stop at the end of the route (<see cref="Offset"/> short): see <see cref="StopNear"/>.</summary>
+    public static V3 StopPoint(RoutePath p, out string why) =>
+        StopNear(p.Waypoints.Count > 0 ? p.Waypoints[p.Waypoints.Count - 1].Pos : p.Start, p.Target, p.Clearance, out why, Offset);
+
+    /// <summary>Where to stop when flying from <paramref name="from"/> to <paramref name="to"/>: short of a station,
+    /// above a base or a world, or <paramref name="offset"/> short of the point (a waypoint on the way: -1, on it).</summary>
+    public static V3 StopNear(V3 from, V3 to, double clearance, out string why, double offset = -1)
     {
+        if (offset >= 0) offset = Math.Max(MinOffset, offset);
         why = "point";
-        if (SystemData.StationNear(to, StationRange) != null)
+        if (SystemData.StationNear(to, StationRange) is { } stn)
         {
             var d = to - from;
-            if (d.Length <= StationStandoff * 1.5) return to;
+            var w = WorldUnder(to, clearance);
+            // a ground facility: straight above it, as low as the ship can hold itself (3 km over it at the closest)
+            double off = w != null && stn.Above > 0 ? SurfaceStop(w, to, clearance, stn.Above, offset, stn.Above) - V3.Distance(to, w.Pos) : offset >= 0 ? offset : StationStandoff;
+            if (d.Length <= Math.Min(off, StationStandoff) * 1.5) return to;
             why = "station";
             // near or on a world: from the side away from it (above the station), else from your side
-            var w = WorldUnder(to, clearance);
-            return w != null ? to + (to - w.Pos).Normalized * StationStandoff : to - d.Normalized * StationStandoff;
+            return w != null ? to + (to - w.Pos).Normalized * off : to - d.Normalized * off;
         }
         var sol = SystemData.SolZone;
         if (V3.Distance(to, sol.Pos) < sol.Radius)
@@ -66,17 +76,69 @@ public static class RouteExport
         SystemData.World best = null; double bestAlt = double.MaxValue;
         foreach (var w in SystemData.Worlds)
         {
-            if (w.IsStar) continue;
+            if (w.IsStar || w.IsObstacle || w.IsField) continue;
             double alt = V3.Distance(to, w.Pos) - w.Radius;
-            // a point on a world you're already near is flown to; the world itself (its centre) never is
-            if (alt < clearance && alt < bestAlt && (V3.Distance(from, w.Pos) > w.Radius + clearance || DetourPlanner.IsCore(w, to))) { best = w; bestAlt = alt; }
+            // the world itself, or a point on it or low over it (inside the height routes keep round it)
+            if (alt < bestAlt && (DetourPlanner.IsCore(w, to) || alt < DetourPlanner.Clear(w, clearance))) { best = w; bestAlt = alt; }
         }
-        if (best == null) return to;
-        why = "world";
-        // at the clearance on your side; already lower than that: where you are, but never below its ground
-        double r = Math.Max(DetourPlanner.Top(best), Math.Min(best.Radius + clearance, V3.Distance(from, best.Pos)));
-        return best.Pos + (from - best.Pos).Normalized * r;
+        if (best == null) return ShortOf(from, to, offset, ref why);
+        if (DetourPlanner.IsCore(best, to))
+        {
+            // the world itself picked: just outside its gravity well, on your side; no well (an asteroid, or too weak to
+            // reach past its hills): 3 km over them; its gravity not known yet: the fallback height
+            why = DetourPlanner.InWell(best) ? "well" : "world";
+            double r = DetourPlanner.InWell(best) ? WellStop(best) : best.Radius + DetourPlanner.Clear(best, clearance);
+            var dir = from - best.Pos;
+            return best.Pos + (dir.Length > 1 ? dir.Normalized : new V3(1, 0, 0)) * r;
+        }
+        // a point on it (a base) or low over it: straight above it, as low as the ship can hold itself up there
+        double at = V3.Distance(to, best.Pos), s = SurfaceStop(best, to, clearance, 8000, offset);
+        if (s <= at + 1) return ShortOf(from, to, offset, ref why);
+        why = "surface";
+        return best.Pos + (to - best.Pos).Normalized * s;
     }
+
+    /// <summary>A point in open space: <paramref name="offset"/> short of it on your side (on it when that's off, or you're nearly there).</summary>
+    private static V3 ShortOf(V3 from, V3 to, double offset, ref string why)
+    {
+        var d = to - from;
+        if (offset <= 0 || d.Length <= offset * 1.5) return to;
+        why = "offset";
+        return to - d.Normalized * offset;
+    }
+
+    /// <summary>
+    /// How far from w's centre a route to p (a base on its ground, or a point low over it) stops, straight above it: as
+    /// close as <see cref="DetourPlanner.SurfaceGap"/> over a point on the ground, but no lower than the ship can safely
+    /// hold itself up (<see cref="DetourPlanner.HoldRadius"/>: outside the well when it can't, above any atmosphere).
+    /// Gravity not known yet: <paramref name="unknownAbove"/> over it when given (a ground facility's own height), else
+    /// <paramref name="clearance"/> over the surface. A point buried in the world (Hygeia's
+    /// station): <paramref name="buried"/> over it.
+    /// </summary>
+    public static double SurfaceStop(SystemData.World w, V3 p, double clearance, double buried = 8000, double offset = -1, double unknownAbove = 0)
+    {
+        double at = V3.Distance(p, w.Pos);
+        double low = at < w.Radius * 0.99 ? at + Math.Max(buried, offset) : DetourPlanner.OnGround(w, p) ? at + Math.Max(DetourPlanner.SurfaceGap, offset) : at;
+        double hold = DetourPlanner.HoldRadius(w, DetourPlanner.ShipAccel);
+        // gravity not read yet: a ground facility's own approach height, else the fallback height over the surface
+        if (double.IsNaN(hold)) hold = unknownAbove > 0 ? at + Math.Max(unknownAbove, offset) : w.Radius + clearance;
+        return Math.Max(low, hold);
+    }
+
+    /// <summary>A route to a world stops this far outside its gravity well.</summary>
+    public const double WellMargin = 2000;
+
+    /// <summary>
+    /// How far from a world's centre a route to the world itself stops: just outside its gravity well (and above any
+    /// atmosphere that reaches past it); 0 when the well isn't known.
+    /// </summary>
+    public static double WellStop(SystemData.World w)
+    {
+        if (w.Well <= 0) return 0;
+        double r = w.Well + WellMargin;
+        return w.Atmosphere > 0 ? Math.Max(r, w.Atmosphere + DetourPlanner.SurfaceGap) : r;
+    }
+
 
     /// <summary>The world (not Sol) a point is on or within the clearance of, nearest the ground; null in open space.</summary>
     public static SystemData.World WorldUnder(V3 p, double clearance)
@@ -106,9 +168,21 @@ public static class RouteExport
     }
 
     /// <summary>The route section. <paramref name="passes"/> are dodge points flown by before the next waypoint.</summary>
-    public static string Build(RoutePath p, int id, string command = "load", IList<V3> passes = null, double thrust = 1, double brake = -1)
+    public static string Build(RoutePath p, int id, string command = "load", IList<V3> passes = null, double thrust = 1, double brake = -1) =>
+        Build(p, id, out _, command, passes, thrust, brake);
+
+    /// <summary>
+    /// The route section, and for each wp= line sent (in order) the route's own next waypoint while the PB flies to it
+    /// (<see cref="RoutePath.Waypoints"/> index; Count once all of them are behind): the PB's "wp" status then says
+    /// how far along the map's route it is (<see cref="RouteTracker.PassedTo"/>).
+    /// </summary>
+    public static string Build(RoutePath p, int id, out List<int> marks, string command = "load", IList<V3> passes = null, double thrust = 1, double brake = -1)
     {
         var sb = new StringBuilder();
+        var m = marks = new List<int>();
+        int cur = p.Next;
+        void Wp(StringBuilder b, V3 at, double arrive, string kind, string name) { RouteExport.Wp(b, at, arrive, kind, name); m.Add(cur); }
+        void Curve(StringBuilder b, RoutePlan leg, V3 end, string name) { int n = Count(b); RouteExport.Curve(b, leg, end, name); for (int c = Count(b) - n; c > 0; c--) m.Add(cur); }
         sb.Append(Header).Append('\n');
         sb.Append("version=").Append(Version).Append('\n');
         sb.Append("id=").Append(id).Append('\n');
@@ -129,12 +203,14 @@ public static class RouteExport
         else
             for (int i = p.Next; i < p.Waypoints.Count; i++)
             {
+                cur = i;
                 var prev = i > 0 ? p.Waypoints[i - 1].Pos : p.Start;
                 var next = i + 1 < p.Waypoints.Count ? p.Waypoints[i + 1].Pos : stop;
                 int leg = i - p.Next;
                 if (leg < p.Legs.Count && p.Legs[leg].Curved) Curve(sb, p.Legs[leg], p.Waypoints[i].Pos, p.Waypoints[i].Name);
                 Wp(sb, p.Waypoints[i].Pos, ArriveFor(prev, p.Waypoints[i].Pos, next), p.Waypoints[i].User ? "waypoint" : "detour", p.Waypoints[i].Name);
             }
+        cur = p.Waypoints.Count;
         if (p.Legs.Count > 1 && p.Final.Curved) Curve(sb, p.Final, stop, p.TargetName);
         if (why == "station")
         {
@@ -171,7 +247,16 @@ public static class RouteExport
         Math.Max(100, Math.Min(DetourArrive, 0.25 * Math.Min(V3.Distance(prev, at), V3.Distance(at, next))));
 
     /// <summary>A stop order with no route (the PB lets go of the controls).</summary>
-    public static string BuildStop(int id) => Header + "\nversion=" + Version + "\nid=" + id + "\ncommand=stop\n";
+    public static string BuildStop(int id) => BuildCommand(id, "stop");
+    /// <summary>An order with no route: stop (let go now) or brake (FULL STOP: burn to rest, then let go).</summary>
+    public static string BuildCommand(int id, string command) => Header + "\nversion=" + Version + "\nid=" + id + "\ncommand=" + command + "\n";
+
+    private static int Count(StringBuilder sb)
+    {
+        int n = 0;
+        for (int i = 0; i + 3 < sb.Length; i++) if ((i == 0 || sb[i - 1] == '\n') && sb[i] == 'w' && sb[i + 1] == 'p' && sb[i + 2] == '=') n++;
+        return n;
+    }
 
     private static void Wp(StringBuilder sb, V3 p, double arrive, string kind, string name) =>
         sb.Append("wp=").Append(Xyz(p)).Append(',').Append(N(arrive)).Append(',').Append(kind).Append(',').Append(Clean(name)).Append('\n');
@@ -256,7 +341,7 @@ public static class RouteExport
                 }
             }
         }
-        return any && r.Version == Version && (r.Points.Count > 0 || r.Command == "stop");
+        return any && r.Version == Version && (r.Points.Count > 0 || r.Command == "stop" || r.Command == "brake");
     }
 
     /// <summary>Reads the autopilot's own status section; null if there's none.</summary>
@@ -293,13 +378,15 @@ public static class RouteExport
         public readonly List<(V3 Pos, string From, string To)> Borders = new List<(V3, string, string)>();
     }
 
-    /// <summary>What the PB reports: state = idle | flying | arrived | override | stopped | error.</summary>
+    /// <summary>What the PB reports: state = idle | flying | braking | prograde | retrograde | arrived | override | stopped | error.</summary>
     public sealed class Status
     {
         public string State = "idle", Msg = "", Target = "";
         public int Ack, Wp, Count;
         public double Dist, Speed, Eta;
         public bool Flying => State == "flying";
+        /// <summary>FULL STOP: turning retrograde and burning to a standstill.</summary>
+        public bool Braking => State == "braking";
     }
 }
 

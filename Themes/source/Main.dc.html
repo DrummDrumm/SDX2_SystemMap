@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phosphor HUD theme</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #030803">
+<dc-import name="HudMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line":{"editor":"color","default":"#9bd85a"},"warm":{"editor":"color","default":"#f5d63c"},"alert":{"editor":"color","default":"#e8382c"},"$preview":{"width":1600,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: {
+        name: 'PHOSPHOR', code: 'PHX', tag: 'MCRN // TACTICAL PLOT',
+        bg: '#030803', neb: '#4f9a22', sub: '#a9d488', text: '#e2f8c0', hi: '#d6fb6e',
+        burn: '#ff9a2e', coast: '#effde0', brake: '#f5d63c',
+        line: this.props.line ?? '#9bd85a', warm: this.props.warm ?? '#f5d63c', alert: this.props.alert ?? '#e8382c'
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

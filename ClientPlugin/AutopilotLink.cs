@@ -31,17 +31,21 @@ internal static class AutopilotLink
     public static RouteExport.Parsed Route { get; private set; }
     /// <summary>The last order we sent this session, and whether the PB has acted on it yet.</summary>
     public static string LastCommand => lastCommand;
+    /// <summary>Whether this order id is the last one this session sent (so the plugin knows that route already).</summary>
+    public static bool SentHere(int id) => id != 0 && (id == lastId || sentIds.Contains(id));
+    /// <summary>Every order id this session wrote (an older one can still be in the PB's copy we last read).</summary>
+    private static readonly HashSet<int> sentIds = new HashSet<int>();
     public static bool Pending => lastId != 0 && (Status == null || Status.Ack != lastId);
 
     /// <summary>Flying (or just told to fly and not answered yet, for up to 10 s).</summary>
     public static bool Engaged(double now) =>
         Pending && (lastCommand == "engage" || lastCommand == "update") && now - sentAt < 10 ? true
-        : Pending && lastCommand == "stop" && now - sentAt < 10 ? false
+        : Pending && (lastCommand == "stop" || lastCommand == "brake") && now - sentAt < 10 ? false
         : Status != null && Status.Flying;
 
     public static void Reset()
     {
-        autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; lastCommand = null; sentAt = -1; nextScan = 0;
+        autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; sentIds.Clear(); lastCommand = null; sentAt = -1; nextScan = 0;
     }
 
     private static MyCubeGrid ControlledGrid() =>
@@ -70,10 +74,38 @@ internal static class AutopilotLink
     {
         error = null;
         if (path == null) { error = "No route: pick a destination in Flip and Burn's list (N) first."; return -1; }
-        return Write(id => RouteExport.Build(path, id, command, passes, thrust, brake), command, out error);
+        List<int> marks = null;
+        int n = Write(id => RouteExport.Build(path, id, out marks, command, passes, thrust, brake), command, out error);
+        if (n > 0) { sentMarks = marks; sentMarksCount = path.Waypoints.Count; }
+        return n;
+    }
+
+    private static List<int> sentMarks;
+    private static int sentMarksCount;
+    /// <summary>The map route's revision the last route sent was made from (set by the sender).</summary>
+    public static int SentRevision = -1;
+
+    /// <summary>
+    /// How many of the map's route waypoints the PB has put behind it, from its "wp" report on the route sent last
+    /// (-1 when it isn't flying that one, or the map's route has since changed size).
+    /// </summary>
+    public static int PassedOnRoute(int waypointCount, int revision)
+    {
+        var st = Status;
+        if (st == null || !st.Flying || Pending || sentMarks == null || st.Ack != lastId || waypointCount != sentMarksCount || revision != SentRevision) return -1;
+        if (st.Wp < 0 || st.Wp >= sentMarks.Count || st.Count != sentMarks.Count) return -1;
+        return sentMarks[st.Wp];
     }
 
     public static int Stop(out string error) => Write(RouteExport.BuildStop, "stop", out error);
+    /// <summary>FULL STOP: the PB burns the ship to a standstill, then switches the dampeners on and lets go.</summary>
+    public static int FullStop(out string error) => Write(id => RouteExport.BuildCommand(id, "brake"), "brake", out error);
+    /// <summary>When the last order went (Plugin.Now), -1 for none.</summary>
+    public static double SentAt => sentAt;
+
+    /// <summary>Braking to a standstill (or just told to, and not answered yet, for up to 10 s).</summary>
+    public static bool Braking(double now) =>
+        Pending && lastCommand == "brake" && now - sentAt < 10 ? true : Status != null && Status.Braking;
 
     private static int Write(Func<int, string> section, string command, out string error)
     {
@@ -90,7 +122,13 @@ internal static class AutopilotLink
             catch (Exception e) { error = "Can't write to " + tb.CustomName + ": " + e.Message; }
         }
         if (sent == 0) error ??= "No autopilot PB on this ship: load the Protogen Systems - Autopilot script into a programmable block.";
-        else { lastId = id; lastCommand = command; sentAt = Plugin.Now; }
+        else
+        {
+            lastId = id; lastCommand = command; sentAt = Plugin.Now; sentIds.Add(id);
+            // the copy read before writing is stale now: read the route back, so the old one isn't mistaken for a
+            // route sent from somewhere else (and taken back over the new one) until the next scan
+            Route = RouteExport.Parse(autopilots[0].CustomData, out var r) ? r : null;
+        }
         return sent;
     }
 

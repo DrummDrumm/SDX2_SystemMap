@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tachi Red HUD theme</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 900px; background: #070202">
+<dc-import name="HudMap" theme="{{theme}}" hint-size="1600px,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"line":{"editor":"color","default":"#ff5a3c"},"warm":{"editor":"color","default":"#ffd27a"},"alert":{"editor":"color","default":"#ff1e1e"},"$preview":{"width":1600,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: {
+        name: 'TACHI RED', code: 'MCR', tag: 'MCRN // COMBAT INFORMATION CENTRE',
+        bg: '#070202', neb: '#a8261a', sub: '#e89a86', text: '#ffd6c8', hi: '#ff8a5c',
+        burn: '#ff9a2e', coast: '#fff1e8', brake: '#ffd27a',
+        line: this.props.line ?? '#ff5a3c', warm: this.props.warm ?? '#ffd27a', alert: this.props.alert ?? '#ff1e1e'
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

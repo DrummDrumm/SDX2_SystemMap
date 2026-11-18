@@ -10,7 +10,9 @@ public sealed class MapSettings
 {
     /// <summary>Key bindings (<see cref="KeyCombo"/>; "None" unbinds). The map key cycles map window → full map → off.
     /// M alone is left to the game (its symmetry key).</summary>
-    public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion", KeyCursor = "F2";
+    public string KeyMap = "Shift+M", KeyAutopilot = "Ctrl+M", KeyPin = "Alt+M", KeySteer = "Ctrl+Shift+M", KeySettings = "Ctrl+Alt+OemQuestion", KeyCursor = "F2", KeyPanel = "B", KeySecondScreen = "Ctrl+Alt+M";
+    /// <summary>The full map's route panel stands on the right (mirrored); the route editor then opens on the left.</summary>
+    public bool PanelRight = false;
     /// <summary>Show the map, preview, pinned map and HUD lines only while you sit in a cockpit, seat or remote control.</summary>
     public bool OnlyInCockpit = false;
     /// <summary>Default zoom with no route: the grid size round your ship, km (one of <see cref="GridChoicesKm"/>).</summary>
@@ -28,6 +30,8 @@ public sealed class MapSettings
     public bool PreviewFollow = true;
     /// <summary>While a view follows your ship it turns so your forward movement points up the screen (U in the full map).</summary>
     public bool FollowHeading = true;
+    /// <summary>Your ship's map icon: taken from a real ship of its class (from the SDX2 creative save) where there is one, else the drawn one.</summary>
+    public bool RealShipIcons = false;
     /// <summary>Picture-in-picture: the preview stays on screen in a corner while you fly (Alt+key, cockpit toolbar action; Q in the full map moves it).</summary>
     public bool Pip = false;
     /// <summary>Show Flip and Burn's real speed on the HUD speed dial (stops it flickering to 150 m/s).</summary>
@@ -36,16 +40,25 @@ public sealed class MapSettings
     public string PipCorner = "TR";
     /// <summary>PiP size factor (0.5 to 2).</summary>
     public float PipSize = 1f;
+    /// <summary>The autopilot's line on the HUD: its middle across the screen and its top down it (fractions of the
+    /// screen), and its size.</summary>
+    public float HudX = 0.5f, HudY = 0.05f, HudSize = 1f;
     /// <summary>The map's look: "Classic" or "Tachi" (K in the full map).</summary>
     public string Theme = "Classic";
-    /// <summary>Plan detour waypoints round worlds in the way (added to F&amp;B's list as "Detour n of m - destination").</summary>
+    /// <summary>Plan detour waypoints round worlds in the way (added to F&amp;B's list as "Detour n of m - destination", the destination's short name: "Tycho").</summary>
     public bool AvoidBodies = true;
-    /// <summary>Wanted clearance above world surfaces, km.</summary>
-    public double ClearanceKm = 100;
+    /// <summary>Detours also keep out of the asteroid fields (over or under the Belt, round the Trojans and the Greeks) where they can.</summary>
+    public bool AvoidFields = true;
+    /// <summary>How far short of the destination a route stops, km (0.5 at the least; a base on a world's ground: 3 km over it at the least).</summary>
+    public double OffsetKm = 3;
     /// <summary>Send the route to the autopilot PB by itself whenever the plan changes (else Ctrl+key / A in the map).</summary>
     public bool AutopilotAutoSend = false;
     /// <summary>The autopilot route panel's last limits.</summary>
     public RouteLimits Limits = new RouteLimits();
+    /// <summary>The full map on a second screen (its own window), opened with each world.</summary>
+    public bool SecondScreen = false;
+    /// <summary>Which monitor it goes on: 0 = the first that isn't the main one, else 1-based.</summary>
+    public int SecondScreenMonitor = 0;
     public double Yaw = 0.9, Pitch = 0.62;
     public MapOptions Options = new MapOptions();
 
@@ -71,9 +84,15 @@ public sealed class MapSettings
                     case "KeySteer": s.KeySteer = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "KeySettings": s.KeySettings = KeyCombo.Parse(v).ToString(); keys = true; break;
                     case "KeyCursor": s.KeyCursor = KeyCombo.Parse(v).ToString(); break;
+                    case "KeyPanel": s.KeyPanel = KeyCombo.Parse(v).ToString(); break;
+                    case "KeySecondScreen": s.KeySecondScreen = KeyCombo.Parse(v).ToString(); break;
+                    case "SecondScreen": s.SecondScreen = B(v, false); break;
+                    case "SecondScreenMonitor": s.SecondScreenMonitor = (int)Math.Max(0, Math.Min(16, D(v, 0))); break;
+                    case "PanelRight": s.PanelRight = B(v, false); break;
                     case "ShowMapWithNav": s.ShowMapWithNav = B(v, true); break;
                     case "OnlyInCockpit": s.OnlyInCockpit = B(v, false); break;
                     case "FollowHeading": s.FollowHeading = B(v, true); break;
+                    case "RealShipIcons": s.RealShipIcons = B(v, false); break;
                     case "DefaultGridKm": s.DefaultGridKm = NearestGrid(D(v, DefaultGridDefault)); break;
                     case "KeepNavOpen": s.KeepNavOpen = B(v, true); break;
                     case "ApMaxSpeed": s.Limits.MaxSpeed = Math.Max(0, D(v, 0)); break;
@@ -95,9 +114,13 @@ public sealed class MapSettings
                     case "FixSpeedometer": s.FixSpeedometer = B(v, true); break;
                     case "PipCorner": s.PipCorner = SideLayout.Corner(v) ?? "TR"; break;
                     case "PipSize": s.PipSize = (float)D(v, 1); break;
+                    case "HudX": s.HudX = (float)D(v, 0.5); break;
+                    case "HudY": s.HudY = (float)D(v, 0.05); break;
+                    case "HudSize": s.HudSize = (float)D(v, 1); break;
                     case "Theme": s.Theme = MapTheme.Find(v).Name; break;
                     case "AvoidBodies": s.AvoidBodies = B(v, true); break;
-                    case "ClearanceKm": s.ClearanceKm = D(v, 100); break;
+                    case "AvoidFields": s.AvoidFields = B(v, true); break;
+                    case "OffsetKm": s.OffsetKm = D(v, 3); break;
                     case "AutopilotAutoSend": s.AutopilotAutoSend = B(v, false); break;
                     case "Yaw": s.Yaw = D(v, s.Yaw); break;
                     case "Pitch": s.Pitch = D(v, s.Pitch); break;
@@ -120,9 +143,12 @@ public sealed class MapSettings
         if (double.IsNaN(s.Yaw) || double.IsInfinity(s.Yaw)) s.Yaw = 0.9;
         if (double.IsNaN(s.Pitch) || double.IsInfinity(s.Pitch)) s.Pitch = 0.62;
         s.Pitch = Math.Max(OrbitCamera.MinPitch, Math.Min(OrbitCamera.MaxPitch, s.Pitch));
-        s.ClearanceKm = double.IsNaN(s.ClearanceKm) ? 100 : Math.Max(10, Math.Min(5000, s.ClearanceKm));
+        s.OffsetKm = double.IsNaN(s.OffsetKm) ? 3 : Math.Max(0.5, Math.Min(20, s.OffsetKm));
         s.PreviewSize = Math.Max(0.5f, Math.Min(1.5f, float.IsNaN(s.PreviewSize) ? 1 : s.PreviewSize));
         s.PipSize = Math.Max(0.5f, Math.Min(2f, float.IsNaN(s.PipSize) ? 1 : s.PipSize));
+        s.HudX = Math.Max(0f, Math.Min(1f, float.IsNaN(s.HudX) ? 0.5f : s.HudX));
+        s.HudY = Math.Max(0f, Math.Min(0.95f, float.IsNaN(s.HudY) ? 0.05f : s.HudY));
+        s.HudSize = Math.Max(0.6f, Math.Min(1.8f, float.IsNaN(s.HudSize) ? 1 : s.HudSize));
         return s;
     }
 
@@ -131,10 +157,11 @@ public sealed class MapSettings
         var sb = new StringBuilder();
         sb.AppendLine("# SDX2 System Map settings. Keys are Ctrl/Shift/Alt plus a game key name (M, F8, OemQuestion...), or None.");
         void L(string k, object v) => sb.Append(k).Append('=').AppendLine(Convert.ToString(v, CultureInfo.InvariantCulture));
-        L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings); L("KeyCursor", KeyCursor);
-        L("OnlyInCockpit", OnlyInCockpit); L("FollowHeading", FollowHeading); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
-        L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize);
-        L("AvoidBodies", AvoidBodies); L("ClearanceKm", ClearanceKm); L("AutopilotAutoSend", AutopilotAutoSend);
+        L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings); L("KeyCursor", KeyCursor); L("KeyPanel", KeyPanel); L("KeySecondScreen", KeySecondScreen); L("PanelRight", PanelRight);
+        L("SecondScreen", SecondScreen); L("SecondScreenMonitor", SecondScreenMonitor);
+        L("OnlyInCockpit", OnlyInCockpit); L("FollowHeading", FollowHeading); L("RealShipIcons", RealShipIcons); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
+        L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("PipCorner", PipCorner); L("PipSize", PipSize); L("HudX", HudX); L("HudY", HudY); L("HudSize", HudSize);
+        L("AvoidBodies", AvoidBodies); L("AvoidFields", AvoidFields); L("OffsetKm", OffsetKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApParabolic", Limits.Parabolic); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
         L("ApBrakePct", Limits.BrakePct); L("ApBrakeConeSignatureKm", Limits.BrakeSignatureKm);
         L("Yaw", Yaw); L("Pitch", Pitch);

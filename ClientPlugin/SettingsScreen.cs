@@ -19,7 +19,13 @@ namespace SDX2_SystemMap;
 /// </summary>
 internal sealed class SettingsScreen : MyGuiScreenBase
 {
-    private const float RowH = 0.046f, W = 0.98f, H = 0.86f, SliderW = 0.15f;
+    private const float RowH = 0.041f, W = 0.98f, H = 0.97f, SliderW = 0.15f;
+    /// <summary>The window's own background stays this opaque at least, whatever the game's UI background setting: the
+    /// text reads over a bright planet too.</summary>
+    private const float MinBack = 0.96f;
+    private static readonly Vector4 Tint = new Vector4(0.02f, 0.03f, 0.05f, 0.82f);
+    private int columnStart;
+    private float columnTop, columnsBottom;
     private static SettingsScreen open;
     private float y, labelX, controlX;
 
@@ -54,7 +60,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
     }
 
     private SettingsScreen() : base(new Vector2(0.5f, 0.5f), MyGuiConstants.SCREEN_BACKGROUND_COLOR, new Vector2(W, H), false, null,
-        MySandboxGame.Config.UIBkOpacity, MySandboxGame.Config.UIOpacity)
+        Math.Max(MinBack, MySandboxGame.Config.UIBkOpacity), Math.Max(MinBack, MySandboxGame.Config.UIOpacity))
     {
         EnabledBackgroundFade = true;
         CloseButtonEnabled = true;
@@ -70,6 +76,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         var s = Plugin.Settings;
         var caption = AddCaption("SDX2 System Map settings");
         float top = caption.Position.Y + caption.Size.Y / 2 + 0.03f;
+        columnsBottom = top;
 
         // ---- left column
         Column(-W / 2 + 0.03f, -0.22f, top);
@@ -92,6 +99,8 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         var themes = new List<string>(); foreach (var t in MapTheme.All) themes.Add(t.Name);
         Combo("Theme", "The look of the map, the preview and the autopilot panels (K in the full map).", themes, Math.Max(0, themes.IndexOf(MapTheme.Current.Name)),
             i => { MapTheme.Current = MapTheme.All[i]; s.Theme = MapTheme.Current.Name; });
+        Combo("Ship icon", "Your ship on the map: a drawn icon for its core class, or one taken from a real ship of that class (Skiff, Barge, Hauler, Picket, Corvette, Frigate, Installation; the others stay drawn).",
+            new List<string> { "Drawn", "From real ships" }, s.RealShipIcons ? 1 : 0, i => { s.RealShipIcons = i == 1; MapScene.RealShipIcons = s.RealShipIcons; });
 
         Section("PINNED MAP");
         Check("Pin the map on screen", "A small map stays in a screen corner while you fly.", s.Pip, v => SidePreview.SetPip(v));
@@ -100,7 +109,16 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         Combo("Corner", "Which corner it sits in (Q in the full map).", cornerNames, Math.Max(0, corners.IndexOf(s.PipCorner)), i => s.PipCorner = corners[i]);
         Slider("Size", s.PipSize, 0.5f, 2f, v => s.PipSize = v, v => v.ToString("0.00", CultureInfo.InvariantCulture) + "x");
 
+        Section("SECOND SCREEN");
+        Check("Map on a second screen", "The full map in a window of its own on another monitor, with touch: drag to orbit, pinch to zoom, two fingers to pan or turn, tap to focus, hold then let go to set the destination. It never takes the focus from the game. Opens with each world while on.",
+            s.SecondScreen, v => SecondScreen.Set(v));
+        Combo("Screen", "Which monitor it fills. On the main one (or with one monitor) it's a normal window. Turn it off and on to move it.", SecondScreen.ScreenNames(), s.SecondScreenMonitor,
+            i => s.SecondScreenMonitor = i);
+        var secondBind = new Bind { Name = "Second screen", Tip = "Open or close the map on the second screen.", Get = () => s.KeySecondScreen, Set = v => s.KeySecondScreen = v };
+        KeyRow(secondBind);
+
         // ---- right column
+        EndColumn();
         Column(0.02f, 0.25f, top);
         Section("KEYS");
         bindList = new List<Bind>
@@ -110,21 +128,30 @@ internal sealed class SettingsScreen : MyGuiScreenBase
             new Bind { Name = "Pin the map", Tip = "Pin the small map on screen, or unpin it.", Get = () => s.KeyPin, Set = v => s.KeyPin = v },
             new Bind { Name = "Steer round asteroid", Tip = "While the autopilot flies: send the route with the suggested way round an asteroid.", Get = () => s.KeySteer, Set = v => s.KeySteer = v },
             new Bind { Name = "Free the mouse (hold)", Tip = "Hold to use the mouse on the map without turning the ship, so the autopilot keeps flying (needs Rich HUD, as on SDX2).", Get = () => s.KeyCursor, Set = v => s.KeyCursor = v },
+            new Bind { Name = "Map panel side", Tip = "In the full map: move the route panel (with the autopilot buttons) to the other side; it mirrors there.", Get = () => s.KeyPanel, Set = v => s.KeyPanel = v },
             new Bind { Name = "This window", Tip = "Opens these settings in game (Pulsar's Config button always works).", Get = () => s.KeySettings, Set = v => s.KeySettings = v },
         };
         foreach (var b in bindList) KeyRow(b);
+        bindList.Add(secondBind);
 
         Section("ROUTE");
         Check("Detours round worlds", "Bend the route round planets and moons in the way (V in the full map).", s.AvoidBodies, v => { s.AvoidBodies = v; Replan(); });
-        Slider("Clearance", (float)s.ClearanceKm, 10, 5000, v => { s.ClearanceKm = Math.Round(v / 10) * 10; Replan(); },
-            v => (Math.Round(v / 10) * 10).ToString("0", CultureInfo.InvariantCulture) + " km");
+        Check("Keep out of asteroid fields", "Detours also go over or under the Belt and round the Trojans and the Greeks, where the route doesn't start or end in them.", s.AvoidFields, v => { s.AvoidFields = v; Replan(); });
+        Slider("Offset", (float)s.OffsetKm, 0.5f, 20, v => { s.OffsetKm = Math.Round(v * 2) / 2; RouteExport.Offset = s.OffsetKm * 1000; Replan(); },
+            v => (Math.Round(v * 2) / 2).ToString("0.0", CultureInfo.InvariantCulture) + " km",
+            "How far short of the destination the autopilot stops (0.5 km at the least). A base or station on a planet's or moon's surface: never closer than 3 km above it, and higher when your thrust can't hold the ship lower.");
         Check("Load plans into the autopilot", "Send each new route to the autopilot PB without flying it (ENGAGE still starts it).", s.AutopilotAutoSend, v => s.AutopilotAutoSend = v);
 
         Section("HUD");
         Check("Steady speed dial", "Show Flip and Burn's real speed on the HUD speed dial so it doesn't flicker to 150 m/s.", s.FixSpeedometer, v => s.FixSpeedometer = v);
+        Slider("Autopilot line across", s.HudX, 0f, 1f, v => s.HudX = v, v => (v * 100).ToString("0", CultureInfo.InvariantCulture) + "%");
+        Slider("Autopilot line down", s.HudY, 0f, 0.95f, v => s.HudY = v, v => (v * 100).ToString("0", CultureInfo.InvariantCulture) + "%");
+        Slider("Autopilot line size", s.HudSize, 0.6f, 1.8f, v => s.HudSize = v, v => v.ToString("0.00", CultureInfo.InvariantCulture) + "x");
 
-        // ---- bottom
-        float bottom = H / 2 - 0.035f;
+        EndColumn();
+
+        // ---- bottom: under the longer column
+        float bottom = Math.Min(H / 2 - 0.025f, columnsBottom + 0.075f);
         Controls.Add(new MyGuiControlButton(new Vector2(-0.1f, bottom), text: new StringBuilder("Defaults"),
             toolTip: "Put every setting in this window back to its default, keys included.", originAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_BOTTOM,
             onButtonClick: b => ResetDefaults()));
@@ -132,7 +159,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
             originAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_BOTTOM, onButtonClick: b => CloseScreen()));
         string foot = note ?? (Binds.Settings.IsNone ? "Changes apply at once." : Binds.Settings.Display + " opens this window in game. Changes apply at once.");
         note = null;
-        Controls.Add(new MyGuiControlLabel(new Vector2(0, bottom - 0.065f), text: foot,
+        Controls.Add(new MyGuiControlLabel(new Vector2(0, bottom - 0.052f), text: foot,
             textScale: 0.7f, originAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_BOTTOM) { ColorMask = new Vector4(0.7f, 0.7f, 0.7f, 1) });
     }
 
@@ -141,9 +168,11 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         var s = Plugin.Settings; var d = new MapSettings();
         s.OnlyInCockpit = d.OnlyInCockpit; s.ShowMapWithNav = d.ShowMapWithNav; s.KeepNavOpen = d.KeepNavOpen; s.PreviewLeft = d.PreviewLeft;
         s.PreviewSize = d.PreviewSize; s.DefaultGridKm = d.DefaultGridKm; MapScene.DefaultGridKm = d.DefaultGridKm; s.Theme = d.Theme; MapTheme.Current = MapTheme.Find(d.Theme);
+        s.RealShipIcons = d.RealShipIcons; MapScene.RealShipIcons = d.RealShipIcons;
         s.PipCorner = d.PipCorner; s.PipSize = d.PipSize; SidePreview.SetPip(d.Pip);
-        s.AvoidBodies = d.AvoidBodies; s.ClearanceKm = d.ClearanceKm; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer;
-        s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings; s.KeyCursor = d.KeyCursor;
+        s.AvoidBodies = d.AvoidBodies; s.AvoidFields = d.AvoidFields; s.OffsetKm = d.OffsetKm; RouteExport.Offset = d.OffsetKm * 1000; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer;
+        s.HudX = d.HudX; s.HudY = d.HudY; s.HudSize = d.HudSize;
+        s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings; s.KeyCursor = d.KeyCursor; s.KeyPanel = d.KeyPanel; s.KeySecondScreen = d.KeySecondScreen; s.SecondScreenMonitor = d.SecondScreenMonitor; SecondScreen.Set(d.SecondScreen); s.PanelRight = d.PanelRight;
         Replan();
         RecreateControls(false);
     }
@@ -235,7 +264,16 @@ internal sealed class SettingsScreen : MyGuiScreenBase
 
     // ---- rows
 
-    private void Column(float label, float control, float top) { labelX = label; controlX = control; y = top; }
+    private void Column(float label, float control, float top) { labelX = label; controlX = control; y = top; columnTop = top; columnStart = Controls.Count; }
+
+    /// <summary>A dark panel behind the column just laid out (under its controls), so its text reads on a bright screen.</summary>
+    private void EndColumn()
+    {
+        float x0 = labelX - 0.012f, x1 = controlX + SliderW + 0.085f, y0 = columnTop - 0.012f, y1 = y - RowH * 0.35f;
+        Controls.Add(new MyGuiControlPanel(new Vector2(x0, y0), new Vector2(x1 - x0, y1 - y0), Tint, MyGuiConstants.BLANK_TEXTURE,
+            originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP), columnStart);
+        columnsBottom = Math.Max(columnsBottom, y1);
+    }
 
     private void Section(string title)
     {
@@ -264,10 +302,10 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         y += RowH;
     }
 
-    private void Slider(string text, float value, float min, float max, Action<float> set, Func<float, string> show)
+    private void Slider(string text, float value, float min, float max, Action<float> set, Func<float, string> show, string tip = null)
     {
-        Label(text, null);
-        var sl = new MyGuiControlSlider(new Vector2(controlX, y), min, max, SliderW, value, originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER);
+        Label(text, tip);
+        var sl = new MyGuiControlSlider(new Vector2(controlX, y), min, max, SliderW, value, toolTip: tip, originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER);
         sl.Value = value;
         var v = new MyGuiControlLabel(new Vector2(controlX + SliderW + 0.01f, y), text: show(value), textScale: 0.75f, originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER);
         sl.ValueChanged += x => { v.Text = show(x.Value); try { set(x.Value); } catch (Exception e) { Plugin.LogThrottled("setting failed: " + e.Message); } };

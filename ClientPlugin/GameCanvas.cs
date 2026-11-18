@@ -43,6 +43,7 @@ internal sealed class GameCanvas : IMapCanvas
     public void Text(string text, float x, float y, float px, MapColor col, TextAnchor anchor = TextAnchor.Left)
     {
         if (string.IsNullOrEmpty(text) || col.A == 0) return;
+        text = Glyphs(text);
         float scale = Scale(px);
         if (anchor != TextAnchor.Left)
         {
@@ -55,7 +56,10 @@ internal sealed class GameCanvas : IMapCanvas
         MyRenderProxy.DrawString(font, at, Pre(col), text, scale, float.PositiveInfinity, true);
     }
 
-    public float TextWidth(string text, float px) => string.IsNullOrEmpty(text) ? 0 : MyFontDefinition.MeasureStringRaw(Font, text, Scale(px)).X;
+    public float TextWidth(string text, float px) => string.IsNullOrEmpty(text) ? 0 : MyFontDefinition.MeasureStringRaw(Font, Glyphs(text), Scale(px)).X;
+
+    /// <summary>The game's White font has no arrow (it draws a box): "→" is drawn as "->".</summary>
+    private static string Glyphs(string text) => text.IndexOf('→') < 0 ? text : text.Replace("→", "->");
 
     public void PushClip(float x, float y, float w, float h)
     {

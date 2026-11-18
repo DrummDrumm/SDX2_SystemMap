@@ -48,4 +48,39 @@ internal static class DriveCheck
         }
         return n;
     }
+
+    /// <summary>
+    /// The ship's water: litres in its tanks of the drives' fuel (all sdx_tankWater* on the grid group), their capacity,
+    /// and the litres a second its working fusion drives burn together at 100 % thrust (the definitions' power over
+    /// efficiency times the gas's energy density: 55.8 L/s for a Canterbury, as on the SDX2 sheet). 0s when unknown.
+    /// </summary>
+    public static void Water(MyCubeGrid ship, out double stored, out double capacity, out double rate)
+    {
+        stored = capacity = rate = 0;
+        if (ship == null) return;
+        grids.Clear();
+        try { ((IMyCubeGrid)ship).GetGridGroup(GridLinkTypeEnum.Mechanical)?.GetGrids(grids); } catch (Exception) { }
+        if (grids.Count == 0) grids.Add(ship);
+        VRage.Game.MyDefinitionId? fuel = null;
+        foreach (var g in grids)
+            if (g is MyCubeGrid cg)
+                foreach (var b in cg.GetFatBlocks())
+                {
+                    if (!(b is MyThrust t) || !t.IsWorking || !t.BlockDefinition.Id.SubtypeName.StartsWith("sdx_drive", StringComparison.Ordinal)) continue;
+                    var gas = t.FuelDefinition;
+                    double eff = t.BlockDefinition.FuelConverter?.Efficiency ?? 1;
+                    if (gas == null || !(gas.EnergyDensity > 0) || !(eff > 0) || gas.Id.SubtypeName == "Electricity") continue;
+                    rate += t.MaxPowerConsumption / (eff * gas.EnergyDensity);
+                    fuel ??= gas.Id;
+                }
+        if (fuel == null) return;
+        foreach (var g in grids)
+            if (g is MyCubeGrid cg)
+                foreach (var b in cg.GetFatBlocks())
+                {
+                    if (!(b is Sandbox.Game.Entities.Blocks.MyGasTank k) || !k.IsFunctional || k.BlockDefinition.StoredGasId != fuel.Value) continue;
+                    capacity += k.Capacity;
+                    stored += k.FilledRatio * k.Capacity;
+                }
+    }
 }

@@ -52,8 +52,9 @@ public static class SideLayout
         return new Box(x, y, w, h);
     }
 
-    /// <summary>The side window: right of the list (or left with left = true), 70% of the screen tall. scale = user size factor.</summary>
-    public static Box Box(float screenW, float screenH, float scale, bool left = false)
+    /// <summary>The side window: right of the list (or left with left = true), its map 70% of the screen tall. scale = user size factor.
+    /// strip = the info strip that hangs below the map (MapScene.Strip): the window grows by it, staying centred and on screen.</summary>
+    public static Box Box(float screenW, float screenH, float scale, bool left = false, float strip = 0)
     {
         var list = FnbList(screenW, screenH);
         float margin = screenH * 0.022f, gap = screenH * 0.022f;
@@ -62,6 +63,7 @@ public static class SideLayout
         w = Math.Min(w, Math.Max(240, room));
         float h = Math.Min(screenH * 0.7f, w * 1.15f);
         float x = left ? list.X - gap - w : list.Right + gap;
+        h = Math.Min(h + Math.Max(0, strip), screenH - 2 * margin);
         return new Box(x, (screenH - h) / 2, w, h);
     }
 }
