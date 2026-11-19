@@ -195,28 +195,55 @@ public static class SystemData
         W("Charon", "Pluto", -27846502.5, 12902129.5, -39562004.5, 15000),
     };
 
-    private static Station Ground(Station s, double above) { s.Above = above; return s; }
+    /// <summary>How far straight above a ground facility the built-in approach stops.</summary>
+    public const double GroundAbove = 8000;
 
-    private static Station St(string gps, string name, double x, double y, double z) => new Station { Gps = gps, Name = name, Pos = new V3(x, y, z) };
+    /// <summary>
+    /// The stations you know: none are built in. They come from your own GPS list (<see cref="SetKnownStations"/>), so
+    /// a station shows on the map, is routed round and is offered as a destination only once you have its GPS point.
+    /// </summary>
+    public static Station[] Stations { get; private set; } = new Station[0];
+    private static string stationsKey = "";
 
-    public static readonly Station[] Stations = {
-        Ground(St("Belt.2Pallas.STN", "2 Pallas Station", 0, 0, 0), 8000), // on Pallas's ground
-        St("Belt.Eros.STN", "Eros Station", 0, 0, 0),
-        Ground(St("Belt.Hygeia.STN", "Hygeia Station", 0, 0, 0), 8000), // in Hygeia (2 km under its listed radius): treated as on its ground for now
-        St("Belt.Tycho.STN", "Tycho Station", 0, 0, 0),
-        St("Belt.Vesta.STN", "Vesta Station", 0, 0, 0),
-        St("Ve.Andromeda.STN", "Andromeda Station", 0, 0, 0),
-        Ground(St("JU.Ganymede.STN", "Ganymede Station", 0, 0, 0), 8000), // on Ganymede's ground
-        Ground(St("JU.IoHeliumRef.STN", "Io Helium Refinery", 0, 0, 0), 8000), // on Io's ground
-        Ground(St("SA.Enceladus.STN", "Enceladus Station", 0, 0, 0), 8000), // on Enceladus's ground
-        St("SA.Iapetus.STN", "Iapetus Station", 0, 0, 0),
-        St("SA.Mimas.STN", "Mimas Station", 0, 0, 0),
-        Ground(St("SA.Rhea.STN", "Rhea Station", 0, 0, 0), 8000), // on Rhea's ground
-        Ground(St("NE.TriDALab.STN", "TriDA Lab", 0, 0, 0), 8000), // on Triton's ground
-        St("Greek.Achilles.STN", "Achilles Station", 0, 0, 0),
-        St("Tro.Paris.STN", "Paris Station", 0, 0, 0),
-        St("CE.Aventine.STN", "Aventine Station", 0, 0, 0),
-    };
+    /// <summary>
+    /// A station's GPS name as the server writes it: region.place.STN ("Belt.Tycho.STN"). <paramref name="title"/> is
+    /// the name shown for it ("Tycho Station").
+    /// </summary>
+    public static bool IsStationGps(string gps, out string title)
+    {
+        title = null;
+        if (string.IsNullOrEmpty(gps)) return false;
+        var parts = gps.Trim().Split('.');
+        if (parts.Length != 3 || !parts[2].Trim().Equals("STN", StringComparison.OrdinalIgnoreCase) || parts[1].Trim().Length == 0) return false;
+        title = parts[1].Trim() + " Station";
+        return true;
+    }
+
+    public static bool IsStationGps(string gps) => IsStationGps(gps, out _);
+
+    /// <summary>
+    /// Sets the stations you know from your GPS points (name, position); the others are ignored. One within 5% of a
+    /// world's radius of its ground (or inside it) is a ground facility. Null or empty forgets them all.
+    /// </summary>
+    public static void SetKnownStations(IEnumerable<KeyValuePair<string, V3>> gps)
+    {
+        var list = new List<Station>();
+        var sb = new System.Text.StringBuilder();
+        if (gps != null)
+            foreach (var g in gps)
+            {
+                if (!IsStationGps(g.Key, out var title) || list.Exists(x => x.Gps == g.Key.Trim())) continue;
+                var s = new Station { Gps = g.Key.Trim(), Name = title, Pos = g.Value };
+                foreach (var w in Worlds)
+                    if (!w.IsStar && !w.IsField && !w.IsObstacle && V3.Distance(s.Pos, w.Pos) < w.Radius * 1.05) { s.Above = GroundAbove; break; }
+                list.Add(s);
+                sb.Append(s.Gps).Append('|').Append(Math.Round(s.Pos.X)).Append(',').Append(Math.Round(s.Pos.Y)).Append(',').Append(Math.Round(s.Pos.Z)).Append(';');
+            }
+        string key = sb.ToString();
+        if (key == stationsKey) return;
+        stationsKey = key;
+        Stations = list.ToArray(); // swapped whole: readers on other threads see the old set or the new one
+    }
 
     public static World FindWorld(string name)
     {

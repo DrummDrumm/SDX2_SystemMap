@@ -67,6 +67,10 @@ internal static class GameState
             s.Gps.Clear();
             gps.Clear();
             try { session.Gpss?.GetGpsList(session.LocalPlayerId, gps); } catch { }
+            // the stations you know are the station GPS points in your list (shown on the HUD or not)
+            var known = new List<KeyValuePair<string, V3>>();
+            foreach (var g in gps) if (SystemData.IsStationGps(g.Name)) known.Add(new KeyValuePair<string, V3>(g.Name, V(g.Coords)));
+            SystemData.SetKnownStations(known);
             foreach (var g in gps)
             {
                 if (!g.ShowOnHud) continue;

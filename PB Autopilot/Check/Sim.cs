@@ -394,9 +394,9 @@ namespace PbCheck
 
             // 10) the overshoot of 2026-11-18: Naust Station to Andromeda Station (5,895 km), 138.7 m/s², a curve point 8 km short
             {
-                var naust = new Vector3D(-3639808.44, 0, -1284705.62);
-                var andro = new Vector3D(0, 0, 0);
-                route = new List<Nav.Wp> { W(new Vector3D(0, 0, 0), 2000, "curve"), W(andro, 500, "target") };
+                var naust = new Vector3D(-3328808.44, -72000.00, -1472705.62);
+                var andro = new Vector3D(2443065.43, -634043.44, -2528128.79);
+                route = new List<Nav.Wp> { W(new Vector3D(2437029.92, -632964.46, -2522989.87), 2000, "curve"), W(andro, 500, "target") };
                 foreach (var turn in new[] { 0.6, 0.15, 0.05 })
                 {
                     r = Fly(route, naust, andro - naust, 138.7, turn, Vector3D.Zero, 1500, andro);
@@ -420,11 +420,11 @@ namespace PbCheck
             // the velocity was across the new line. Thrust went on cancelling that while the stop was planned as if all
             // of it could brake along the line: it braked about 1.5 km/s short and stopped 94 km past the station
             {
-                var pallas = new Vector3D(0, 0, 0);
-                var path = new[] { new Vector3D(11342873.83, -157987.76, 13924813.76), new Vector3D(10341877, -179461.21, 12429349.29),
-                    new Vector3D(9228868.07, -200884.41, 10762795.62), new Vector3D(8123860.01, -222311.2, 9108462.6),
-                    new Vector3D(7146865.78, -243795.42, 7649660.11), new Vector3D(6672041.27, -256735.93, 6944490.18),
-                    new Vector3D(6417898.34, -265390.93, 6569698.02), new Vector3D(6222641.78, -274072.35, 6284849.9) };
+                var pallas = new Vector3D(5772894.75, -236290.12, 6229136.08);
+                var path = new[] { new Vector3D(11078873.83, -99987.76, 14121813.76), new Vector3D(10077877.00, -121461.21, 12626349.29),
+                    new Vector3D(8964868.07, -142884.41, 10959795.62), new Vector3D(7859860.01, -164311.20, 9305462.60),
+                    new Vector3D(6882865.78, -185795.42, 7846660.11), new Vector3D(6408041.27, -198735.93, 7141490.18),
+                    new Vector3D(6153898.34, -207390.93, 6766698.02), new Vector3D(5958641.78, -216072.35, 6481849.90) };
                 route = new List<Nav.Wp>();
                 foreach (var q in path) route.Add(W(q, 2000, "curve"));
                 route.Add(W(pallas, 500, "target"));
@@ -446,9 +446,9 @@ namespace PbCheck
             // 13) a short takeover right as the flip to brake starts (under TakeoverAfter, so the autopilot takes the
             // ship back): the reserve held before each flip covers it, with no overshoot
             {
-                var naust = new Vector3D(-3639808.44, 0, -1284705.62);
-                var andro = new Vector3D(0, 0, 0);
-                route = new List<Nav.Wp> { W(new Vector3D(0, 0, 0), 2000, "curve"), W(andro, 500, "target") };
+                var naust = new Vector3D(-3328808.44, -72000.00, -1472705.62);
+                var andro = new Vector3D(2443065.43, -634043.44, -2528128.79);
+                route = new List<Nav.Wp> { W(new Vector3D(2437029.92, -632964.46, -2522989.87), 2000, "curve"), W(andro, 500, "target") };
                 HandFor = 5; handFrom = -1;
                 r = Fly(route, naust, andro - naust, 138.7, 0.6, Vector3D.Zero, 1500, andro, 1, 1, default(Vector3D), 0.047, 0.3, 0.062, 40, 20);
                 HandFor = 0; handFrom = -1;

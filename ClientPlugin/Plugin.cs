@@ -196,6 +196,7 @@ public class SystemMapSession : MySessionComponentBase
     protected override void UnloadData()
     {
         FlipAndBurnLink.Unload();
+        SystemData.SetKnownStations(null);
         WorldGate.Reset();
         Perf.Reset();
         SpectrumLink.Reset();

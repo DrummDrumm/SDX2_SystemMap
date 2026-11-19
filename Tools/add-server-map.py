@@ -6,7 +6,9 @@ are on the server:
 
 - every planet and moon that has a planet generator in the world's mods, at its server centre, written as a planet
   entity in SANDBOX_0_0_0_.sbs plus its small .vx2 storage file (an untouched procedural planet);
-- the station GPS points (Belt.Tycho.STN ...) for the local player;
+- the station GPS points (Belt.Tycho.STN ...) for the local player, from Tools/stations.local.tsv: a file you keep
+  yourself (gps name, title, x, y, z, tab separated; not in the repository, and the plugin has no station list of
+  its own). Without it no stations are added;
 - a stand-in grid at each station: the real stations are grids in the server's own world, not in any of its mods,
   so each gets a static, unowned cross of armour arms (77.5 m across each way: something to fly round and stop
   short of) with an Installation core, a battery and a beacon named after it ("Rhea Station (stand-in)"). Stations on
@@ -66,8 +68,16 @@ def read_system_data():
     num = r"(-?[\d.]+)"
     worlds = [(m[0], float(m[2]), float(m[3]), float(m[4]), float(m[5])) for m in re.findall(
         r'W\("([^"]+)", "([^"]*)", ' + num + ", " + num + ", " + num + ", " + num, src)]
-    stations = [(m[0], m[1], float(m[2]), float(m[3]), float(m[4])) for m in re.findall(
-        r'St\("([^"]+)", "([^"]+)", ' + num + ", " + num + ", " + num + r"\)", src)]
+    stations = []
+    local = os.path.join(HERE, "stations.local.tsv")
+    if os.path.exists(local):
+        for line in open(local, encoding="utf-8"):
+            f = line.rstrip(chr(10)).split(chr(9))
+            if line.startswith("#") or len(f) != 5:
+                continue
+            stations.append((f[0], f[1], float(f[2]), float(f[3]), float(f[4])))
+    else:
+        print("no Tools/stations.local.tsv: no station GPS points or stand-in grids are added")
     return worlds, stations
 
 

@@ -1,8 +1,44 @@
 # SDX2 System Map
 
-A standalone Pulsar client plugin: a 3D map of the Sigma Draconis Expanse 2 system that plots the route to the
-destination you pick in **Flip and Burn's N list**. A programmable-block autopilot can then fly that route. Written
+A standalone Pulsar client plugin: a 3D map of the Sigma Draconis Expanse 2 system that plans routes to the
+destinations in **Flip and Burn's N list** and to your **saved GPS points**. A programmable-block autopilot can then fly that route. Written
 from scratch.
+
+## Summary
+
+- **What it is:** a client-side Pulsar plugin for SDX2. It draws a 3D map of the system and plans routes to
+  the destinations in Flip and Burn's N list and to your saved GPS points (no station is built into the plugin: a station is drawn,
+  listed and routed to only once its GPS point, `region.place.STN`, is in your own GPS list): burn, flip and brake points, detours round planets and asteroid
+  fields, sector borders, ETA and water use.
+- **Where you see it:** a map window beside the N list, a full-screen map, a pinned corner view, a camera picture of
+  the destination, and optionally a second monitor (with touch).
+- **Flying the route:** by hand, with HUD markers that show where to point the nose and when to flip; or with the
+  optional autopilot script in a programmable block on your own ship, which the plugin hands the route to through the
+  block's Custom Data.
+- **What it reads and writes:** it reads your own ship, your GPS list and Flip and Burn's list. It writes only to Flip
+  and Burn's selection and to your own autopilot PB. Nothing is sent anywhere else.
+- **When it switches off:** it does nothing in worlds without SDX2's Flip and Burn mod, and hides everything in admin
+  mode and spectator. When you are AFK it is read-only: the displays stay current, but no keys, mouse, prompts or
+  writes.
+- **Status:** in development, not on PluginHub. Run it from this repo with `Deploy-LocalDev.ps1` (see
+  [Build, test, deploy](#build-test-deploy)). `IN-GAME-TESTS.md` lists what has not yet been checked in game.
+
+## Previews
+
+These are drawn by the test project from the plugin's own renderer (`dotnet run -c Release --project Tests`), not
+captured in game.
+
+The full-screen map with a planned route (Classic theme):
+
+![Full-screen map with a route from Earth to Tycho](Docs/images/full-map.png)
+
+The Route Plan beside Flip and Burn's N list, with the route preview and the autopilot's HUD lines (OPA theme):
+
+![Route Plan panel, N list and route preview](Docs/images/route-plan.png)
+
+The full-screen map in the Protogen theme:
+
+![Full-screen map, Protogen theme](Docs/images/full-map-protogen.png)
 
 ## In game
 
@@ -17,7 +53,8 @@ no keys, no map, no toolbar actions, no speed-dial fix. Only its settings window
    **Esc**, or **B** on a controller, closes what is up (the list with its Route Plan, else the map window unless
    it's pinned, or the full-screen map) and does not open the pause menu; with none of them up, Esc and B are the
    game's as usual.
-2. Pick a destination. The list **stays open** (Flip and Burn would close it), and the map shows the route.
+2. Pick a destination: an entry in the list, or one of your saved GPS points (in the full map, or **Send to route
+   planner** on the terminal's GPS tab). The list **stays open** (Flip and Burn would close it), and the map shows the route.
 3. The Route Plan panel ("No destination yet" until you pick one) has **ENGAGE AUTOPILOT**, **FLY MANUAL** and
    **CANCEL**. CANCEL puts the panel away until the list is opened again or the destination changes.
    - **FLY MANUAL**: the list closes and you fly it with Flip and Burn as usual. The plugin picks each route point in

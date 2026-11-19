@@ -580,6 +580,7 @@ public sealed partial class MapScene
     {
         foreach (var m in Snap.Gps)
         {
+            if (Opt.Stations && SystemData.IsStationGps(m.Name)) continue; // drawn as the station it is
             if (!P(m.Pos, out var x, out var y) || !OnView(x, y, 10)) continue;
             Stalk(m.Pos, m.Color.WithAlpha(0.3f));
             if (Chart) Triangle(x, y, 6 * u, 0, -1, m.Color);

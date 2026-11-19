@@ -147,6 +147,9 @@ Virtual Displays (its own `IN-GAME-TESTS.md` holds the detail)
 - [ ] Neither shortcut sets off a game action bound to the same buttons (the game's own controller binds are not blocked).
 - [ ] Esc with the N list / Route Plan up closes them and the pause menu does not open; Esc with only the (unpinned) map
       window up closes that; Esc again (nothing up, or only the pinned window) opens the pause menu as normal.
+- [ ] Stations: with no station GPS in your list the map shows none, routes ignore them and the second screen has no
+      STATIONS heading; add one `region.place.STN` GPS (e.g. on the server after finding it) and that station alone
+      appears, is routed round, and is stopped short of (above it, if it is on a world).
 - [ ] Controller B does the same as Esc: closes the N list / Route Plan (also while the D-pad has the buttons), the
       unpinned map window, the full map and a key capture in settings; B with nothing up does its usual game action.
 - [ ] N list with a destination picked: no AUTOPILOT / MANUAL buttons under the list; the Route Plan is beside it

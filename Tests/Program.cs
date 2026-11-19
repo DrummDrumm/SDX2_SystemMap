@@ -21,11 +21,41 @@ internal static class Program
 
     private static bool Near(double a, double b, double tol) => Math.Abs(a - b) <= tol;
 
+    /// <summary>
+    /// Made-up station GPS points for the checks and previews (the plugin knows only the stations in a player's own GPS
+    /// list). Placed by rule from the worlds, not at the server's real spots: on a world's ground, just off it, or out
+    /// in a field.
+    /// </summary>
+    private static List<KeyValuePair<string, V3>> TestStations()
+    {
+        var list = new List<KeyValuePair<string, V3>>();
+        void At(string gps, V3 pos) => list.Add(new KeyValuePair<string, V3>(gps, pos));
+        void On(string gps, string world, V3 dir, double height) { var w = SystemData.FindWorld(world); At(gps, w.Pos + dir.Normalized * (w.Radius + height)); }
+        On("Belt.2Pallas.STN", "Pallas", new V3(1, 0.4, -0.3), 0);
+        On("Belt.Eros.STN", "Eros", new V3(0.2, 1, 0.3), 2500);
+        On("Belt.Hygeia.STN", "Hygeia", new V3(-0.5, 0.3, 1), -2000); // inside it
+        At("Belt.Tycho.STN", new V3(-6010e3, -100e3, 6010e3));        // out in the Belt
+        On("Belt.Vesta.STN", "Vesta", new V3(1, 0.2, 0.6), 2000);
+        On("Ve.Andromeda.STN", "Venus", new V3(-1, -0.1, -0.8), 60e3);
+        On("JU.Ganymede.STN", "Ganymede", new V3(0.6, -0.3, -1), 0);
+        On("JU.IoHeliumRef.STN", "Io", new V3(0.3, 0.9, 0.4), 0);
+        On("SA.Enceladus.STN", "Enceladus", new V3(-0.2, 1, 0.1), 0);
+        On("SA.Iapetus.STN", "Iapetus", new V3(-0.4, 0.2, -1), 5000);
+        On("SA.Mimas.STN", "Mimas", new V3(1, -0.1, -0.5), 4000);
+        On("SA.Rhea.STN", "Rhea", new V3(-0.5, -0.9, -0.2), 0);
+        On("NE.TriDALab.STN", "Triton", new V3(-1, 0.3, 0.2), 0);
+        At("Greek.Achilles.STN", new V3(-14488887 + 500e3, -20e3, 3882285 - 150e3));
+        At("Tro.Paris.STN", new V3(-6339273 - 200e3, 40e3, -13594616 + 600e3));
+        At("CE.Aventine.STN", SystemData.FindWorld("Ceres").Pos + new V3(-400e3, 250e3, -200e3));
+        return list;
+    }
+
     private static int Main(string[] args)
     {
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         string outDir = args.Length > 0 ? args[0] : Path.Combine(root, "previews");
         Directory.CreateDirectory(outDir);
+        SystemData.SetKnownStations(TestStations()); // the plugin has none built in: these stand in for a player's GPS points
 
         Sectors();
         Burns();
@@ -600,7 +630,7 @@ internal static class Program
             try
             {
                 phobos.Well = 4400; phobos.Hills = 4400; phobos.SurfaceG = 0.05 * 9.81; phobos.Falloff = 7; // the game's numbers
-                var ship = new V3(-3506274.91, -585056.39, 5897633.21); var tychoAt = new V3(0, 0, 0);
+                var ship = new V3(-3506274.91, -585056.39, 5897633.21); var tychoAt = new V3(-6517288.60, -351506.97, 4537578.92); // a point out past Phobos (no station)
                 var ct = new RouteTracker { Avoid = true, Curved = true };
                 ct.Update("Tycho Station", tychoAt, true, ship, V3.Zero, 169.26, 50000);
                 Check(ct.Waypoints.Exists(w => w.Around == phobos) && ct.Path.Curved, "by Phobos: the route goes round it, curved");
@@ -759,7 +789,7 @@ internal static class Program
         // a ground facility (2 Pallas Station, in Pallas's hills): the planner's descent detour ends ~3.7 km from it, and
         // the stop must still be above it, never on it (2026-11-19: stop=point on the station flew a hauler into the ground)
         {
-            var pal = Array.Find(SystemData.Stations, x => x.Name == "2 Pallas Station");
+            var pal = Array.Find(SystemData.Stations, x => x.Name == "2Pallas Station");
             var pw = SystemData.FindWorld("Pallas");
             foreach (var from in new[] { new V3(11342873.83, -157987.76, 13924813.76), new V3(6222641.78, -274072.35, 6284849.9) })
                 foreach (bool curved in new[] { false, true })
@@ -987,6 +1017,29 @@ internal static class Program
     /// <summary>The second screen's list of places: its rows, its pages and a pick.</summary>
     private static void DestinationListChecks()
     {
+        // no station is built in: they are the station GPS points you have, and nothing else
+        {
+            var had = new List<KeyValuePair<string, V3>>();
+            foreach (var s in SystemData.Stations) had.Add(new KeyValuePair<string, V3>(s.Gps, s.Pos));
+            SystemData.SetKnownStations(null);
+            var none = new MapSnapshot();
+            none.Gps.Add(new MapSnapshot.Marker { Name = "My base", Pos = new V3(1, 2, 3) });
+            Check(SystemData.Stations.Length == 0 && SystemData.StationNear(had[3].Value, 1e9) == null && !DestinationList.Build(none).Exists(e => e.Name == "STATIONS" || e.Kind == "Trade station"),
+                  "stations: none known without their GPS points (no list entry, no heading)");
+            var rhea = SystemData.FindWorld("Rhea");
+            SystemData.SetKnownStations(new[] {
+                new KeyValuePair<string, V3>("SA.Rhea.STN", rhea.Pos + new V3(0, rhea.Radius, 0)), new KeyValuePair<string, V3>("Belt.Tycho.STN", had[3].Value),
+                new KeyValuePair<string, V3>("My base", new V3(1, 2, 3)), new KeyValuePair<string, V3>("Belt.Tycho.STN", new V3(9, 9, 9)) });
+            Check(SystemData.Stations.Length == 2 && SystemData.Stations[0].Name == "Rhea Station" && SystemData.Stations[0].Above == SystemData.GroundAbove
+                  && SystemData.Stations[1].Name == "Tycho Station" && SystemData.Stations[1].Above == 0 && SystemData.Stations[1].Pos.X == had[3].Value.X,
+                  "stations: from region.place.STN GPS points only, once each; on a world's ground = ground facility");
+            Check(!SystemData.IsStationGps("Tycho") && !SystemData.IsStationGps("a.b.c") && !SystemData.IsStationGps("Belt..STN") && SystemData.IsStationGps(" belt.Tycho.stn "), "stations: only names of the form region.place.STN count");
+            var one = new MapSnapshot();
+            one.Gps.Add(new MapSnapshot.Marker { Name = "Belt.Tycho.STN", Pos = had[3].Value });
+            var l1 = DestinationList.Build(one);
+            Check(l1.FindAll(e => e.Kind == "Trade station").Count == 2 && !l1.Exists(e => e.Kind == "GPS"), "destination list: a station's GPS point is listed as the station, not again under GPS");
+            SystemData.SetKnownStations(had);
+        }
         var snap = new MapSnapshot();
         snap.Gps.Add(new MapSnapshot.Marker { Name = "My base", Pos = new V3(1, 2, 3) });
         var items = DestinationList.Build(snap);

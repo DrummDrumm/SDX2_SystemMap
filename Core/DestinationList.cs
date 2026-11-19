@@ -30,12 +30,13 @@ public static class DestinationList
             if (w.IsStar || w.IsObstacle || w.IsField) continue;
             list.Add(new Entry { Name = w.Name, Kind = "World", Detail = SystemData.SectorAt(w.Pos).Dx, Pos = w.Pos, Moon = !string.IsNullOrEmpty(w.Parent) && w.Parent != "Sol" });
         }
-        list.Add(new Entry { Name = "STATIONS", Head = true });
+        // only the stations you have a GPS point for (none are built in)
+        if (SystemData.Stations.Length > 0) list.Add(new Entry { Name = "STATIONS", Head = true });
         foreach (var s in SystemData.Stations) list.Add(new Entry { Name = s.Name, Kind = "Trade station", Detail = s.Gps, Pos = s.Pos });
-        if (snap != null && snap.Gps.Count > 0)
+        if (snap != null && snap.Gps.Exists(m => !SystemData.IsStationGps(m.Name)))
         {
             list.Add(new Entry { Name = "GPS", Head = true });
-            foreach (var m in snap.Gps) list.Add(new Entry { Name = m.Name, Kind = "GPS", Detail = "", Pos = m.Pos });
+            foreach (var m in snap.Gps) if (!SystemData.IsStationGps(m.Name)) list.Add(new Entry { Name = m.Name, Kind = "GPS", Detail = "", Pos = m.Pos });
         }
         return list;
     }

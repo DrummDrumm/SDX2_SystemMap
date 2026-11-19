@@ -7,7 +7,7 @@ using VRage.Game.ModAPI;
 namespace SDX2_SystemMap;
 
 /// <summary>
-/// What the route keeps out of besides the worlds: the known stations (the map's list) and the bases owned by you or
+/// What the route keeps out of besides the worlds: the stations you know (those with a GPS point in your list) and the bases owned by you or
 /// your faction that your game has loaded. A base is a grid set to station with an Outpost or Installation core
 /// (SystemData.IsBaseCore); ships, and grids without one of those cores, aren't obstacles. Only things you already know about (SDX2's plugin rules): no other
 /// player's grids, nothing your sensors haven't shown you. Grids near each other are merged into one sphere.
