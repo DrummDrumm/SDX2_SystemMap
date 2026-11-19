@@ -9,9 +9,9 @@ namespace SDX2_SystemMap;
 /// <item>Classic: as the Skylark Belt plugin draws it in game: 6 rings round the tube and 36 round cross-sections.</item>
 /// <item>Tachi: 4 segmented rings and a cross-section every 30 degrees in the HUD red.</item>
 /// <item>UNN: the chart's tube: its inner and outer edges, top and bottom, and a cross-section on every 30-degree bearing, gold at 000 / 090 / 180 / 270.</item>
-/// <item>OPA: dashed edges, hazard-dashed cross-sections every 45 degrees and a scatter of rocks through the tube.</item>
+/// <item>Belter: dashed edges, hazard-dashed cross-sections every 45 degrees and a scatter of rocks through the tube.</item>
 /// <item>Protogen: a fine wireframe lattice (8 rings, 48 cross-sections) with a bright ring along its top.</item>
-/// <item>Belter: a hexagonal tube: 6 rings on its corners and a hexagon cross-section every 15 degrees.</item>
+/// <item>OPA: a hexagonal tube: 6 rings on its corners and a hexagon cross-section every 15 degrees.</item>
 /// </list>
 /// </summary>
 public sealed partial class MapScene
@@ -100,7 +100,7 @@ public sealed partial class MapScene
         }
     }
 
-    /// <summary>OPA: a fixed scatter of rocks through the tube (the same every frame).</summary>
+    /// <summary>Belter: a fixed scatter of rocks through the tube (the same every frame).</summary>
     private void BeltRocks(int count, MapColor col)
     {
         static double Frac(double v) => v - Math.Floor(v);

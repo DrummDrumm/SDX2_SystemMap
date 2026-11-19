@@ -90,7 +90,7 @@ internal static class GravityWatch
             snap.GravityG = gHere / 9.81;
             if (snap.InGravity) snap.GravityName = Nearest(snap.ShipPos);
             if (snap.InGravity && !wasIn && engaged)
-                SidePreview.Notify("Entered " + snap.GravityName + "'s gravity well (" + Fmt.Num(snap.GravityG, "0.00") + " g): the drives hold the ship up now.", false);
+                SidePreview.Notify("Entered " + snap.GravityName + "'s gravity well (" + Fmt.Num(snap.GravityG, "0.00") + " g): the drives must hold the ship up.", false);
             wasIn = snap.InGravity;
             if (path == null) { warnedRoute = warnedSoon = null; return; }
 
@@ -146,13 +146,31 @@ internal static class GravityWatch
 
     private static double G(V3 p) => MyGravityProviderSystem.CalculateNaturalGravityInPoint(new Vector3D(p.X, p.Y, p.Z)).Length();
 
-    /// <summary>The planet or moon nearest the point (by distance to its surface).</summary>
+    /// <summary>
+    /// Whose well the point is in: the game's closest planet (its voxel map is named "Pallas-12345d10000"), else the
+    /// map's world nearest the point by distance to its surface. The Belt's dwarf planets count: Pallas's well was
+    /// called Ceres's when they were left out.
+    /// </summary>
     private static string Nearest(V3 p)
     {
+        try
+        {
+            var planet = MyGamePruningStructure.GetClosestPlanet(new Vector3D(p.X, p.Y, p.Z));
+            string sn = planet?.StorageName;
+            if (!string.IsNullOrEmpty(sn))
+            {
+                int dash = sn.IndexOf('-');
+                string key = dash > 0 ? sn.Substring(0, dash) : sn;
+                foreach (var w in SystemData.Worlds)
+                    if (string.Equals(w.Name, key, StringComparison.OrdinalIgnoreCase)) return w.Name;
+                return key;
+            }
+        }
+        catch { /* the map's own list below */ }
         string best = "a planet"; double bd = double.MaxValue;
         foreach (var w in SystemData.Worlds)
         {
-            if (w.IsObstacle || w.Name == "Sol" || w.IsAsteroid) continue;
+            if (w.IsObstacle || w.Name == "Sol" || w.IsField) continue;
             double d = V3.Distance(p, w.Pos) - w.Radius;
             if (d < bd) { bd = d; best = w.Name; }
         }

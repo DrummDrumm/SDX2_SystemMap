@@ -179,7 +179,7 @@ internal sealed class MapMouse
         return Math.Abs(vx * dx + vy * dy) / (vl * ml) < Math.Cos(35 * Math.PI / 180);
     }
 
-    private const string DestKind = "F&B destination";
+    private const string DestKind = "Destination";
 
     /// <summary>
     /// On the X (or Z) axis line through basePos, at the same height: the point on it nearest the mouse ray; false

@@ -50,9 +50,9 @@ public static class ShipIcons
     {
         int H = rows.Length, L = 0;
         foreach (var r in rows) L = Math.Max(L, r.Length);
-        float h = 2f / Math.Max(1, L);
+        float h = 2f / Math.Max(1, Math.Max(L, H)); // the longer of length and beam spans -1 to 1
         bool On(int j, int i) => j >= 0 && j < H && i >= 0 && i < rows[j].Length && rows[j][i] == '#';
-        float X(int i) => 1 - i * h;
+        float X(int i) => L * h / 2 - i * h;
         float Y(int j) => (j - (H - 1) / 2f) * h; // row middle
         var runs = new List<(float, float, float)>();
         for (int j = 0; j < H; j++)
@@ -281,9 +281,9 @@ public sealed partial class MapScene
     /// <item>Classic: a plain arrow.</item>
     /// <item>Tachi: a segmented red line ending in a double chevron.</item>
     /// <item>UNN: a plotting vector with ruler ticks and a gold diamond at its end.</item>
-    /// <item>OPA: a run of hazard chevrons, brighter toward the front.</item>
+    /// <item>Belter: a run of hazard chevrons, brighter toward the front.</item>
     /// <item>Protogen: a thin line to a small reticle (a ring with crosshair ticks) where the ship is headed.</item>
-    /// <item>Belter: a dotted trail ending in a filled triangle.</item>
+    /// <item>OPA: a dotted trail ending in a filled triangle.</item>
     /// </list>
     /// </summary>
     private void CourseMarker(float x, float y, float dx, float dy, float start, float len, MapColor col)
@@ -368,6 +368,29 @@ public sealed partial class MapScene
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// The settings window's picture of a ship icon: <paramref name="s"/> as large as fits the box at (x0, y0), nose up,
+    /// with <paramref name="caption"/> under it; with no shape, <paramref name="note"/> in its place.
+    /// </summary>
+    public void ShipPreview(IMapCanvas canvas, ShipIcons.Shape s, float x0, float y0, float w, float h, string caption, string note)
+    {
+        c = canvas; u = h / 160f;
+        c.Rect(x0, y0, w, h, Bg);
+        float cx = x0 + w / 2, cy = y0 + h / 2 - 7 * u;
+        if (s == null) { c.Text(note ?? "", cx, cy, 10 * u, ShipCol.WithAlpha(0.8f), TextAnchor.Center); return; }
+        float along = 0.05f, across = 0.05f;
+        if (s.Runs != null)
+            foreach (var (a, b, yy) in s.Runs) { along = Math.Max(along, Math.Max(Math.Abs(a), Math.Abs(b))); across = Math.Max(across, Math.Abs(yy) + s.RowH / 2); }
+        else
+        {
+            foreach (var q in s.Outline) { along = Math.Max(along, Math.Abs(q.X)); across = Math.Max(across, Math.Abs(q.Y)); }
+            along += ShipIcons.BellLength;
+        }
+        float r = Math.Min((h / 2 - 16 * u) / along, (w / 2 - 8 * u) / across);
+        ShipShape(s, cx, cy, r, 0, -1, 1, ShipCol.WithAlpha(0.5f), ShipCol);
+        if (!string.IsNullOrEmpty(caption)) c.Text(caption, x0 + w / 2, y0 + h - 15 * u, 9 * u, ShipCol.WithAlpha(0.8f), TextAnchor.Center);
     }
 
     /// <summary>

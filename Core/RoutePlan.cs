@@ -77,6 +77,9 @@ public sealed class RoutePlan
         }
         return best;
     }
+    /// <summary>This leg ending at <paramref name="stop"/> instead (a copy; the plan's burn times are not redone).</summary>
+    public RoutePlan EndingAt(V3 stop) { var p = (RoutePlan)MemberwiseClone(); p.Target = stop; return p; }
+
     public V3 FlipPoint => PointAt(FlipAt);
     public V3 CoastPoint => PointAt(CoastAt);
 

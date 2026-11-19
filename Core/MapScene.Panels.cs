@@ -11,9 +11,9 @@ namespace SDX2_SystemMap;
 /// tapes, big readouts and the segmented timeline.</item>
 /// <item>UNN: a full-height plotting sheet docked to the left edge, with a compass (course and velocity bearings), a
 /// speed-against-time graph and a ruled log.</item>
-/// <item>OPA: stacked salvage cards at the top left: readout tiles, block gauges with status lights, and a route log.</item>
+/// <item>Belter: stacked salvage cards at the top left: readout tiles, block gauges with status lights, and a route log.</item>
 /// <item>Protogen: a strip along the bottom with a tabbed header, a ring timeline, ruler gauges and the rows in columns.</item>
-/// <item>Belter: a wide chamfered chart card with dials and a range track beside boxed rows.</item>
+/// <item>OPA: a wide chamfered chart card with dials and a range track beside boxed rows.</item>
 /// </list>
 /// </summary>
 public sealed partial class MapScene
@@ -164,14 +164,14 @@ public sealed partial class MapScene
         {
             case ThemeStyle.Tachi: TachiPanel(t, plan, timeline, top, bottom); break;
             case ThemeStyle.Naval: NavalPanel(t, plan, timeline, top, bottom); break;
-            case ThemeStyle.Belter: OpaPanel(t, plan, timeline); break;
+            case ThemeStyle.Belter: BelterPanel(t, plan, timeline); break;
             case ThemeStyle.Protogen: ProtoPanel(t, plan, timeline, bottom); break;
             case ThemeStyle.Contact: ContactPanel(t, plan, timeline); break;
             default: ClassicPanel(t, plan, timeline); break;
         }
     }
 
-    /// <summary>The longest key the plan's rows use; the key column is always this wide.</summary>
+    /// <summary>A key as wide as the widest the plan's rows use; the key column is always this wide.</summary>
     private const string KeyWidest = "PICK NEXT IN N";
     /// <summary>The value column's fixed width, in text heights.</summary>
     internal const float ValueCols = 15.5f;
@@ -187,6 +187,7 @@ public sealed partial class MapScene
         (" waypoints", " wpts"), (" waypoint", " wpt"), (" detours", " det"), (" detour", " det"), ("  via ", "  "),
         (" Station)", ")"), (" Station", " Stn"), ("Border ", ""), (" along)", ")"), (" no-fly", ""), (" clear)", ")"),
         ("  coast ", "  cst "), (" (no Nexus transfer)", ""),
+        (" outside gravity", " off gravity"), (" clear (gravity not known)", " clear"), (" as low as thrust holds", " low"),
     };
 
     /// <summary>Value text that fits w at size px: shortened with <see cref="Shorter"/>, then drawn smaller (to 75%) if it still doesn't fit.</summary>
@@ -201,7 +202,10 @@ public sealed partial class MapScene
             if (c.TextWidth(s, px) <= w) return s;
         }
         fp = Math.Max(px * 0.75f, px * w / Math.Max(1f, c.TextWidth(s, px)));
-        return s;
+        if (c.TextWidth(s, fp) <= w + 0.5f) return s;
+        // still too long at the smallest size: cut it, so it never runs out of its column
+        while (s.Length > 4 && c.TextWidth(s + "...", fp) > w) s = s.Substring(0, s.Length - 1);
+        return s.TrimEnd() + "...";
     }
 
     // ------------------------------------------------------------------ layouts
@@ -314,7 +318,7 @@ public sealed partial class MapScene
         for (float ly = y + t.Rows.Count * lh + lh * 0.9f - lw; ly < b.Bottom - px; ly += lh) c.Rect(x - px * 0.5f, ly, iw + px, lw, T.Trim.WithAlpha(0.1f));
     }
 
-    private void OpaPanel(PanelText t, RoutePlan p, bool tl)
+    private void BelterPanel(PanelText t, RoutePlan p, bool tl)
     {
         float px = t.Px, lh = t.Lh, gap = px * 0.55f, w = Math.Max(px * 24, px * 2.2f + t.Kw + t.Gap + t.Vw);
         float x0 = view.X + px, y0 = PanelTop(lh), y = Slot(x0, y0, w, px), x = x0 + px, iw = w - px * 2;
@@ -633,7 +637,7 @@ public sealed partial class MapScene
         if (fx - lf / 2 > g.X + l0 + px * 0.3f && fx + lf / 2 < g.Right - le - px * 0.3f) c.Text("FLIP", fx, ay, sp, T.Trim, TextAnchor.Center);
     }
 
-    /// <summary>OPA: readout tiles across w: a label, a big value and a colour tab.</summary>
+    /// <summary>Belter: readout tiles across w: a label, a big value and a colour tab.</summary>
     private void Tiles(float x, float y, float w, float px, (string K, string V, MapColor Col)[] tiles)
     {
         float gap = px * 0.5f, tw = (w - gap * (tiles.Length - 1)) / tiles.Length, th = px * 2.8f, bar = Math.Max(2f, 3 * u);
@@ -649,7 +653,7 @@ public sealed partial class MapScene
         }
     }
 
-    /// <summary>OPA: a chunky block gauge (12 blocks) between its label and value; the mark's block outlined.</summary>
+    /// <summary>Belter: a chunky block gauge (12 blocks) between its label and value; the mark's block outlined.</summary>
     private void Blocks(float x, float y, float w, float px, string label, string value, float frac, float mark, MapColor col)
     {
         float lp = px * 0.8f, bx = x + px * 4.4f, bw = w - px * 4.4f - px * 5.4f, bh = px * 0.95f, lw = Math.Max(1f, u);
@@ -669,7 +673,7 @@ public sealed partial class MapScene
         }
     }
 
-    /// <summary>OPA: status lights: Nexus border, detour, hazard and overrun, lit when the route has them.</summary>
+    /// <summary>Belter: status lights: Nexus border, detour, hazard and overrun, lit when the route has them.</summary>
     private void Lights(float x, float y, float w, float px)
     {
         bool border = false, hazard = false, over = false;
@@ -729,7 +733,7 @@ public sealed partial class MapScene
         Triangle(x + w * frac, ly - px * 0.62f, px * 0.32f, 0, 1, col);
     }
 
-    /// <summary>Belter: the leg as a range track by distance: the ship, the coast start, the flip and the leg's end.</summary>
+    /// <summary>OPA: the leg as a range track by distance: the ship, the coast start, the flip and the leg's end.</summary>
     private void RangeTrack(Box r, float px, RoutePlan p)
     {
         double d = Math.Max(1, p.Distance);

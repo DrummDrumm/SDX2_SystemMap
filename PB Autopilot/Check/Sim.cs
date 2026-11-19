@@ -24,16 +24,27 @@ namespace PbCheck
         /// <summary>Game ticks between PB runs: 10 is Update10 (the script). SIM_RUN_TICKS=60 tries once a second.</summary>
         static readonly int RunTicks = int.Parse(Environment.GetEnvironmentVariable("SIM_RUN_TICKS") ?? "10");
 
-        class Result { public bool Arrived; public int Reversals, Toggles, Flips; public double CruiseSwing, Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
+        class Result { public bool Arrived; public int Kicks, Reversals, Toggles, Flips; public double OverTime, FlipTime, MaxFace = -1, CruiseSwing, Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
+
+        /// <summary>Seconds the pilot holds the controls once the flip to brake starts (0 = never); when it began.</summary>
+        static double HandFor, handFrom = -1;
 
         static Nav.Wp W(Vector3D p, double arrive, string kind) { return new Nav.Wp { Pos = p, Arrive = arrive, Kind = kind, Name = kind }; }
 
-        static Result Fly(List<Nav.Wp> route, Vector3D start, Vector3D startDrive, double aMax, double shipTurnRate, Vector3D g, double limit, Vector3D watch, double burnCap = 1, double brakeCap = 1, Vector3D v0 = default(Vector3D), double alpha = 0.6)
+        static Result Fly(List<Nav.Wp> route, Vector3D start, Vector3D startDrive, double aMax, double shipTurnRate, Vector3D g, double limit, Vector3D watch, double burnCap = 1, double brakeCap = 1, Vector3D v0 = default(Vector3D), double alpha = 0.6, double alphaRoll = 0, double alphaYaw = 0, double sizeUp = 0, double sizeLeft = 0, double observed = 0)
         {
-            var s = new Nav.Settings();
+            var s = new Nav.Settings(); s.Observed = observed; // observed: a turn rate already seen this flight
             var est = new Nav.VelocityEstimator();
             Vector3D p = start, v = v0, drive = Vector3D.Normalize(startDrive), w = Vector3D.Zero, wLast = Vector3D.Zero;
             double dt = RunTicks / 60.0; // alpha: gyro angular acceleration, rad/s²
+            // alphaRoll > 0: Flip and Burn's turn handling above 100 m/s (damping 0.5, a turn under 0.001 rad/s on every
+            // world axis zeroed each tick) and the game's gyro torque, one clamp on its length shared by all axes:
+            // alphaRoll about the drive axis, alpha across it
+            // alphaYaw: about up (0 = alpha too); sizeUp / sizeLeft: the hull (100 m long) for the flip axis guess
+            Vector3D up = Vector3D.CalculatePerpendicularVector(drive);
+            if (alphaYaw <= 0) alphaYaw = alpha;
+            s.SizeFwd = sizeUp > 0 ? 100 : 0; s.SizeUp = sizeUp; s.SizeLeft = sizeLeft;
+            double flipStart = -1;
             bool thrOn = false, flipped = false;
             if (v0.LengthSquared() > 0) est.Update(p - v0, Vector3D.Normalize(v0) * 100, -1); // already moving: a second of history
             int idx = 0; double t = 0;
@@ -43,11 +54,25 @@ namespace PbCheck
             {
                 var phys = v.Length() > 100 ? Vector3D.Normalize(v) * 100 : v;
                 var vEst = est.Update(p, phys, t);
-                if (cmd.W.Length() >= s.TurnRate * 0.99) s.Observed = Math.Max(s.Observed, w.Length());
+                s.PhysMax = Math.Max(s.PhysMax, phys.Length());
+                if (cmd.W.Length() >= s.TurnRate * 0.99 && !s.Kicking) s.Observed = Math.Max(s.Observed, w.Length());
+                s.AxisUp = up; s.AxisLeft = Vector3D.Cross(up, drive);
                 s.Learn(cmd.W, w, t);
-                cmd = Nav.Steer(p, vEst, g, drive, aMax, burnCap, brakeCap, route, idx, 50000 * 0.98, s); cmd = Written(cmd);
+                cmd = Nav.Steer(p, vEst, g, drive, aMax, burnCap, brakeCap, route, idx, 50000 * 0.98, s);
+                if (Environment.GetEnvironmentVariable("SIM_NO_KICK") == null) cmd.W = s.Unstick(cmd.W, w, drive, up);
+                if (s.Kicking) r.Kicks++;
+                cmd = Written(cmd);
+                // a short takeover: the pilot holds the controls HandFor s from when the flip to brake starts (no turn, no burn)
+                if (HandFor > 0 && v.Length() > 1000)
+                {
+                    double fc0 = Vector3D.Dot(drive, v) / v.Length();
+                    if (handFrom < 0 && fc0 < 0.9 && cmd.W.Length() > 0.03) handFrom = t;
+                    if (handFrom >= 0 && t < handFrom + HandFor) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; }
+                }
                 idx = cmd.Idx;
                 if (Environment.GetEnvironmentVariable("SIM_TRACE") != null && Vector3D.Distance(p, watch) < 40e3) Console.WriteLine("  t " + t.ToString("0") + " d " + Vector3D.Distance(p, watch).ToString("0") + " v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
+                if (Environment.GetEnvironmentVariable("SIM_LONG_TRACE") != null && (int)(t / dt) % (int)(10 / dt) == 0) Console.WriteLine("  t " + t.ToString("0") + " rem " + (cmd.Remaining / 1000).ToString("0") + " km to " + (Vector3D.Distance(p, watch) / 1000).ToString("0") + " km v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
+                if (cmd.Over > 0) r.OverTime += dt;
                 if (cmd.Arrived) { r.Arrived = true; break; }
                 // wobble: the turn reversing, the throttle switching off and on
                 if (w.Length() > 0.03 && wLast.Length() > 0.03 && Vector3D.Dot(w, wLast) < 0) { r.Reversals++; if (Environment.GetEnvironmentVariable("SIM_REV_TRACE") != null && aMax > 300) Console.WriteLine("  rev t " + t.ToString("0") + " v " + v.Length().ToString("0") + " rem " + (cmd.Remaining / 1000).ToString("0") + " km thr " + cmd.Throttle.ToString("0.00")); }
@@ -74,15 +99,43 @@ namespace PbCheck
                 {
                     double h = 1.0 / 60;
                     var dw = want - w;
-                    if (dw.Length() > alpha * h) dw = Vector3D.Normalize(dw) * alpha * h;
-                    w += dw;
-                    if (w.LengthSquared() > 0) drive = Vector3D.Normalize(drive + Vector3D.Cross(w, drive) * h);
+                    if (alphaRoll > 0)
+                    {
+                        var dr = drive * Vector3D.Dot(dw, drive); var du = up * Vector3D.Dot(dw, up); var dp = dw - dr - du;
+                        var tau = dr / alphaRoll + du / alphaYaw + dp / alpha; // torque to close the gap in a tick, per tick-squared
+                        double n = tau.Length() / h;
+                        if (n > 1) { dr /= n; du /= n; dp /= n; }
+                        w += dr + du + dp;
+                        if (v.Length() > 100)
+                        {
+                            w *= 1 - Nav.Settings.FbDamping * h;
+                            if (Math.Abs(w.X) < 0.001 && Math.Abs(w.Y) < 0.001 && Math.Abs(w.Z) < 0.001) w = Vector3D.Zero;
+                        }
+                    }
+                    else
+                    {
+                        if (dw.Length() > alpha * h) dw = Vector3D.Normalize(dw) * alpha * h;
+                        w += dw;
+                    }
+                    if (w.LengthSquared() > 0)
+                    {
+                        var rot = MatrixD.CreateFromAxisAngle(Vector3D.Normalize(w), w.Length() * h);
+                        drive = Vector3D.Normalize(Vector3D.TransformNormal(drive, rot));
+                        up = Vector3D.Normalize(Vector3D.TransformNormal(up, rot));
+                    }
                     v += (drive * cmd.Throttle * aMax + g) * h;
                     if (v.Length() > 50000) v = Vector3D.Normalize(v) * 50000;
                     p += v * h;
                     { double dc = Vector3D.Distance(p, watch); if (dc < r.ClosestTo) { r.ClosestTo = dc; r.SpeedAtClosest = v.Length(); } }
                 }
                 r.MaxSpeed = Math.Max(r.MaxSpeed, v.Length());
+                if (t > 2 && v.Length() > 1) r.MaxFace = Math.Max(r.MaxFace, Vector3D.Dot(drive, v) / v.Length());
+                if (v.Length() > 1000) // the flip to brake: from leaving prograde to lined up retrograde
+                {
+                    double fc = Vector3D.Dot(drive, v) / v.Length();
+                    if (flipStart < 0 && r.FlipTime == 0 && fc < 0.9 && cmd.W.Length() > 0.03) flipStart = t;
+                    if (flipStart >= 0 && fc < -0.98) { r.FlipTime = t - flipStart; flipStart = -1; }
+                }
                 t += dt;
             }
             r.Time = t; r.End = p;
@@ -302,6 +355,15 @@ namespace PbCheck
             r = Fly(route, Vector3D.Zero, new Vector3D(1, 0, 0), 10, 0.6, Vector3D.Zero, 6000, none, 1, 0.25);
             Report("burn 100% / brake 25%", r);
             Check(r.Arrived && r.FinalDist < 500 && r.MaxBrake <= 0.25 + 1e-6 && r.MaxBurn > 0.5, "split caps: brakes at most 25%, flips early enough to stop (burn " + r.MaxBurn.ToString("0.00") + ", brake " + r.MaxBrake.ToString("0.00") + ")");
+            // engaged too fast for the capped brake (2026-11-19: 24.7 km/s, 2,700 km from Deimos, brake cap 54%, 230 km past)
+            route = new List<Nav.Wp> { W(new Vector3D(2700e3, 0, 0), 500, "target") };
+            r = Fly(route, Vector3D.Zero, new Vector3D(1, 0, 0), 171, 0.6, Vector3D.Zero, 3000, none, 0.539, 0.539, new Vector3D(24700, 0, 0));
+            Report("engaged at 24.7 km/s, brake cap 54%", r);
+            Check(r.Arrived && r.FinalDist < 500 && r.MaxBrake > 0.6 && r.MaxBrake < 0.95 && r.OverTime > 5, "engaged too fast for the brake cap: brakes above it, only as hard as needed, and stops (brake " + r.MaxBrake.ToString("0.00") + ", " + r.OverTime.ToString("0") + " s over the cap)");
+            // too fast even for the whole thrust: all of it
+            route = new List<Nav.Wp> { W(new Vector3D(1000e3, 0, 0), 500, "target") };
+            r = Fly(route, Vector3D.Zero, new Vector3D(1, 0, 0), 171, 0.6, Vector3D.Zero, 200, none, 0.539, 0.539, new Vector3D(24700, 0, 0));
+            Check(r.MaxBrake > 0.98, "too fast for any brake: brakes at 100% (brake " + r.MaxBrake.ToString("0.00") + ")");
 
             // 9) hotbar turns: prograde / retrograde holds, brake (retrograde full stop)
             var vx = new Vector3D(3000, 0, 0);
@@ -330,6 +392,121 @@ namespace PbCheck
             ReportTurn("prograde at 0.5 m/s", tr);
             Check(tr.Arrived && tr.Time < 0.5, "hold: under 1 m/s at the start says there's no direction to hold");
 
+            // 10) the overshoot of 2026-11-18: Naust Station to Andromeda Station (5,895 km), 138.7 m/s², a curve point 8 km short
+            {
+                var naust = new Vector3D(-3639808.44, 0, -1284705.62);
+                var andro = new Vector3D(0, 0, 0);
+                route = new List<Nav.Wp> { W(new Vector3D(0, 0, 0), 2000, "curve"), W(andro, 500, "target") };
+                foreach (var turn in new[] { 0.6, 0.15, 0.05 })
+                {
+                    r = Fly(route, naust, andro - naust, 138.7, turn, Vector3D.Zero, 1500, andro);
+                    Report("Naust to Andromeda at 138.7 m/s2, turns " + turn + " rad/s", r);
+                    Check(r.Arrived && r.FinalDist < 500, "long fast leg with a curve point: stops at the station (" + (r.FinalDist / 1000).ToString("0") + " km off, closest " + (r.ClosestTo / 1000).ToString("0") + " km at " + r.SpeedAtClosest.ToString("0") + " m/s)");
+                }
+                // the 2026-11-18 15:34 flight: the Iris hauler's gyros (0.047 rad/s² across, ~0.3 about its length)
+                // under Flip and Burn's clamp at 26 km/s: asked to flip, it sat still a minute and overshot 1,300 km
+                // pitch 0.047, yaw 0.062: the hull guess right (taller than wide: yaw faster), wrong, and none
+                foreach (var hull in new[] { new[] { 40.0, 20.0 }, new[] { 20.0, 40.0 }, new[] { 0.0, 0.0 } })
+                {
+                    r = Fly(route, naust, andro - naust, 138.7, 0.6, Vector3D.Zero, 1500, andro, 1, 1, default(Vector3D), 0.047, 0.3, 0.062, hull[0], hull[1]);
+                    string name = hull[0] > hull[1] ? "hull says yaw" : hull[0] < hull[1] ? "hull says pitch" : "no hull guess";
+                    Report("Naust to Andromeda, hauler under Flip and Burn, " + name + ", flip " + r.FlipTime.ToString("0.0") + " s", r);
+                    Check(r.Arrived && r.FinalDist < 500 && r.ClosestTo < 1000, "hauler under Flip and Burn's turn clamp (" + name + "): flips and stops at the station (" + (r.FinalDist / 1000).ToString("0") + " km off, closest " + (r.ClosestTo / 1000).ToString("0") + " km at " + r.SpeedAtClosest.ToString("0") + " m/s, " + r.Kicks + " kick runs)");
+                    if (hull[0] > hull[1]) Check(r.FlipTime > 0 && r.FlipTime < 30, "hauler flips about its faster axis (" + r.FlipTime.ToString("0.0") + " s)");
+                }
+            }
+
+            // 12) the 2026-11-19 07:50 flight to 2 Pallas Station: the route was changed mid-flight at 24 km/s, so much of
+            // the velocity was across the new line. Thrust went on cancelling that while the stop was planned as if all
+            // of it could brake along the line: it braked about 1.5 km/s short and stopped 94 km past the station
+            {
+                var pallas = new Vector3D(0, 0, 0);
+                var path = new[] { new Vector3D(11342873.83, -157987.76, 13924813.76), new Vector3D(10341877, -179461.21, 12429349.29),
+                    new Vector3D(9228868.07, -200884.41, 10762795.62), new Vector3D(8123860.01, -222311.2, 9108462.6),
+                    new Vector3D(7146865.78, -243795.42, 7649660.11), new Vector3D(6672041.27, -256735.93, 6944490.18),
+                    new Vector3D(6417898.34, -265390.93, 6569698.02), new Vector3D(6222641.78, -274072.35, 6284849.9) };
+                route = new List<Nav.Wp>();
+                foreach (var q in path) route.Add(W(q, 2000, "curve"));
+                route.Add(W(pallas, 500, "target"));
+                var full = route;
+                var line = Vector3D.Normalize(path[1] - path[0]);
+                var side = Vector3D.Normalize(Vector3D.Cross(line, Vector3D.Up));
+                foreach (var c in new[] { new[] { 20.0, 0 }, new[] { 40.0, 0 }, new[] { 60.0, 2 }, new[] { 75.0, 3 }, new[] { 40.0, 4 }, new[] { 60.0, 4 } })
+                {
+                    double off = c[0], rad = off * Math.PI / 180;
+                    var v0 = (line * Math.Cos(rad) + side * Math.Sin(rad)) * 24000;
+                    var start = path[(int)c[1]] - v0 * 2; // a little before that point, already moving
+                    route = full.GetRange((int)c[1], full.Count - (int)c[1]);
+                    r = Fly(route, start, v0, 161.58, 0.6, Vector3D.Zero, 1500, pallas, 1, 1, v0, 0.047, 0.3, 0.062, 40, 20);
+                    Report("Pallas, route changed at 24 km/s, " + off + " deg off the line at point " + (c[1] + 1) + " (hauler)", r);
+                    Check(r.Arrived && r.FinalDist < 500 && r.ClosestTo < 3000, "course change at speed, then a long stop: no overshoot (" + (r.FinalDist / 1000).ToString("0") + " km off, closest " + (r.ClosestTo / 1000).ToString("0") + " km at " + r.SpeedAtClosest.ToString("0") + " m/s, top " + r.MaxSpeed.ToString("0") + " m/s)");
+                }
+            }
+
+            // 13) a short takeover right as the flip to brake starts (under TakeoverAfter, so the autopilot takes the
+            // ship back): the reserve held before each flip covers it, with no overshoot
+            {
+                var naust = new Vector3D(-3639808.44, 0, -1284705.62);
+                var andro = new Vector3D(0, 0, 0);
+                route = new List<Nav.Wp> { W(new Vector3D(0, 0, 0), 2000, "curve"), W(andro, 500, "target") };
+                HandFor = 5; handFrom = -1;
+                r = Fly(route, naust, andro - naust, 138.7, 0.6, Vector3D.Zero, 1500, andro, 1, 1, default(Vector3D), 0.047, 0.3, 0.062, 40, 20);
+                HandFor = 0; handFrom = -1;
+                Report("Naust to Andromeda, hauler, the pilot holds the controls 5 s as the flip starts", r);
+                Check(r.Arrived && r.FinalDist < 500 && r.ClosestTo < 1000 && r.MaxBrake < 0.999, "5 s takeover at the flip: still stops at the station, with thrust to spare (" + (r.ClosestTo / 1000).ToString("0") + " km closest, braking at " + (r.MaxBrake * 100).ToString("0") + "% at most)");
+            }
+
+            // 11) Andromeda, 2026-11-18 16:14: braking, Flip and Burn drops the speed to 90 m/s a few km short; it
+            // turned round to speed up and back again to brake (a minute lost for a few m/s). Near: coast on. Far: burn.
+            {
+                var stop = new Vector3D(5000, 0, 0);
+                route = new List<Nav.Wp> { W(stop, 500, "target") };
+                r = Fly(route, Vector3D.Zero, new Vector3D(-1, 0, 0), 138.7, 0.6, Vector3D.Zero, 600, stop, 1, 1, new Vector3D(90, 0, 0));
+                Report("90 m/s facing back, 5 km short", r);
+                Check(r.Arrived && r.MaxFace < 0, "near a stop and slow, facing back: coasts and brakes, no turn round (drives faced " + r.MaxFace.ToString("+0.00;-0.00") + " along the travel at most, " + r.Time.ToString("0") + " s)");
+                // 17:25 at CE.Aventine: 86 m/s facing back nearer 8 km out, top speed 90: coast, don't turn for 4 m/s
+                stop = new Vector3D(7500, 0, 0);
+                route = new List<Nav.Wp> { W(stop, 500, "target") };
+                r = Fly(route, Vector3D.Zero, new Vector3D(-1, 0, 0), 138.7, 0.6, Vector3D.Zero, 600, stop, 1, 1, new Vector3D(86, 0, 0));
+                Report("86 m/s facing back, 7.5 km short", r);
+                Check(r.Arrived && r.MaxFace < 0, "near a station at the game's top speed, facing back: no turn round (drives faced " + r.MaxFace.ToString("+0.00;-0.00") + " along the travel at most)");
+                // learning: Flip and Burn zeroing a turn isn't the gyros' speed
+                var ls = new Nav.Settings();
+                ls.Learn(Vector3D.Zero, Vector3D.Zero, 0);
+                ls.Learn(new Vector3D(0, 0.3, 0), new Vector3D(0, 0.012, 0), 1 / 6.0);    // 0.07 rad/s2
+                ls.Learn(new Vector3D(0, 0.3, 0), new Vector3D(0, 0.08, 0), 2 / 6.0);     // 0.41: a glitch
+                ls.Learn(new Vector3D(0, -0.3, 0), new Vector3D(0, 0, 0), 3 / 6.0);       // zeroed: not toward the ask
+                Check(ls.Accel > 0.05 && ls.Accel < 0.25, "turn learning: a glitch and a zeroed turn don't take over (" + ls.Accel.ToString("0.000") + " rad/s2)");
+                stop = new Vector3D(200000, 0, 0);
+                route = new List<Nav.Wp> { W(stop, 500, "target") };
+                r = Fly(route, Vector3D.Zero, new Vector3D(-1, 0, 0), 138.7, 0.6, Vector3D.Zero, 900, stop, 1, 1, new Vector3D(90, 0, 0));
+                Report("90 m/s facing back, 200 km short", r);
+                Check(r.Arrived && r.MaxFace > 0.9 && r.MaxSpeed > 1000, "far from the stop and slow, facing back: turns round and speeds up (top " + r.MaxSpeed.ToString("0") + " m/s)");
+            }
+
+            // 12) Hygeia, 2026-11-18 17:50: flipped and braking 110 km out at 894 m/s, a slow-turning hauler. The plan
+            // kept a whole flip in hand after the flip, so it held the speed near distance / flip time and crept in
+            // (894 to 79 m/s in 5 minutes, still km short). Facing back: coast on and brake at the end.
+            {
+                var stop = new Vector3D(110000, 0, 0);
+                route = new List<Nav.Wp> { W(stop, 500, "target") };
+                r = Fly(route, Vector3D.Zero, new Vector3D(-1, 0, 0), 148.4, 0.03, Vector3D.Zero, 900, stop, 1, 1, new Vector3D(894, 0, 0), 0.6, 0, 0, 0, 0, 0.03);
+                Report("894 m/s facing back, 110 km short, slow turner", r);
+                Check(r.Arrived && r.Time < 250 && r.MaxFace < 0, "already flipped: no creeping in, brakes at the end (" + r.Time.ToString("0") + " s, drives faced " + r.MaxFace.ToString("+0.00;-0.00") + " at most)");
+            }
+
+            // 13) Andromeda, 2026-11-18 19:15: lined up and braking, a small aim correction (0.03 rad/s asked) that Flip
+            // and Burn zeroes: no kicks (they rolled the ship every few seconds). A real turn still kicks.
+            {
+                var ks = new Nav.Settings();
+                Vector3D roll = new Vector3D(1, 0, 0), kup = new Vector3D(0, 1, 0), small = new Vector3D(0, 0.03, 0), big = new Vector3D(0, 0.6, 0);
+                bool kicked = false;
+                for (int i = 0; i < 10; i++) { ks.Unstick(small, Vector3D.Zero, roll, kup); kicked |= ks.Kicking; }
+                Check(!kicked, "small aim correction the ship ignores: no kick");
+                for (int i = 0; i < 10; i++) { ks.Unstick(big, Vector3D.Zero, roll, kup); kicked |= ks.Kicking; }
+                Check(kicked, "real turn the ship ignores: kicks");
+            }
+
             Console.WriteLine(string.Format("{0}/{1} sim checks passed", checks - fails, checks));
             return fails == 0 ? 0 : 1;
         }
@@ -351,6 +528,7 @@ namespace PbCheck
                 var vEst = est.Update(p, phys, t);
                 cmd = Nav.Steer(p, vEst, Vector3D.Zero, drive, 10, route, idx, 49000, s); cmd = Written(cmd);
                 idx = cmd.Idx;
+                if (cmd.Over > 0) r.OverTime += dt;
                 if (cmd.Arrived) { r.Arrived = true; break; }
                 var want = cmd.W;
                 for (int k = 0; k < RunTicks; k++)

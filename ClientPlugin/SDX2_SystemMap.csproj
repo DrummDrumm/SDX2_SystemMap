@@ -230,6 +230,18 @@
       <HintPath>$(Bin64Dir)VRage.Render.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="SharpDX">
+      <HintPath>$(Bin64Dir)SharpDX.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="SharpDX.Direct3D11">
+      <HintPath>$(Bin64Dir)SharpDX.Direct3D11.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="SharpDX.DXGI">
+      <HintPath>$(Bin64Dir)SharpDX.DXGI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="VRage.Render11, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
       <HintPath>$(Bin64Dir)VRage.Render11.dll</HintPath>
       <Private>False</Private>
@@ -256,15 +268,14 @@
 
   <ItemGroup>
     <PackageReference Include="Lib.Harmony" Version="2.4.2" />
-    <!-- Uncomment to enable publicizer support
+    <!-- The destination view (DestinationView.cs) reaches into the renderer: only VRage.Render and VRage.Render11 are
+         publicized. Keep in sync with GameAssembliesToPublicize.cs, which is what Pulsar reads. -->
     <PackageReference Include="Krafs.Publicizer" Version="2.3.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    -->
   </ItemGroup>
 
-  <!-- Uncomment to enable publicizer support
   <PropertyGroup>
     <PublicizerClearCacheOnClean>true</PublicizerClearCacheOnClean>
     <PublicizerRuntimeStrategies>Unsafe;IgnoresAccessChecksTo</PublicizerRuntimeStrategies>
@@ -272,13 +283,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Publicize Include="Sandbox.Game"/>
-    <Publicize Include="SpaceEngineers.Game"/>
-    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyEntities.OnEntityAdd"/>
-    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyEntities.OnEntityRemove"/>
-    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnStaticChanged"/>
+    <Publicize Include="VRage.Render" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="VRage.Render11" IncludeCompilerGeneratedMembers="false" />
   </ItemGroup>
-  -->
+
   <Target Name="ValidateProps" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(Bin64)' == ''"
            Text="Could not locate the Space Engineers Bin64 folder. Set &lt;Bin64&gt; in &quot;$(RepoRoot)Directory.Build.props.user&quot;." />

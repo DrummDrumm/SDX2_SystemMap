@@ -113,6 +113,7 @@ internal static class FlipAndBurnLink
                 }
                 catch (Exception e) { Plugin.Log("Flip and Burn speed state unavailable: " + e.Message); }
                 PatchKeepOpen(asm.GetType("FlipAndBurn.NavigationMenu", false));
+                ModLabels.Patch(asm);
                 found = true;
                 Plugin.Log("Flip and Burn found in " + asm.GetName().Name);
                 return;
@@ -519,6 +520,55 @@ internal static class FlipAndBurnLink
             return sync?.GetType().GetProperty("Value", Any)?.GetValue(sync)?.ToString() ?? "";
         }
         catch { return ""; }
+    }
+}
+
+/// <summary>
+/// Flip and Burn's marker labels (a destination's name, range, time and retroburn countdown; "WARNING" for hostile
+/// space or an asteroid) are each written right of their own point, so two points close on screen ran through each
+/// other and through the plugin's boxes. They all come from Hud.DrawTargetLabel: a text-HUD message with an offset
+/// 0.02 right and 2 ticks to live. The prefix on that message's constructor (F&amp;B's own copy of the text HUD API;
+/// the constructor, as the small DrawTargetLabel may be inlined) moves each marker's lines together (<see cref="LabelSpread"/>).
+/// </summary>
+internal static class ModLabels
+{
+    private static readonly HashSet<Type> patched = new HashSet<Type>();
+
+    public static void Patch(Assembly asm)
+    {
+        try
+        {
+            var msg = asm.GetType("Draygo.API.HudAPIv2+HUDMessage", false);
+            if (msg == null || Plugin.Harmony == null || patched.Contains(msg)) return;
+            ConstructorInfo ctor = null;
+            foreach (var c in msg.GetConstructors())
+            {
+                var p = c.GetParameters();
+                if (p.Length >= 4 && p[1].Name == "Origin" && p[1].ParameterType == typeof(Vector2D) && p[2].Name == "Offset"
+                    && p[2].ParameterType == typeof(Vector2D?) && p[3].Name == "TimeToLive" && p[3].ParameterType == typeof(int)) ctor = c;
+            }
+            if (ctor == null) { Plugin.Log("Flip and Burn's label call has changed: its marker labels are not spread apart"); return; }
+            Plugin.Harmony.Patch(ctor, prefix: new HarmonyMethod(typeof(ModLabels), nameof(Prefix)));
+            patched.Add(msg);
+            Plugin.Log("Flip and Burn's marker labels patched: kept apart");
+        }
+        catch (Exception e) { Plugin.Log("can't spread Flip and Burn's marker labels: " + e.Message); }
+    }
+
+    public static void Prefix(ref Vector2D Origin, Vector2D? Offset, int TimeToLive)
+    {
+        try
+        {
+            if (TimeToLive != 2 || !Offset.HasValue || Math.Abs(Offset.Value.X - 0.02) > 1e-4) return; // a marker label only
+            var full = Sandbox.Graphics.MyGuiManager.GetFullscreenRectangle();
+            float sw = full.Width, sh = full.Height;
+            if (sw < 1 || sh < 1) return;
+            var keep = Plugin.Now - SidePreview.KeepClearAt < 0.5 ? SidePreview.KeepClear : null;
+            long frame = Sandbox.Game.World.MySession.Static?.GameplayFrameCounter ?? 0;
+            float dy = LabelSpread.Shift(frame, (float)((Origin.X + 1) / 2 * sw), (float)((1 - Origin.Y) / 2 * sh), (float)Offset.Value.Y, sw, sh, keep);
+            if (dy != 0) Origin.Y -= dy / sh * 2; // the text HUD's y runs up, -1 to 1
+        }
+        catch { }
     }
 }
 

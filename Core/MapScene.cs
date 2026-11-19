@@ -14,12 +14,12 @@ public sealed partial class MapScene
     // palette: from the current theme (MapTheme.Current)
     private static MapTheme T => MapTheme.Current;
     private static bool Proto => T.Style == ThemeStyle.Protogen;
-    /// <summary>The chart look (hex texture, Sol crosshair, hexagon stations, triangle contacts, boxed labels, chamfered frame): Belter and UNN.</summary>
+    /// <summary>The chart look (hex texture, Sol crosshair, hexagon stations, triangle contacts, boxed labels, chamfered frame): OPA and UNN.</summary>
     private static bool Chart => T.Style == ThemeStyle.Contact || T.Style == ThemeStyle.Naval;
     /// <summary>The nav HUD's lock reticle, destination crosshair, ruler ticks and red Belt arcs: Protogen and UNN.</summary>
     private static bool Lock => T.Style == ThemeStyle.Protogen || T.Style == ThemeStyle.Naval;
     private static bool Naval => T.Style == ThemeStyle.Naval;
-    /// <summary>The honeycomb grid: the green Belter chart only (UNN keeps a large square grid).</summary>
+    /// <summary>The honeycomb grid: the green OPA chart only (UNN keeps a large square grid).</summary>
     private static bool Hex => T.Style == ThemeStyle.Contact;
     private static MapColor Bg => T.Bg;
     private static MapColor GridCol => T.Grid;
@@ -51,6 +51,8 @@ public sealed partial class MapScene
     public bool Compact;
     /// <summary>Picture-in-picture (with Compact): a short route summary only, no legend or key help.</summary>
     public bool Mini;
+    /// <summary>The title bar's text in place of the usual one (null: the usual).</summary>
+    public string TitleText;
     /// <summary>Mouse position (screen px) for hover highlight and tooltip; NaN = none.</summary>
     public float MouseX = float.NaN, MouseY = float.NaN;
     /// <summary>How near (in UI units) the mouse must be to pick a marker: wider for a finger on a touchscreen.</summary>
@@ -112,8 +114,11 @@ public sealed partial class MapScene
         planeY = Math.Abs(Cam.Target.Y) < Cam.Distance * 0.8 ? 0 : Cam.Target.Y;
         Picks.Clear(); taken.Clear(); labels.Clear(); Hovered = null;
 
-        c.PushClip(view.X, view.Y, view.W, view.H);
-        c.Rect(view.X, view.Y, view.W, view.H, Bg);
+        // in a cut-corner bezel the map's lines start under the title bar and keep inside the bezel's inner line (the
+        // title bar covers that strip anyway), so little of them reaches the cut corners
+        float top = Framed ? 12 * u * 1.35f * 1.5f : 0, side = Framed ? 4 * u : 0;
+        Fill(view, Bg); // the whole bezel, out to its line
+        c.PushClip(view.X + side, view.Y + top, view.W - 2 * side, view.H - top);
         Stars();
         if (Opt.Grid) { if (Hex) HexGrid(); else Grid(); }
         if (Lock) ProtoCross();
@@ -133,13 +138,11 @@ public sealed partial class MapScene
         BeltPick();
         FindHover();
         PlaceLabels();
-        if (full.H > view.H)
-        {
-            // the info strip: drawn on its own, so the map's clip doesn't hide it
-            c.PopClip();
-            c.PushClip(full.X, full.Y, full.W, full.H);
-            c.Rect(full.X, view.Bottom, full.W, full.Bottom - view.Bottom, Bg);
-        }
+        // the title bar and the info strip: drawn on their own, so the map's clip (under the title bar) doesn't hide them
+        c.PopClip();
+        float inset = Framed ? 4 * u : 0; // their text stays inside the bezel's inner line
+        c.PushClip(full.X + inset, full.Y, full.W - 2 * inset, full.H);
+        if (full.H > view.H) Fill(new Box(full.X, view.Bottom, full.W, full.Bottom - view.Bottom), Bg);
         Panels();
         c.PopClip();
         if (Compact) Frame();
@@ -213,8 +216,12 @@ public sealed partial class MapScene
         }
     }
 
+    /// <summary>Ultra drawing quality: curves get this many times their usual segments (1, or 2).</summary>
+    public static int Detail = 1;
+
     private void ScreenCircle(float x, float y, float r, float w, MapColor col, int n = 48)
     {
+        n *= Detail;
         float lx = 0, ly = 0;
         for (int i = 0; i <= n; i++)
         {
@@ -612,7 +619,7 @@ public sealed partial class MapScene
         if (!Snap.HasShip || !P(Snap.ShipPos, out var x, out var y)) return;
         Stalk(Snap.ShipPos, ShipCol.WithAlpha(0.6f));
         double speed = Snap.ShipVel.Length;
-        var shape = ShipIcons.Pick(Snap.ShipClass, RealShipIcons);
+        var shape = (ShipIconFromShip ? OwnShip : null) ?? ShipIcons.For(Snap.ShipClass);
         float r = shape != null ? 13 * u * shape.Size : 9 * u;
         if (speed > 1)
         {
@@ -645,7 +652,10 @@ public sealed partial class MapScene
             c.Disc(x, y, 3 * u, ShipCol);
         }
         AddPick(Snap.ShipName, "Your ship", SystemData.SectorAt(Snap.ShipPos).Dx, Snap.ShipPos, x, y, 8 * u);
-        Label(MapSnapshot.ShortShipName(Snap.ShipName, Snap.FactionTag, Snap.ShipClass) + (speed > 1 ? "  " + Fmt.Speed(speed) : ""), x, y, 9 * u, ShipCol, 1, 11 * u, true, "ship");
+        // no label lies on the icon: its square is taken, and the ship's own label starts outside it
+        float keep = shape != null ? r : 9 * u;
+        taken.Add(new Box(x - keep, y - keep, 2 * keep, 2 * keep));
+        Label(MapSnapshot.ShortShipName(Snap.ShipName, Snap.FactionTag, Snap.ShipClass) + (speed > 1 ? "  " + Fmt.Speed(speed) : ""), x, y, Math.Max(9 * u, keep), ShipCol, 1, 11 * u, true, "ship");
     }
 
     public static MapColor TrackCol => T.Track;
@@ -863,7 +873,7 @@ public sealed partial class MapScene
         {
             if (b - a < 1) return;
             // split long legs so the near-plane clip and perspective stay right (and a bent leg follows its curve)
-            int n = r.Curved ? 64 : 24;
+            int n = r.Curved ? 64 * Detail : 24;
             for (int i = 0; i < n; i++)
             {
                 var q0 = r.PointAt(a + (b - a) * i / n); var q1 = r.PointAt(a + (b - a) * (i + 1) / n);
@@ -930,7 +940,7 @@ public sealed partial class MapScene
         {
             Stalk(r.Target, BrakeCol.WithAlpha(0.6f));
             float lo = DestinationMark(dx, dy);
-            AddPick(r.TargetName, "F&B destination", r.TargetSector.Dx + "  right-click: remove", r.Target, dx, dy, 10 * u);
+            AddPick(r.TargetName, "Destination", r.TargetSector.Dx + "  right-click: remove", r.Target, dx, dy, 10 * u);
             Label(ShortName(r.TargetName), dx, dy, lo, Chart ? T.Trim : BrakeCol, 0, 12 * u, true, "dest", true);
         }
     }
@@ -943,7 +953,8 @@ public sealed partial class MapScene
         ScreenCircle(wx, wy, 7 * u, 2 * u, wc, 20);
         c.Disc(wx, wy, 2.5f * u, wc);
         AddPick(wp.Name, wp.User ? "Your waypoint" : DetourKind + (wp.Around?.Name ?? "?"), wp.User ? "drag: up / down or sideways, Shift+right-click: remove" : "Shift+right-click: remove (fly straight past)", wp.Pos, wx, wy, 8 * u);
-        Label((wp.User ? ShortName(wp.Name) : "D" + (n + 1)) + (nextPick ? "  next pick" : ""), wx, wy, 9 * u, wc, nextPick ? 1 : 3, 10.5f * u, true);
+        taken.Add(new Box(wx - 8 * u, wy - 8 * u, 16 * u, 16 * u)); // no other label on the mark
+        Label((wp.User ? ShortName(wp.Name) : "D" + (n + 1)) + (nextPick ? "  next" : ""), wx, wy, 9 * u, wc, nextPick ? 1 : 3, 10.5f * u, true);
     }
 
     private static double NiceTime(double s)
@@ -1067,11 +1078,11 @@ public sealed partial class MapScene
     {
         float px = 12 * u, lh = px * 1.35f;
         // title bar
-        string title = Mini ? "MAP" : Compact ? "ROUTE PREVIEW" : "SDX2 SYSTEM MAP";
-        string sub = Route != null ? ShortName(Route.TargetName) : Snap.FnbReady ? "No Flip and Burn destination — press N and pick one" : "Flip and Burn not detected";
-        c.Rect(view.X, view.Y, view.W, lh * 1.5f, PanelBg);
+        string title = TitleText ?? (Mini ? "MAP" : Compact ? "ROUTE PREVIEW" : "SDX2 SYSTEM MAP");
+        string sub = Route != null ? ShortName(Route.TargetName) : Snap.FnbReady ? "No destination: press N and pick one" : "Flip and Burn not detected";
+        Fill(new Box(view.X, view.Y, view.W, lh * 1.5f), PanelBg);
         TitleBottom = view.Y + lh * 1.5f;
-        c.Rect(view.X, view.Y + lh * 1.5f - 2 * u, view.W, 2 * u, Accent.WithAlpha(0.8f));
+        Fill(new Box(view.X, view.Y + lh * 1.5f - 2 * u, view.W, 2 * u), Accent.WithAlpha(0.8f));
         if (T.Hud) for (float tx = view.X + px; tx < view.Right - px; tx += 9 * u) c.Rect(tx, view.Y + lh * 1.5f - 6 * u, 1, 4 * u, Accent.WithAlpha(0.45f));
         if (T.Style == ThemeStyle.Naval) c.Rect(view.X, view.Y + lh * 1.5f, view.W, Math.Max(1f, 1f * u), T.Trim.WithAlpha(0.7f));
         if (T.Style == ThemeStyle.Belter) HazardStripe(view.X, view.Y + lh * 1.5f, view.W, 5 * u);
@@ -1091,9 +1102,9 @@ public sealed partial class MapScene
         var rows = Mini ? new List<(string Label, string Text)>() : HelpRows(hpx, view.W - px * 2);
         float barH = Mini ? 0 : rowH * (1 + rows.Count) + px * 0.35f;
 
-        // route panel (picture-in-picture: distance, ETA, flip and what to pick next only)
+        // route panel (picture-in-picture: distance, ETA, flip and the next point only)
         var lines = RouteLinesText();
-        if (Mini) lines = lines.FindAll(l => l.Text.StartsWith("Distance") || l.Text.StartsWith("ETA") || l.Text.StartsWith("Flip in") || l.Text.StartsWith("Pick next"));
+        if (Mini) lines = lines.FindAll(l => l.Text.StartsWith("Distance") || l.Text.StartsWith("ETA") || l.Text.StartsWith("Flip in") || l.Text.StartsWith("Next point"));
         if (lines.Count == 0) panelBox = default;
         if (lines.Count == 0 || Compact) ControlsSlotClear();
         if (lines.Count > 0)
@@ -1106,7 +1117,8 @@ public sealed partial class MapScene
                 float h = half * lh + px + (timeline ? PanelStyle.TimeBarH(px * 0.95f) : 0);
                 float x0 = view.X, y0 = full.Bottom - h - barH, w = view.W;
                 panelBox = new Box(x0, y0, w, h);
-                float y = PanelStyle.Frame(c, panelBox, u, px, null);
+                // opaque: the map's markers and labels under it would show through the text
+                float y = PanelStyle.Frame(c, panelBox, u, px, null, null, new MapColor(PanelBg.R, PanelBg.G, PanelBg.B, 255));
                 if (timeline)
                 {
                     PanelStyle.TimeBar(c, new Box(x0 + px, y, w - px * 2, 0), u, px * 0.95f, plan.BurnTime, plan.CoastTime, plan.BrakeTime, Path.Legs.Count > 1 ? "LEG 1 " : "ETA ");
@@ -1115,7 +1127,8 @@ public sealed partial class MapScene
                 for (int i = 0; i < lines.Count; i++)
                 {
                     float cx = x0 + px + (i < half ? 0 : w / 2), cy = y + (i < half ? i : i - half) * lh;
-                    c.Text(lines[i].Text, cx, cy, px * 0.95f, lines[i].Col);
+                    string fit = FitText(lines[i].Text, px * 0.95f, w / 2 - px * 1.5f, out float fp); // each column keeps to its half
+                    c.Text(fit, cx, cy, fp, lines[i].Col);
                 }
             }
             else SidedRoutePanel(lines, px, lh, plan, timeline, full.Bottom - barH);
@@ -1124,7 +1137,7 @@ public sealed partial class MapScene
         // bottom bar: the legend and scale on the first row, then one row per help group (label in the accent colour)
         float by = full.Bottom - barH;
         barTop = by;
-        if (!Mini) { c.Rect(view.X, by, view.W, barH, PanelBg); c.Rect(view.X, by, view.W, 1, Accent.WithAlpha(0.35f)); }
+        if (!Mini) { Fill(new Box(view.X, by, view.W, barH), PanelBg); Fill(new Box(view.X, by, view.W, 1), Accent.WithAlpha(0.35f)); }
         if (!Mini && Lock) RulerTicks(view.X + px, view.Right - px, by, -1);
         float ry = by + px * 0.25f, lx = view.X + px, labelW = 0;
         foreach (var r in rows) if (r.Label != null) labelW = Math.Max(labelW, c.TextWidth(r.Label, hpx));
@@ -1156,7 +1169,7 @@ public sealed partial class MapScene
         {
             var tip = new List<string> { hp.Name, hp.Kind + (string.IsNullOrEmpty(hp.Detail) ? "" : "  ·  " + hp.Detail) };
             if (Snap.HasShip) tip.Add("from you " + Fmt.Dist(V3.Distance(Snap.ShipPos, hp.Pos)));
-            if (!Compact) tip.Add(hp.Kind == "Your ship" ? "click: focus" : "click: focus   shift+click: set as destination");
+            if (!Compact) tip.Add(hp.Kind == "Your ship" ? "click: focus" : "click: focus   shift+click: set destination");
             float tpx = 11 * u, w = 0;
             foreach (var t in tip) w = Math.Max(w, c.TextWidth(t, tpx));
             w += tpx * 1.6f;
@@ -1280,7 +1293,7 @@ public sealed partial class MapScene
         if (HeavyLine() is { } hl) l.Add((hl, WarnCol));
         if (ahead > 0)
         {
-            l.Add(("Pick next in N:  " + Path.Waypoints[Path.Next].Name, DetourCol));
+            l.Add(("Next point  " + Path.Waypoints[Path.Next].Name, DetourCol));
             var names = new List<string>();
             bool wells = false, other = false, low = false, bare = false;
             for (int i = Path.Next; i < Path.Waypoints.Count; i++)
@@ -1295,7 +1308,7 @@ public sealed partial class MapScene
             string inWell = low ? "as low as thrust holds" : Fmt.Dist(DetourPlanner.WellGap) + " outside gravity";
             var hows = new List<string>();
             if (wells) hows.Add(inWell);
-            if (bare) hows.Add(Fmt.Dist(DetourPlanner.SurfaceGap) + " over the hills");
+            if (bare) hows.Add(Fmt.Dist(DetourPlanner.SurfaceGap) + " above terrain");
             if (other) hows.Add(Fmt.Dist(Path.Clearance) + " clear (gravity not known)");
             string how = string.Join(", ", hows);
             if (names.Count > 0) l.Add(("Avoids  " + string.Join(", ", names) + "  (" + how + ")", DetourCol));
@@ -1382,7 +1395,7 @@ public sealed partial class MapScene
         c.Line(x, y + r, x, y + r + t, w, col); c.Line(x, y - r, x, y - r - t, w, col);
     }
 
-    /// <summary>OPA: a few short thick orange hazard marks on an orbit (three per orbit, each orbit turned).</summary>
+    /// <summary>Belter: a few short thick orange hazard marks on an orbit (three per orbit, each orbit turned).</summary>
     private void BelterRing(double r, int i)
     {
         V3 At(double a) => new V3(r * Math.Cos(a), 0, r * Math.Sin(a));
@@ -1394,7 +1407,7 @@ public sealed partial class MapScene
         }
     }
 
-    /// <summary>OPA: a strip of diagonal orange-and-black hazard stripes.</summary>
+    /// <summary>Belter: a strip of diagonal orange-and-black hazard stripes.</summary>
     private void HazardStripe(float x, float y, float w, float h)
     {
         c.PushClip(x, y, w, h);
@@ -1513,6 +1526,16 @@ public sealed partial class MapScene
         c.Line(tx, ty, ax, ay, ow, col); c.Line(ax, ay, cx, cy, ow, col); c.Line(cx, cy, tx, ty, ow, col);
     }
 
+    /// <summary>The window has the cut-corner bezel (a chart theme's map window, <see cref="FrameBorder"/>).</summary>
+    private bool Framed => Compact && Chart;
+
+    /// <summary>A background or bar: inside the bezel's cut corners when the window has one, else the plain rect.</summary>
+    private void Fill(Box b, MapColor col)
+    {
+        if (Framed) PanelStyle.FillInside(c, b, full, 14 * u, 34 * u, col);
+        else c.Rect(b.X, b.Y, b.W, b.H, col);
+    }
+
     /// <summary>Contact chart: a box outline with its corners cut, the top-right one by big, the others by small.</summary>
     private void Chamfer(Box b, float small, float big, float w, MapColor col)
     {
@@ -1596,17 +1619,24 @@ public sealed partial class MapScene
         view = full;
         FrameBorder();
         view = map;
-        if (full.H > view.H) c.Rect(view.X, view.Bottom - Math.Max(1f, u) / 2, view.W, Math.Max(1f, u), Accent.WithAlpha(0.7f));
+        if (full.H > view.H) Fill(new Box(view.X, view.Bottom - Math.Max(1f, u) / 2, view.W, Math.Max(1f, u)), Accent.WithAlpha(0.7f));
     }
 
-    private void FrameBorder()
+    private void FrameBorder() => WindowFrame(c, view, u);
+
+    /// <summary>The cut-corner bezel's corners at size unit u (small, and the top-right's big): 0 when the theme has none.</summary>
+    public static float CutSmall(float u) => Chart ? 14 * u : 0;
+    public static float CutBig(float u) => Chart ? 34 * u : 0;
+
+    /// <summary>A window's border in the current theme's style (the map window's; the destination view's too), size unit u.</summary>
+    public static void WindowFrame(IMapCanvas c, Box view, float u)
     {
         float w = Math.Max(1f, 1.5f * u);
         if (Naval)
         {
             // the chart's chamfered bezel with a gold inner line, gold side bars and a gold strip along the top
-            Chamfer(view, 14 * u, 34 * u, w, Accent.WithAlpha(0.9f));
-            Chamfer(view.Inflate(-4 * u), 12 * u, 30 * u, Math.Max(1f, 0.8f * u), T.Trim.WithAlpha(0.55f));
+            PanelStyle.Chamfer(c, view, 14 * u, 34 * u, w, Accent.WithAlpha(0.9f));
+            PanelStyle.Chamfer(c, view.Inflate(-4 * u), 12 * u, 30 * u, Math.Max(1f, 0.8f * u), T.Trim.WithAlpha(0.55f));
             float bw = Math.Max(2f, 2.5f * u), bh = Math.Min(view.H * 0.18f, 60 * u);
             c.Rect(view.X, view.Y + view.H * 0.3f, bw, bh, T.Trim.WithAlpha(0.8f));
             c.Rect(view.X, view.Y + view.H * 0.7f - bh, bw, bh, T.Trim.WithAlpha(0.8f));
@@ -1619,14 +1649,14 @@ public sealed partial class MapScene
             float b = Math.Max(2f, 2.4f * u);
             c.Rect(view.X, view.Y, view.W, b, Accent); c.Rect(view.X, view.Bottom - b, view.W, b, Accent);
             c.Rect(view.X, view.Y, b, view.H, Accent); c.Rect(view.Right - b, view.Y, b, view.H, Accent);
-            Brackets(new Box(view.X - b, view.Y - b, view.W + 2 * b, view.H + 2 * b), 16 * u, Math.Max(2f, 2.6f * u), T.Trim);
+            PanelStyle.Brackets(c, new Box(view.X - b, view.Y - b, view.W + 2 * b, view.H + 2 * b), 16 * u, Math.Max(2f, 2.6f * u), T.Trim);
             return;
         }
         if (Chart)
         {
             // a chamfered bezel: a bright inner outline and a dim outer one, the top-right corner cut deepest
-            Chamfer(view, 14 * u, 34 * u, w, Accent.WithAlpha(0.9f));
-            Chamfer(view.Inflate(-4 * u), 12 * u, 30 * u, Math.Max(1f, 0.8f * u), Accent.WithAlpha(0.35f));
+            PanelStyle.Chamfer(c, view, 14 * u, 34 * u, w, Accent.WithAlpha(0.9f));
+            PanelStyle.Chamfer(c, view.Inflate(-4 * u), 12 * u, 30 * u, Math.Max(1f, 0.8f * u), Accent.WithAlpha(0.35f));
             return;
         }
         if (Proto)
@@ -1635,7 +1665,7 @@ public sealed partial class MapScene
             var dim = Accent.WithAlpha(0.45f);
             c.Rect(view.X, view.Y, view.W, 1, dim); c.Rect(view.X, view.Bottom - 1, view.W, 1, dim);
             c.Rect(view.X, view.Y, 1, view.H, dim); c.Rect(view.Right - 1, view.Y, 1, view.H, dim);
-            Brackets(view, 16 * u, Math.Max(2f, 2.2f * u), Accent);
+            PanelStyle.Brackets(c, view, 16 * u, Math.Max(2f, 2.2f * u), Accent);
             c.Rect(view.X + 22 * u, view.Y, Math.Min(view.W * 0.25f, 70 * u), Math.Max(2f, 2.2f * u), T.Trim);
             return;
         }
@@ -1645,7 +1675,7 @@ public sealed partial class MapScene
             var dim = Accent.WithAlpha(0.35f);
             c.Rect(view.X, view.Y, view.W, 1, dim); c.Rect(view.X, view.Bottom - 1, view.W, 1, dim);
             c.Rect(view.X, view.Y, 1, view.H, dim); c.Rect(view.Right - 1, view.Y, 1, view.H, dim);
-            Brackets(view, 18 * u, Math.Max(2f, 2.4f * u), Accent);
+            PanelStyle.Brackets(c, view, 18 * u, Math.Max(2f, 2.4f * u), Accent);
             return;
         }
         c.Rect(view.X, view.Y, view.W, w, Accent);
@@ -1657,8 +1687,10 @@ public sealed partial class MapScene
     /// <summary>Frames the camera on the route (ship and destination), or on the ship, or on the whole system.</summary>
     /// <summary>The grid size of the view round your ship with no route (setting DefaultGridKm).</summary>
     public static double DefaultGridKm = MapSettings.DefaultGridDefault;
-    /// <summary>Your ship's icon from a real ship of its class where one was sampled (setting RealShipIcons).</summary>
-    public static bool RealShipIcons;
+    /// <summary>Your ship's icon is the one made from its own blocks, <see cref="OwnShip"/> (setting ShipIconFromShip).</summary>
+    public static bool ShipIconFromShip;
+    /// <summary>The icon made from the ship you fly (null: none made, the class's drawn icon is used).</summary>
+    public static ShipIcons.Shape OwnShip;
     /// <summary>Camera distance for that view: the grid is a nice step near distance / 3.5.</summary>
     public static double ShipViewDistance => DefaultGridKm * 1e3 * 3.5;
 

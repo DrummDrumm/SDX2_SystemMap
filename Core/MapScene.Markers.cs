@@ -8,9 +8,9 @@ namespace SDX2_SystemMap;
 /// <item>Classic: a ring with a gapped crosshair.</item>
 /// <item>Tachi: a segmented lock ring round a red diamond, with chevrons closing in from four sides.</item>
 /// <item>UNN: a plotting fix: a double ring with bearing ticks every 30 degrees, gold pointers and a gold square at its centre.</item>
-/// <item>OPA: a heavy octagon round a dashed teal ring, with hazard bars on its diagonals and a cross at its centre.</item>
+/// <item>Belter: a heavy octagon round a dashed teal ring, with hazard bars on its diagonals and a cross at its centre.</item>
 /// <item>Protogen: the lock reticle (range rings, lock arc, chevrons, TRAJECTORY VECTOR tag).</item>
-/// <item>Belter: a contact plot target: yellow brackets round a ring, with a ranging triangle above it.</item>
+/// <item>OPA: a contact plot target: yellow brackets round a ring, with a ranging triangle above it.</item>
 /// </list>
 /// </summary>
 public sealed partial class MapScene
@@ -23,7 +23,7 @@ public sealed partial class MapScene
             case ThemeStyle.Protogen: LockReticle(x, y); return 36 * u;
             case ThemeStyle.Tachi: TachiMark(x, y); return 30 * u;
             case ThemeStyle.Naval: NavalMark(x, y); return 30 * u;
-            case ThemeStyle.Belter: OpaMark(x, y); return 26 * u;
+            case ThemeStyle.Belter: BelterMark(x, y); return 26 * u;
             case ThemeStyle.Contact: ContactMark(x, y); return 17 * u;
             default: ClassicMark(x, y); return 15 * u;
         }
@@ -63,7 +63,7 @@ public sealed partial class MapScene
         taken.Add(new Box(x - 30 * u, y - 30 * u, 60 * u, 60 * u));
     }
 
-    private void OpaMark(float x, float y)
+    private void BelterMark(float x, float y)
     {
         float r = 14 * u, w = Math.Max(2f, 2.6f * u), lw = Math.Max(1f, 1.2f * u);
         float lx = 0, ly = 0;

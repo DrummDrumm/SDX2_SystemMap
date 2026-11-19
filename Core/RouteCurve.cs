@@ -86,15 +86,26 @@ public static class RouteCurve
         return Math.Min(maxSpeed, Math.Min(Math.Sqrt(2 * accel * tol) / sh, Math.Sqrt(accel * room / sh)));
     }
 
-    /// <summary>A subset of the polyline for the autopilot: about every <paramref name="step"/> metres, ends left out.</summary>
-    public static List<V3> Thin(IList<V3> curve, double step)
+    /// <summary>
+    /// A subset of the polyline for the autopilot: about every <paramref name="step"/> metres, ends left out, and
+    /// wherever the curve bends: a point is kept when the straight line past it (from the last one kept to the next
+    /// sample) would leave the curve by more than <paramref name="tol"/> metres (0 = by distance only). Without that,
+    /// the tight corners round a world right at the start of a long route (far shorter than a step) were all dropped
+    /// and the ship was sent straight through the world.
+    /// </summary>
+    public static List<V3> Thin(IList<V3> curve, double step, double tol = 0)
     {
         var res = new List<V3>();
         double run = 0;
+        int from = 0; // the last point kept (the start at first)
         for (int i = 1; i + 1 < curve.Count; i++)
         {
             run += V3.Distance(curve[i - 1], curve[i]);
-            if (run >= step) { res.Add(curve[i]); run = 0; }
+            bool keep = run >= step;
+            if (!keep && tol > 0)
+                for (int k = from + 1; k <= i && !keep; k++)
+                    keep = V3.SegmentDistance(curve[from], curve[i + 1], curve[k], out _) > tol;
+            if (keep) { res.Add(curve[i]); run = 0; from = i; }
         }
         return res;
     }

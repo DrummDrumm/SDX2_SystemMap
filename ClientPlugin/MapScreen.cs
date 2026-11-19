@@ -16,6 +16,8 @@ namespace SDX2_SystemMap;
 /// S: follow your ship (toggle). F: frame the route. H: whole system. C: copy the flip point as a GPS. N: back to F&amp;B's list.
 /// A: autopilot (confirm in the N list, or stop it while it flies). R: re-plan detours from here. V: detours on/off.
 /// G/O/X/T/P/L/J: grid, orbits, sectors, stations, GPS, labels, moons. Esc or M: close.
+/// Controller: the D-pad or left stick moves between the autopilot controls' buttons and sliders, A presses (on release,
+/// like the game's buttons), left / right change a slider, B closes the map like Esc.
 /// </summary>
 internal sealed class MapScreen : MyGuiScreenBase
 {
@@ -39,6 +41,7 @@ internal sealed class MapScreen : MyGuiScreenBase
     private bool Turning => follow && Plugin.Settings.FollowHeading;
     private Box controls;   // where the controls were drawn last frame (the map ignores the mouse there)
     private bool panelGrab; // a press that started on the controls (slider drags)
+    private bool bHere;     // B went down while the map had the controller (B closes it when let go)
 
     public static void Open()
     {
@@ -71,12 +74,12 @@ internal sealed class MapScreen : MyGuiScreenBase
 
     public override string GetFriendlyName() => "SDX2SystemMap";
 
-    /// <summary>K: the next look (Classic, Tachi, UNN, OPA), saved.</summary>
+    /// <summary>K: the next look (Classic, Tachi, UNN, Belter), saved.</summary>
     public static string NextTheme()
     {
-        var t = MapTheme.Current.Next();
-        MapTheme.Current = t;
-        Plugin.Settings.Theme = t.Name;
+        Plugin.Settings.Theme = MapTheme.Current.Next().Name;
+        Plugin.Settings.ApplyLook();
+        var t = MapTheme.Current;
         Plugin.SaveSettings();
         return "Map theme: " + t.Name + " (" + t.Blurb + ")";
     }
@@ -91,7 +94,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             const string s = MapScene.Sep;
             var o = scene.Opt;
             return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system" + "\n"
-                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint or detour (first: destination)" + s + "Shift+right-drag add above / below" + s + "Drag your waypoint: up / down (Y) or sideways (X or Z)" + s + "Shift+right-drag it across" + s + "Right-click the destination or Del: clear route" + s + "Drag a flip point: bend the leg" + s + "Shift+right-click a bend: straighten" + s +"A autopilot" + s + "N Flip and Burn list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
+                + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint or detour" + s + "Shift+right-drag add above / below" + s + "Drag waypoint: up / down (Y) or sideways (X, Z)" + s + "Shift+right-drag waypoint: across" + s + "Right-click destination or Del: clear route" + s + "Drag flip point: bend leg" + s + "Shift+right-click bend: straighten" + s +"A route plan" + s + "N list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
                 + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + (Binds.PanelSide.IsNone ? "" : s + Binds.PanelSide.Display + " panel side") + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
@@ -101,10 +104,18 @@ internal sealed class MapScreen : MyGuiScreenBase
         var input = MyInput.Static;
         // Esc first: the base screen's own Esc handling is off, so it can't fall through to the game's main menu
         if (input != null && input.IsNewKeyPressed(MyKeys.Escape) && State == MyGuiScreenState.OPENED) { CloseScreen(); return; }
+        // B: the same, when it's let go (as the game's message boxes do), so nothing under the map sees it come up as new
+        if (!receivedFocusInThisUpdate && GamePad.BPressed) bHere = true;
+        if (bHere && GamePad.BReleased && State == MyGuiScreenState.OPENED) { bHere = false; CloseScreen(); return; }
+        if (!GamePad.BDown && !GamePad.BReleased) bHere = false;
         base.HandleInput(receivedFocusInThisUpdate);
         if (input == null || receivedFocusInThisUpdate) return;
         if (Binds.Map.Pressed()) { SidePreview.CycleOff(); CloseScreen(); return; } // the map key's last step: off
         if (input.IsNewKeyPressed(MyKeys.N)) { CloseScreen(); FlipAndBurnLink.OpenNavMenu(); return; }
+        // the controller: RB + Select closes the full map again, LB + Select goes to the N list and the Route Plan
+        var pad = GamePad.Pressed();
+        if (pad == GamePad.Shortcut.FullMap) { CloseScreen(); return; }
+        if (pad == GamePad.Shortcut.Autopilot) { CloseScreen(); SidePreview.AutopilotKey(); return; }
         var o = scene.Opt;
         if (input.IsNewKeyPressed(MyKeys.F)) { follow = false; scene.FrameDefault(false); }
         if (input.IsNewKeyPressed(MyKeys.H)) { follow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }
@@ -113,22 +124,22 @@ internal sealed class MapScreen : MyGuiScreenBase
             follow = !follow;
             var sn = SidePreview.Snap;
             if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
-            Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (no ship yet: sit in a cockpit)");
+            Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (sit in a cockpit)");
         }
         if (input.IsNewKeyPressed(MyKeys.U))
         {
             Plugin.Settings.FollowHeading = !Plugin.Settings.FollowHeading; heading.Offset = 0; Plugin.SaveSettings();
-            Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (your travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
+            Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
         }
         if (input.IsNewKeyPressed(MyKeys.C)) Toast(CopyFlip());
         if (input.IsNewKeyPressed(MyKeys.Delete)) Toast(SidePreview.ClearRoute());
         if (input.IsNewKeyPressed(MyKeys.A)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
-        if (input.IsNewKeyPressed(MyKeys.R)) { bool back = SidePreview.Tracker.Skipped.Count > 0; SidePreview.Replan(true); Toast("Route planned again from here" + (back ? ", with the detours you removed." : ".")); }
+        if (input.IsNewKeyPressed(MyKeys.R)) { bool back = SidePreview.Tracker.Skipped.Count > 0; SidePreview.Replan(true); Toast("Route re-planned" + (back ? " (removed detours restored)." : ".")); }
         if (input.IsNewKeyPressed(MyKeys.V))
         {
             Plugin.Settings.AvoidBodies = !Plugin.Settings.AvoidBodies;
             SidePreview.Replan();
-            Toast(Plugin.Settings.AvoidBodies ? "Detours round worlds: on" : "Detours off: straight line");
+            Toast(Plugin.Settings.AvoidBodies ? "Detours: on" : "Detours: off (straight line)");
         }
         if (input.IsNewKeyPressed(MyKeys.G)) o.Grid = !o.Grid;
         if (input.IsNewKeyPressed(MyKeys.O)) o.Orbits = !o.Orbits;
@@ -164,10 +175,10 @@ internal sealed class MapScreen : MyGuiScreenBase
     public static string CopyFlip()
     {
         var r = SidePreview.Path?.First;
-        if (r == null || !r.HasBurnPlan) return "No route to copy: pick a destination in F&B's list (N) first.";
+        if (r == null || !r.HasBurnPlan) return "No route: pick a destination first.";
         var f = r.FlipPoint;
         string gps = string.Format(System.Globalization.CultureInfo.InvariantCulture, "GPS:Flip - {0}:{1:0.##}:{2:0.##}:{3:0.##}:#FF7CFC9A:", r.TargetName.Replace(":", " "), f.X, f.Y, f.Z);
-        try { MyClipboardHelper.SetClipboard(gps); return "Flip point copied. Paste it in the GPS tab (G)."; }
+        try { MyClipboardHelper.SetClipboard(gps); return "Flip point copied: paste it in the GPS tab."; }
         catch (Exception e) { return "Copy failed: " + e.Message; }
     }
 
@@ -197,11 +208,14 @@ internal sealed class MapScreen : MyGuiScreenBase
             scene.Draw(canvas, box);
             // the autopilot controls: the card in the route panel's top slot, the route editor on the other side
             controls = default;
+            if (!wanted) GamePad.Take(); // no buttons: a push now doesn't move the focus later
             if (wanted)
             {
                 // a pop-up over the map takes the clicks: the buttons under it don't
                 bool focus = HasFocus;
                 ui.Input(canvas, m.X, m.Y, focus && input.IsLeftMousePressed(), focus && input.IsNewLeftMousePressed(), focus && input.IsNewLeftMouseReleased());
+                ui.PadActive = focus && GamePad.Active;
+                ui.Pad(focus ? GamePad.Take() : PanelUi.PadDir.None, focus && GamePad.ADown);
                 controls = MapControls.Draw(ui, scene, box, card, now, out bool closeMap);
                 if (closeMap) { CloseScreen(); return base.Draw(); }
             }

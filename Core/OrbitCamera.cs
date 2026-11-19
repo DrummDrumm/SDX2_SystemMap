@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace SDX2_SystemMap;
 
@@ -15,6 +16,23 @@ public sealed class OrbitCamera
     public double Distance = 6e7, GoalDistance = 6e7;
     public double Yaw = 0.6, Pitch = 0.75;
     public double FovY = 50 * Math.PI / 180;
+    /// <summary>Looks straight down the Y axis with north (-Z) up and east (+X) right; Yaw and Pitch are ignored.</summary>
+    public bool TopDown;
+
+    /// <summary>
+    /// Top-down framing: centred on the points' middle (on the ground plane), far enough back that their east-west and
+    /// north-south spread fits the view with a margin. Snaps (no glide).
+    /// </summary>
+    public void FrameFlat(IList<V3> points, double minDistance, double margin = 1.2)
+    {
+        if (points == null || points.Count == 0) return;
+        double x0 = double.MaxValue, x1 = double.MinValue, z0 = double.MaxValue, z1 = double.MinValue, ySum = 0;
+        foreach (var p in points) { x0 = Math.Min(x0, p.X); x1 = Math.Max(x1, p.X); z0 = Math.Min(z0, p.Z); z1 = Math.Max(z1, p.Z); ySum += p.Y; }
+        double aspect = ViewW > 0 && ViewH > 0 ? ViewW / ViewH : 1;
+        double half = Math.Max((z1 - z0) / 2, (x1 - x0) / 2 / aspect) * margin;
+        GoalTarget = Target = new V3((x0 + x1) / 2, ySum / points.Count, (z0 + z1) / 2);
+        GoalDistance = Distance = Clamp(Math.Max(minDistance, half / Math.Tan(FovY / 2)));
+    }
 
     // per-frame basis, from Setup()
     private V3 eye, right, up, fwd;
@@ -29,6 +47,15 @@ public sealed class OrbitCamera
     public void Setup(float x, float y, float w, float h)
     {
         ViewX = x; ViewY = y; ViewW = w; ViewH = h;
+        if (TopDown)
+        {
+            // straight down onto the ecliptic: north (-Z, the game's forward) up the screen, east (+X) right
+            eye = Target + new V3(0, Distance, 0);
+            fwd = new V3(0, -1, 0); right = new V3(1, 0, 0); up = right.Cross(fwd);
+            focal = h / 2 / Math.Tan(FovY / 2);
+            cx = x + w / 2.0; cy = y + h / 2.0;
+            return;
+        }
         Pitch = Math.Max(MinPitch, Math.Min(MaxPitch, Pitch));
         double cp = Math.Cos(Pitch);
         var dir = new V3(cp * Math.Sin(Yaw), Math.Sin(Pitch), cp * Math.Cos(Yaw)); // from target toward the eye

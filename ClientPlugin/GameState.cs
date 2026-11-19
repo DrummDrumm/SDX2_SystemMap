@@ -48,6 +48,7 @@ internal static class GameState
                 water = waterCap = waterRate = 0;
                 try { if (grid != null) DriveCheck.Water(grid, out water, out waterCap, out waterRate); } catch { }
                 shipClass = grid != null ? ReadCoreClass(grid) : "";
+                OwnShipIcon.Update(grid, controlled as MyShipController, shipClass);
                 try { factionTag = session.Factions?.TryGetPlayerFaction(session.LocalPlayerId)?.Tag ?? ""; } catch { factionTag = ""; }
             }
         }

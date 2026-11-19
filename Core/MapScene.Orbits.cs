@@ -61,7 +61,7 @@ public sealed partial class MapScene
         var a = d / r;
         var e = new V3(0, 1, 0).Cross(a);
         e = e.LengthSq < 1e-6 ? new V3(1, 0, 0) : e.Normalized;
-        int n = px > 300 ? 128 : 64;
+        int n = (px > 300 ? 128 : 64) * Detail;
         V3 last = default;
         for (int i = 0; i <= n; i++)
         {

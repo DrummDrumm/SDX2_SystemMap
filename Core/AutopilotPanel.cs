@@ -60,15 +60,15 @@ public static class AutopilotPanel
         if (p.Curved && p.DetoursAhead > 0)
             l.Add(("Parabolic: curves through each point without stopping, one flip" + (double.IsInfinity(corner) ? "" : ", bends at up to " + Fmt.Speed(corner)), Text));
         else if (p.Legs.Count > 1)
-            l.Add(("Flip and burn: slows at each point just enough to turn onto the next leg" + (bent > 0 ? ", " + bent + (bent == 1 ? " leg bent" : " legs bent") : ""), Text));
+            l.Add(("Flip and burn: slows at each point to turn" + (bent > 0 ? ", " + bent + (bent == 1 ? " leg bent" : " legs bent") : ""), Text));
         else if (bent > 0)
             l.Add(("Bent: curves up / down without stopping" + (double.IsInfinity(corner) ? "" : ", bend at up to " + Fmt.Speed(corner)), Text));
         int borders = 0;
         foreach (var leg in p.Legs) borders += leg.Crossings.Count;
-        if (borders > 0) l.Add(("Crosses " + borders + (borders == 1 ? " sector border" : " sector borders") + " (server transfers): stay in the seat", Warn));
+        if (borders > 0) l.Add(("Crosses " + borders + (borders == 1 ? " sector border" : " sector borders") + " (Nexus transfers): stay in the seat", Warn));
         if (p.MaxAccel <= 0) l.Add(("Max acceleration unknown: the ship's own thrust is used", Warn));
-        l.Add(("Asteroids on the line are flagged, not avoided by themselves: " + (string.IsNullOrEmpty(SteerKey) ? "set a Steer round asteroid key" : SteerKey) + " sends a way round", Dim));
-        l.Add(("Move or turn at any time to take over", Dim));
+        l.Add(("Asteroids on the route are flagged, not avoided: " + (string.IsNullOrEmpty(SteerKey) ? "set a Steer round asteroid key to steer round them" : SteerKey + " steers round them"), Dim));
+        l.Add(("Move or turn to take over", Dim));
         return l;
     }
 
@@ -76,11 +76,11 @@ public static class AutopilotPanel
     /// MANUAL (close the list and fly it with Flip and Burn). Returns the row's box.</summary>
     public static Box Choice(PanelUi ui, float cx, float y, float px, bool hasAutopilot, out bool autopilot, out bool manual)
     {
-        float w = Math.Max(ui.C.TextWidth("AUTOPILOT", px), ui.C.TextWidth("MANUAL", px)) + px * 3, h = px * 1.9f, gap = px * 0.8f;
+        float w = Math.Max(ui.C.TextWidth("ROUTE PLAN", px), ui.C.TextWidth("FLY MANUAL", px)) + px * 3, h = px * 1.9f, gap = px * 0.8f;
         var a = new Box(cx - gap / 2 - w, y, w, h);
         var m = new Box(cx + gap / 2, y, w, h);
-        autopilot = ui.Button(a, "AUTOPILOT", px, hasAutopilot ? Go : Dim);
-        manual = ui.Button(m, "MANUAL", px, MapTheme.Current.Style == ThemeStyle.Chart ? MapColor.Rgb(0x4FC3F7) : MapTheme.Current.Coast);
+        autopilot = ui.Button(a, "ROUTE PLAN", px, hasAutopilot ? Go : Dim);
+        manual = ui.Button(m, "FLY MANUAL", px, MapTheme.Current.Style == ThemeStyle.Chart ? MapColor.Rgb(0x4FC3F7) : MapTheme.Current.Coast);
         return new Box(a.X, y, m.Right - a.X, h);
     }
 
@@ -98,9 +98,9 @@ public static class AutopilotPanel
     public static CardHit MapCard(PanelUi ui, Box b, float px, string target, bool engaged, bool resume, bool hasPb, string hint, bool braking = false)
     {
         var c = ui.C; var hit = new CardHit();
-        PanelStyle.Frame(c, b, px / 12f, px, braking ? "AUTOPILOT  FULL STOP" : engaged ? "AUTOPILOT  FLYING" : "AUTOPILOT", null, Panel);
+        PanelStyle.Frame(c, b, px / 12f, px, braking ? "AUTOPILOT  FULL STOP" : engaged ? "AUTOPILOT  FLYING" : "ROUTE PLAN", null, Panel);
         float pad = px, y = b.Y + PanelStyle.HeaderH(px), cx = b.X + b.W / 2, rowH = px * 1.9f, iw = b.W - pad * 2;
-        string to = braking ? "braking to a standstill" : "to " + MapScene.ShortName(target);
+        string to = braking ? "braking to a stop" : "to " + MapScene.ShortName(target);
         float tw = iw;
         if (!braking && !engaged)
         {
@@ -118,8 +118,9 @@ public static class AutopilotPanel
         }
         else if (engaged)
         {
-            // STOP hands the ship back as it is; FULL STOP burns it to rest first
-            StopPair(ui, cx, y, iw, rowH, px, out hit.Stop, out hit.FullStop);
+            // STOP hands the ship back as it is (asks first); FLY MANUAL hands it back at once, the route kept for
+            // the burn guide; FULL STOP burns it to rest first
+            StopPair(ui, cx, y, iw, rowH, px, out hit.Stop, out hit.Manual, out hit.FullStop);
         }
         else
         {
@@ -137,22 +138,29 @@ public static class AutopilotPanel
         return hit;
     }
 
-    /// <summary>STOP AUTOPILOT and FULL STOP side by side, centred on cx, shrunk to fit width w.</summary>
-    public static void StopPair(PanelUi ui, float cx, float y, float w, float rowH, float px, out bool stop, out bool full)
+    /// <summary>The FLY MANUAL colour: the theme's coast colour (Chart: light blue).</summary>
+    public static MapColor ManualCol => MapTheme.Current.Style == ThemeStyle.Chart ? MapColor.Rgb(0x4FC3F7) : MapTheme.Current.Coast;
+
+    /// <summary>STOP AUTOPILOT, FLY MANUAL and FULL STOP side by side, centred on cx, shrunk to fit width w.</summary>
+    public static void StopPair(PanelUi ui, float cx, float y, float w, float rowH, float px, out bool stop, out bool manual, out bool full)
     {
         var c = ui.C;
-        float gap = px * 0.6f, w1 = c.TextWidth("STOP AUTOPILOT", px) + px * 2.4f, w2 = c.TextWidth("FULL STOP", px) + px * 2.4f;
-        float k = Math.Min(1f, (w - gap) / (w1 + w2));
-        w1 *= k; w2 *= k;
-        float x0 = cx - (w1 + gap + w2) / 2;
+        float gap = px * 0.6f, w1 = c.TextWidth("STOP AUTOPILOT", px) + px * 2.4f, wm = c.TextWidth("FLY MANUAL", px) + px * 2.4f,
+            w2 = c.TextWidth("FULL STOP", px) + px * 2.4f;
+        float k = Math.Min(1f, (w - gap * 2) / (w1 + wm + w2));
+        w1 *= k; wm *= k; w2 *= k;
+        float x0 = cx - (w1 + wm + w2 + gap * 2) / 2;
         stop = ui.Button(new Box(x0, y, w1, rowH), "STOP AUTOPILOT", px * k, Stop);
-        full = ui.Button(new Box(x0 + w1 + gap, y, w2, rowH), "FULL STOP", px * k, Warn);
+        manual = ui.Button(new Box(x0 + w1 + gap, y, wm, rowH), "FLY MANUAL", px * k, ManualCol);
+        full = ui.Button(new Box(x0 + w1 + wm + gap * 2, y, w2, rowH), "FULL STOP", px * k, Warn);
     }
 
     /// <summary>What the mouse did in the route panel this frame.</summary>
     public struct RouteHit
     {
         public bool Engage, Cancel, ToggleAdd, Changed;
+        /// <summary>FLY MANUAL: keep the route (waypoints too) and fly it by hand.</summary>
+        public bool Manual;
         public int Remove;
         public Box Panel;
     }
@@ -163,11 +171,55 @@ public static class AutopilotPanel
     /// <paramref name="flying"/>: APPLY sends the changes, CANCEL drops them). Edits
     /// <paramref name="lim"/> in place. x, y = top-left (moved up to stay on screen), w = width.
     /// </summary>
+    /// <summary>The Route Plan panel with no destination yet: its frame and what to do. Returns its box.</summary>
+    public static Box EmptyPlan(PanelUi ui, float x, float y, float w, float screenH, float px, string mapKey)
+    {
+        var c = ui.C;
+        float sp = px * 0.9f, pad = px * 1.1f, lh = px * 1.5f;
+        var lines = new List<(string, MapColor)>
+        {
+            ("No destination yet", Text),
+            ("Pick one in the list, or Shift+click a place on the map.", Dim),
+            ("Top speed, burn, brake and waypoints are set here", Dim),
+            ("once there is a route.", Dim),
+        };
+        if (!string.IsNullOrEmpty(mapKey)) lines.Add((mapKey + ": map, full map, off", Dim));
+        float h = px * 2.4f + px * 0.6f + lines.Count * lh + px * 0.8f;
+        y = Math.Max(px, Math.Min(y, screenH - h - px));
+        var panel = new Box(x, y, w, h);
+        PanelStyle.Frame(c, panel, px / 12f, px, "ROUTE PLAN", null, Panel);
+        float ty = y + px * 2.4f + px * 0.6f;
+        foreach (var (t, col) in lines)
+        {
+            float size = sp, room = w - pad * 2, tw = c.TextWidth(t, size);
+            if (tw > room) size *= room / tw;
+            c.Text(t, x + pad, ty, size, col); ty += lh;
+        }
+        return panel;
+    }
+
     public static RouteHit RoutePanel(PanelUi ui, float x, float y, float w, float screenH, float px, RoutePath p, RouteLimits lim,
         double fnbCap, double fullAccel, SignatureInfo sig, IList<string> waypoints, bool adding, string stopKey, double now = 0, string addHint = null, bool flying = false)
     {
         var c = ui.C;
         var hit = new RouteHit { Remove = -1 };
+        // a line of text kept inside the panel: drawn smaller if it is too long, and cut short if that is not enough
+        void Fit(string t, float fx, float fy, float size, MapColor col, float room = -1)
+        {
+            if (room < 0) room = x + w - px * 1.1f - fx;
+            float tw = c.TextWidth(t, size);
+            if (tw > room)
+            {
+                float small = Math.Max(size * 0.72f, size * room / tw);
+                fy += (size - small) * 0.5f; size = small;
+                if (c.TextWidth(t, size) > room)
+                {
+                    while (t.Length > 4 && c.TextWidth(t + "...", size) > room) t = t.Substring(0, t.Length - 1);
+                    t = t.TrimEnd() + "...";
+                }
+            }
+            c.Text(t, fx, fy, size, col);
+        }
         sig ??= new SignatureInfo();
         double weight = sig.Weight;
         if (fnbCap <= 0) fnbCap = RoutePlan.DefaultMaxSpeed;
@@ -182,8 +234,8 @@ public static class AutopilotPanel
         y = Math.Max(px, Math.Min(y, screenH - h - px));
         var panel = hit.Panel = new Box(x, y, w, h);
         // the theme's frame and header (PanelStyle.HeaderH is the 2.4 px the rows start below)
-        PanelStyle.Frame(c, panel, px / 12f, px, (flying ? "CHANGE FLIGHT  to " : "AUTOPILOT  to ") + MapScene.ShortName(p.TargetName), p.Final.TargetSector.Dx, Panel);
-        float labelW = c.TextWidth("Signature", sp) + px * 1.4f, valueW = c.TextWidth("50.00 km/s max", sp) + px * 0.6f;
+        PanelStyle.Frame(c, panel, px / 12f, px, (flying ? "CHANGE FLIGHT  to " : "ROUTE PLAN  to ") + MapScene.ShortName(p.TargetName), p.Final.TargetSector.Dx, Panel);
+        float labelW = c.TextWidth("Signature", sp) + px * 1.4f, valueW = Math.Max(c.TextWidth("50.00 km/s max", sp), c.TextWidth("00000 km weak cone", sp)) + px * 0.6f;
         float sx = x + pad + labelW, sw = w - pad * 2 - labelW - valueW, ty = y + px * 2.4f;
 
         // top speed
@@ -240,25 +292,25 @@ public static class AutopilotPanel
 
         // what each cap gives: thrust share, acceleration, and Spectrum's signal tiers (SDX2 wiki, Signals and Detection)
         string T(double st) => DriveSignature.Tiers(st);
-        c.Text("km seen Detailed (ship core) / Strong (faction) / Weak (distance only), by baseline sensors", x + pad, ty, sp * 0.85f, Dim);
+        Fit("km seen Detailed (ship core) / Strong (faction) / Weak (distance only), by baseline detectors", x + pad, ty, sp * 0.85f, Dim);
         ty += lh;
         for (int k = 0; k < 2; k++)
         {
             double f = k == 0 ? lim.ThrustFraction(weight, gain) : lim.BrakeFraction(weight, gain);
             string t = (k == 0 ? "Burn " : "Brake ") + Fmt.Num(f * 100, "0") + " %  " + (fullAccel > 0 ? Fmt.Num(fullAccel * f / 9.81, "0.00") + " g" : "accel ?");
             t += weight > 0 ? "   optical: all round " + T(sig.DriveStrength(f)) + "   cone " + T(sig.Cone(f)) : "   (no fusion drives: no optical signal)";
-            c.Text(t, x + pad, ty, sp * 0.9f, k == 0 ? Text : Text.WithAlpha(0.85f));
+            Fit(t, x + pad, ty, sp * 0.9f, k == 0 ? Text : Text.WithAlpha(0.85f));
             ty += lh;
         }
         if (sig.Floor > 0)
         {
-            c.Text("Radio: all round " + T(sig.Floor) + " from " + (sig.FloorWhat ?? "other emitters") + (floorWins ? ", louder than the drives" : ""),
+            Fit("Radio: all round " + T(sig.Floor) + " from " + (sig.FloorWhat ?? "other emitters") + (floorWins ? ", louder than the drives" : ""),
                 x + pad, ty, sp * 0.9f, floorWins ? Warn : Dim);
             ty += lh;
         }
         if (live)
         {
-            c.Text("Spectrum now: all round " + T(sig.LiveAllRound) + "   cone " + T(sig.LiveCone), x + pad, ty, sp * 0.9f, Dim);
+            Fit("Spectrum now: all round " + T(sig.LiveAllRound) + "   cone " + T(sig.LiveCone), x + pad, ty, sp * 0.9f, Dim);
             ty += lh;
         }
         ty += lh * 0.2f + px * 0.8f;
@@ -268,18 +320,18 @@ public static class AutopilotPanel
         c.Text("WAYPOINTS", x + pad, ty, sp, Text);
         c.Text("flown in order, then the destination", x + pad + c.TextWidth("WAYPOINTS", sp) + px, ty + sp * 0.1f, sp * 0.85f, Dim);
         ty += px * 1.6f;
-        if (waypoints.Count == 0) { c.Text("None yet: detours round worlds are added by themselves", x + pad, ty, sp * 0.9f, Dim); ty += lh * 1.15f; }
+        if (waypoints.Count == 0) { c.Text("None yet (detours round worlds are automatic)", x + pad, ty, sp * 0.9f, Dim); ty += lh * 1.15f; }
         for (int i = 0; i < waypoints.Count; i++)
         {
-            c.Text((i + 1) + ".  " + waypoints[i], x + pad, ty, sp, MapScene.WaypointCol);
             var xb = new Box(x + w - pad - lh, ty - lh * 0.1f, lh, lh);
+            Fit((i + 1) + ".  " + waypoints[i], x + pad, ty, sp, MapScene.WaypointCol, xb.X - px * 0.5f - x - pad);
             if (ui.Button(xb, "x", sp * 0.9f, Stop)) hit.Remove = i;
             ty += lh * 1.15f;
         }
         if (adding)
         {
             bool blink = now % 1.0 < 0.6;
-            c.Text(addHint ?? "Pick a point in Flip and Burn's list", x + pad, ty + (row - sp) / 2, sp, blink ? Warn : Warn.WithAlpha(0.6f));
+            c.Text(addHint ?? "Pick a point in the N list", x + pad, ty + (row - sp) / 2, sp, blink ? Warn : Warn.WithAlpha(0.6f));
             float dw = c.TextWidth("DONE", sp) + px * 2.4f;
             if (ui.Button(new Box(x + w - pad - dw, ty + row * 0.1f, dw, row * 0.8f), "DONE", sp, Warn, true)) hit.ToggleAdd = true;
         }
@@ -292,10 +344,27 @@ public static class AutopilotPanel
 
         // the route
         c.Rect(x + pad, ty - px * 0.4f, w - pad * 2, 1, Dim.WithAlpha(0.4f));
-        foreach (var (t, col) in lines) { c.Text(t, x + pad, ty, sp, col); ty += lh; }
-        float by = panel.Bottom - px * 2.6f, bwid = (w - pad * 2 - px) / 2;
-        hit.Engage = ui.Button(new Box(x + pad, by, bwid, px * 1.9f), flying ? "APPLY" : "ENGAGE", px, Go);
-        hit.Cancel = ui.Button(new Box(x + pad + bwid + px, by, bwid, px * 1.9f), "CANCEL", px, Dim);
+        foreach (var (t, col) in lines) { Fit(t, x + pad, ty, sp, col); ty += lh; }
+        float by = panel.Bottom - px * 2.6f;
+        if (flying)
+        {
+            float bwid = (w - pad * 2 - px) / 2;
+            hit.Engage = ui.Button(new Box(x + pad, by, bwid, px * 1.9f), "APPLY", px, Go);
+            hit.Cancel = ui.Button(new Box(x + pad + bwid + px, by, bwid, px * 1.9f), "CANCEL", px, Dim);
+        }
+        else
+        {
+            // ENGAGE, FLY MANUAL (the route kept, flown by hand with the burn guide), CANCEL
+            // each as wide as its text needs, the row filling the panel; the text smaller when the panel is narrow
+            const string te = "ENGAGE AUTOPILOT", tm = "FLY MANUAL", tc = "CANCEL";
+            float gap = px * 0.6f, room = w - pad * 2 - gap * 2;
+            float ne = c.TextWidth(te, px) + px * 1.6f, nm = c.TextWidth(tm, px) + px * 1.6f, nc = c.TextWidth(tc, px) + px * 1.6f;
+            float k = room / (ne + nm + nc), bpx = px * Math.Min(1f, k);
+            float we = ne * k, wm = nm * k, wc = nc * k;
+            hit.Engage = ui.Button(new Box(x + pad, by, we, px * 1.9f), te, bpx, Go);
+            hit.Manual = ui.Button(new Box(x + pad + we + gap, by, wm, px * 1.9f), tm, bpx, ManualCol);
+            hit.Cancel = ui.Button(new Box(x + pad + we + wm + gap * 2, by, wc, px * 1.9f), tc, bpx, Dim);
+        }
         return hit;
     }
 
@@ -323,6 +392,10 @@ public static class AutopilotPanel
         string sub = (s != null && !string.IsNullOrEmpty(s.Msg) ? s.Msg + "    " : "") + "Move or turn to take over    " + stopKey + ": change the route";
         return Line(c, screenW, y, px, head, text, sub, cx, screenH);
     }
+
+    /// <summary>The HUD line while you fly a route by hand (MANUAL), in the autopilot line's frame and place.</summary>
+    public static Box ManualLine(IMapCanvas c, float screenW, float y, float px, string text, string sub, float cx = float.NaN, float screenH = float.NaN) =>
+        Line(c, screenW, y, px, "MANUAL", text, sub, cx, screenH);
 
     private static Box Line(IMapCanvas c, float screenW, float y, float px, string head, string text, string sub, float cx, float screenH)
     {

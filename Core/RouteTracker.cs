@@ -342,5 +342,8 @@ public sealed class RouteTracker
     }
 
     /// <summary>What to pick in F&amp;B's list next: the next detour or waypoint, or the destination.</summary>
+    /// <summary>Where the route was planned from (the start of its first leg).</summary>
+    public V3 PlanFrom => planFrom;
+
     public string NextPick => Next < Waypoints.Count ? Waypoints[Next].Name : TargetName;
 }

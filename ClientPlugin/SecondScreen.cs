@@ -61,7 +61,7 @@ internal static class SecondScreen
     public static void Toggle()
     {
         Set(!IsOpen);
-        SidePreview.Notify(IsOpen ? "Map on the second screen" + (win.Full ? "" : " (one screen only: a window)") : Plugin.Settings.SecondScreen ? "Second screen: can't open a window" : "Second screen map closed");
+        SidePreview.Notify(IsOpen ? "Second screen: on" + (win.Full ? "" : " (one monitor: windowed)") : Plugin.Settings.SecondScreen ? "Second screen: can't open a window" : "Second screen: off");
     }
 
     /// <summary>The monitors, for the setting: "Auto" then each screen.</summary>
@@ -214,7 +214,7 @@ internal static class SecondScreen
                 while (win.Inputs.TryDequeue(out _)) { }
                 touch.Clear(); mouse.Reset(scene); mLeft = mRight = false;
                 if (SidePreview.OutOfCockpit) Answer(false); // out of the seat: nothing it asked about can go ahead
-                Message(list, w, h, SidePreview.OutOfCockpit ? "The map shows while you sit in a cockpit, seat or remote control." : SidePreview.Paused);
+                Message(list, w, h, SidePreview.OutOfCockpit ? "Sit in a cockpit, seat or remote control to see the map." : SidePreview.Paused);
             }
             else
             {
@@ -311,13 +311,13 @@ internal static class SecondScreen
 
         // a press on the buttons or the autopilot controls stays with them until let go
         bool down = m.Left || m.Right, pressed = m.NewLeft || m.NewRight, released = m.LeftReleased || m.RightReleased;
-        bool overUi = prompt != null || !float.IsNaN(x) && (controls.W > 0 && controls.Contains(x, y) || bar.W > 0 && bar.Contains(x, y));
+        bool overUi = prompt != null || !float.IsNaN(x) && (controls.W > 0 && controls.Contains(x, y) || bar.W > 0 && bar.Contains(x, y) || destBox.W > 0 && destBox.Contains(x, y));
         if (pressed) uiGrab = overUi;
         bool toUi = uiGrab || overUi && !down && !released;
         if (live && (uiGrab || overUi)) mouse.Handle(scene, new MouseInput(), px, py, false);
         else if (live) mouse.Handle(scene, m, px, py, !float.IsNaN(x) || mouse.Busy);
         if (tf.HoldStarted)
-            Toast(scene.Hovered is Pick hp && hp.Kind != "Your ship" ? "Let go to make " + hp.Name + " the destination" : "Hold on a world, station or GPS point to make it the destination");
+            Toast(scene.Hovered is Pick hp && hp.Kind != "Your ship" ? "Let go: set " + hp.Name + " as destination" : "Hold on a world, station or GPS: set destination");
 
         if (follow && scene.Snap.HasShip) { scene.Cam.GoalTarget = scene.Snap.ShipPos; scene.Cam.Target = scene.Snap.ShipPos; }
         if (Turning && scene.Snap.HasShip) heading.Update(scene.Cam, scene.Snap.ShipVel, scene.Snap.ShipFwd, dt);
@@ -338,6 +338,8 @@ internal static class SecondScreen
             controls = MapControls.Draw(ui, scene, box, card, now, out bool manual);
             if (manual) showControls = false;
         }
+        destBox = toolKeep = default;
+        if (prompt == null && live && showControls && destList) DrawDestinations(box, controls, card, now);
         if (prompt == null) bar = live ? Toolbar(box, now) : default;
         if (toast != null && now < toastUntil)
         {
@@ -356,10 +358,51 @@ internal static class SecondScreen
         get
         {
             const string s = MapScene.Sep;
-            return "TOUCH|Drag orbit" + s + "Pinch zoom" + s + "Two fingers: move to pan, twist to turn" + s + "Tap focus" + s + "Hold, then let go: set destination" + s
-                    + "TAP button: what a tap does (" + TapName + ")" + s + "Drag your waypoint to move it" + "\n"
-                + "MOUSE|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Right-click the destination: clear route";
+            return "TOUCH|Drag orbit" + s + "Pinch zoom" + s + "Two fingers pan / turn" + s + "Tap focus" + s + "Hold set destination" + s
+                    + "TAP button: tap mode (" + TapName + ")" + s + "Drag waypoint: move" + "\n"
+                + "MOUSE|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "Shift+click set destination" + s + "Shift+right-click add / remove waypoint" + s + "Right-click destination: clear route";
         }
+    }
+
+    private static bool destList = true; // the list of places beside the Route Plan (CLOSE hides it until ROUTE PLAN is pressed again)
+    private static int destPage;
+    private static Box destBox, toolKeep; // where the list was drawn; what the side buttons keep clear of (the list, with the editor beside it)
+    private static double planAfterPick; // a place was picked here: open the Route Plan once its route is worked out
+    private static List<DestinationList.Entry> destItems;
+    private static double destBuilt = -1;
+
+    /// <summary>
+    /// The places to fly to, beside the Route Plan (Flip and Burn's own N list is drawn in the game's window and can't
+    /// be shown here): a pick sets the destination, or adds a waypoint while ADD WAYPOINT is on. What the side
+    /// buttons keep clear of is left in toolKeep.
+    /// </summary>
+    private static void DrawDestinations(Box box, Box plan, bool card, double now)
+    {
+        if (destItems == null || now - destBuilt > 2) { destItems = DestinationList.Build(scene.Snap); destBuilt = now; }
+        float cpx = Math.Max(14f, box.H / 52f), w = cpx * 19, gap = cpx * 0.6f;
+        float y = box.Y + box.H * 0.06f, h = box.H * 0.86f;
+        bool editor = plan.W > 0 && !card;
+        // beside the route editor, towards the middle; with no editor up, where it would stand
+        float x = editor ? (scene.PanelOnRight ? plan.Right + gap : plan.X - gap - w)
+            : box.X + (scene.PanelOnRight ? cpx : box.W - cpx - w);
+        var hit = DestinationList.Draw(ui, destItems, x, y, w, h, cpx, scene.Snap, SidePreview.Path?.TargetName, SidePreview.AddingWaypoint, ref destPage);
+        if (hit.Close) destList = false;
+        if (hit.Picked >= 0)
+        {
+            var e = destItems[hit.Picked];
+            bool adding = SidePreview.AddingWaypoint;
+            Toast(SidePreview.SetDestination(e.Name, e.Kind, e.Pos, e.Detail));
+            if (!adding) planAfterPick = now + 3;
+        }
+        if (planAfterPick > 0)
+        {
+            if (now > planAfterPick || SidePreview.MapEditorOpen) planAfterPick = 0;
+            else if (SidePreview.Path != null && SidePreview.MapAutopilotKey() == null) planAfterPick = 0;
+        }
+        destBox = toolKeep = hit.Panel;
+        if (!editor) return;
+        float l = Math.Min(plan.X, hit.Panel.X), t = Math.Min(plan.Y, hit.Panel.Y);
+        toolKeep = new Box(l, t, Math.Max(plan.Right, hit.Panel.Right) - l, Math.Max(plan.Bottom, hit.Panel.Bottom) - t);
     }
 
     private static string TapName => touch.Mode == TapMode.Focus ? "focus" : touch.Mode == TapMode.Destination ? "set destination" : "add / remove waypoint";
@@ -376,16 +419,16 @@ internal static class SecondScreen
             main.Add(("TAP: " + (touch.Mode == TapMode.Focus ? "FOCUS" : touch.Mode == TapMode.Destination ? "DESTINATION" : "WAYPOINTS"), touch.Mode != TapMode.Focus, () =>
             {
                 touch.Mode = (TapMode)(((int)touch.Mode + 1) % 3);
-                Toast(touch.Mode == TapMode.Focus ? "Tap: focus on it (hold, then let go: set destination)"
-                    : touch.Mode == TapMode.Destination ? "Tap: set it as the destination"
-                    : "Tap: add a waypoint (on one of yours: remove it); drag: place one above or below");
+                Toast(touch.Mode == TapMode.Focus ? "Tap: focus (hold: set destination)"
+                    : touch.Mode == TapMode.Destination ? "Tap: set destination"
+                    : "Tap: add or remove a waypoint. Drag: place above or below");
             }));
             main.Add(("FOLLOW SHIP", follow, () =>
             {
                 follow = !follow;
                 var sn = SidePreview.Snap;
                 if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
-                Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (no ship yet: sit in a cockpit)");
+                Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (sit in a cockpit)");
             }));
             main.Add(("TURN WITH SHIP", Plugin.Settings.FollowHeading, () =>
             {
@@ -394,16 +437,22 @@ internal static class SecondScreen
             }));
             main.Add(("FRAME ROUTE", false, () => { follow = false; scene.FrameDefault(false); }));
             main.Add(("WHOLE SYSTEM", false, () => { follow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }));
-            main.Add(("AUTOPILOT", showControls && SidePreview.Path != null, () => { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }));
+            // the Route Plan, with the list of places to pick from beside it (with no route yet: the list alone)
+            main.Add(("ROUTE PLAN", showControls, () =>
+            {
+                var why = SidePreview.MapAutopilotKey();
+                if (why != null && SidePreview.Path != null) Toast(why);
+                showControls = destList = true;
+            }));
             main.Add(("RE-PLAN", false, () =>
             {
                 bool back = SidePreview.Tracker.Skipped.Count > 0; SidePreview.Replan(true);
-                Toast("Route planned again from here" + (back ? ", with the detours you removed." : "."));
+                Toast("Route re-planned" + (back ? " (removed detours restored)." : "."));
             }));
             main.Add(("DETOURS", Plugin.Settings.AvoidBodies, () =>
             {
                 Plugin.Settings.AvoidBodies = !Plugin.Settings.AvoidBodies; SidePreview.Replan();
-                Toast(Plugin.Settings.AvoidBodies ? "Detours round worlds: on" : "Detours off: straight line");
+                Toast(Plugin.Settings.AvoidBodies ? "Detours: on" : "Detours: off (straight line)");
             }));
             bool armed = now < clearArmedUntil;
             main.Add((armed ? "TAP AGAIN: CLEAR" : "CLEAR ROUTE", armed, () =>
@@ -435,7 +484,8 @@ internal static class SecondScreen
         bool right = !scene.PanelOnRight;
         float top = Math.Max(scene.TitleBottom, box.Y) + gap * 2, edge = gap * 2;
         float x = right ? box.Right - edge - colW : box.X + edge;
-        if (controls.W > 0 && controls.X < x + colW && controls.Right > x) x = right ? controls.X - gap - colW : controls.Right + gap;
+        var keep = toolKeep.W > 0 ? toolKeep : controls;
+        if (keep.W > 0 && keep.X < x + colW && keep.Right > x) x = right ? keep.X - gap - colW : keep.Right + gap;
         float sx = right ? x - gap - colW : x + colW + gap;
         var all = new Box(x, top, colW, 0);
         Action act = null;

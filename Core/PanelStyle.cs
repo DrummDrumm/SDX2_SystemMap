@@ -22,7 +22,9 @@ public static class PanelStyle
     {
         var acc = T.Accent;
         float lw = Math.Max(1f, u);
-        c.Rect(b.X, b.Y, b.W, b.H, bg ?? T.PanelBg);
+        // the cut-corner frames: the background stays inside the cut corners
+        if (T.Style == ThemeStyle.Naval || T.Style == ThemeStyle.Contact) FillInside(c, b, b, 8 * u, 14 * u, bg ?? T.PanelBg);
+        else c.Rect(b.X, b.Y, b.W, b.H, bg ?? T.PanelBg);
         switch (T.Style)
         {
             case ThemeStyle.Tachi:
@@ -186,8 +188,8 @@ public static class PanelStyle
 
     /// <summary>
     /// A button in the theme's look (text size px, the button's colour accent): Classic bars above and below; Tachi a
-    /// cut-corner outline with a lit edge; UNN a chamfered plate with a gold tab; OPA corner brackets over a hazard
-    /// foot; Protogen brackets with a lit top; Belter a chamfered tag with a trim bar.
+    /// cut-corner outline with a lit edge; UNN a chamfered plate with a gold tab; Belter corner brackets over a hazard
+    /// foot; Protogen brackets with a lit top; OPA a chamfered tag with a trim bar.
     /// </summary>
     public static void Button(IMapCanvas c, Box b, float px, string text, MapColor accent, bool hover, bool on, bool enabled)
     {
@@ -195,7 +197,9 @@ public static class PanelStyle
         var dim = T.ApDim;
         var edge = enabled ? accent : dim.WithAlpha(0.5f);
         var fill = on ? accent.WithAlpha(0.42f) : hover ? accent.WithAlpha(0.25f) : T.ApPanel;
-        c.Rect(b.X, b.Y, b.W, b.H, fill);
+        if (T.Style == ThemeStyle.Tachi) FillInside(c, b, b, 0, k, fill);
+        else if (T.Style == ThemeStyle.Naval || T.Style == ThemeStyle.Contact) FillInside(c, b, b, k * 0.5f, k, fill);
+        else c.Rect(b.X, b.Y, b.W, b.H, fill);
         switch (T.Style)
         {
             case ThemeStyle.Tachi:
@@ -242,7 +246,7 @@ public static class PanelStyle
         c.Rect(b.Right - len, b.Bottom - w, len, w, col); c.Rect(b.Right - w, b.Bottom - len, w, len, col);
     }
 
-    /// <summary>OPA: a strip of diagonal orange-and-black hazard stripes.</summary>
+    /// <summary>Belter: a strip of diagonal orange-and-black hazard stripes.</summary>
     public static void HazardStripe(IMapCanvas c, float x, float y, float w, float h)
     {
         c.PushClip(x, y, w, h);
@@ -250,6 +254,32 @@ public static class PanelStyle
         float step = h * 2.2f, lw = h * 0.9f;
         for (float sx = x - h; sx < x + w + h; sx += step) c.Line(sx, y + h, sx + h, y, lw, T.Accent.WithAlpha(0.9f));
         c.PopClip();
+    }
+
+    /// <summary>
+    /// Fills the part of box b inside frame's cut-corner outline (<see cref="Chamfer"/>: the top-right corner cut by big,
+    /// the others by small), so a background stays inside its frame. Straight runs are one rect; the cut corners are
+    /// thin rows, each kept inside the diagonal.
+    /// </summary>
+    public static void FillInside(IMapCanvas c, Box b, Box frame, float small, float big, MapColor col)
+    {
+        if (col.A == 0 || b.W <= 0 || b.H <= 0 || float.IsNaN(b.X + b.Y + b.W + b.H)) return;
+        small = Math.Max(0, small); big = Math.Max(0, big);
+        float ft = frame.Y, fb = frame.Bottom;
+        float topEnd = ft + Math.Max(small, big), botStart = fb - small;
+        float step = Math.Max(1f, Math.Min(2f, Math.Max(small, big) / 12f));
+        float y = Math.Max(b.Y, ft), end = Math.Min(b.Bottom, fb);
+        for (int guard = 0; y < end - 0.01f && guard < 4000; guard++)
+        {
+            float y1 = y < topEnd ? Math.Min(y + step, topEnd) : y < botStart ? botStart : y + step;
+            y1 = Math.Min(end, y1);
+            if (y1 <= y) break;
+            float li = Math.Max(Math.Max(0, small - (y - ft)), Math.Max(0, small - (fb - y1)));
+            float ri = Math.Max(Math.Max(0, big - (y - ft)), Math.Max(0, small - (fb - y1)));
+            float x0 = Math.Max(b.X, frame.X + li), x1 = Math.Min(b.Right, frame.Right - ri);
+            if (x1 > x0) c.Rect(x0, y, x1 - x0, y1 - y, col);
+            y = y1;
+        }
     }
 
     /// <summary>A box outline with its corners cut: the top-right one by big, the others by small.</summary>

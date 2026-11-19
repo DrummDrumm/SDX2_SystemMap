@@ -61,8 +61,11 @@ public static class RouteExport
             var d = to - from;
             var w = WorldUnder(to, clearance);
             // a ground facility: straight above it, as low as the ship can hold itself (3 km over it at the closest)
-            double off = w != null && stn.Above > 0 ? SurfaceStop(w, to, clearance, stn.Above, offset, stn.Above) - V3.Distance(to, w.Pos) : offset >= 0 ? offset : StationStandoff;
-            if (d.Length <= Math.Min(off, StationStandoff) * 1.5) return to;
+            bool ground = w != null && stn.Above > 0;
+            double off = ground ? SurfaceStop(w, to, clearance, stn.Above, offset, stn.Above) - V3.Distance(to, w.Pos) : offset >= 0 ? offset : StationStandoff;
+            // nearly there: on it, but never on a ground facility (it sits in its world's hills; the descent detour
+            // ends a few km from it, and a stop on it flew a hauler into Pallas's ground, 2026-11-19)
+            if (!ground && d.Length <= Math.Min(off, StationStandoff) * 1.5) return to;
             why = "station";
             // near or on a world: from the side away from it (above the station), else from your side
             return w != null ? to + (to - w.Pos).Normalized * off : to - d.Normalized * off;
@@ -235,10 +238,30 @@ public static class RouteExport
     private static void Curve(StringBuilder sb, RoutePlan leg, V3 end, string name)
     {
         double step = Math.Max(500, leg.Distance / CurvePoints), keep = V3.Distance(end, leg.Target) * 1.5 + 1000;
-        var pts = RouteCurve.Thin(leg.Curve, step);
+        var pts = CurvePts(leg, step);
         for (int i = 0; i < pts.Count; i++)
             if (V3.Distance(pts[i], leg.Target) > keep && V3.Distance(pts[i], end) > step * 0.5)
-                Wp(sb, pts[i], Math.Max(100, Math.Min(DetourArrive, step * 0.25)), "curve", "Curving to " + name);
+            {
+                // reached no sooner than a quarter of the way from its neighbours, so a tight bend's points are flown
+                double near = Math.Min(V3.Distance(i > 0 ? pts[i - 1] : leg.Start, pts[i]), V3.Distance(pts[i], i + 1 < pts.Count ? pts[i + 1] : end));
+                Wp(sb, pts[i], Math.Max(100, Math.Min(Math.Min(DetourArrive, step * 0.25), near * 0.25)), "curve", "Curving to " + name);
+            }
+    }
+
+    /// <summary>How far the straight lines between a curved leg's points may leave its curve (m).</summary>
+    public const double CurveTolerance = 500;
+
+    /// <summary>
+    /// A curved leg's points for the autopilot: about <see cref="CurvePoints"/> along it, more where it bends tightly
+    /// (the corners round a world), so the lines between them stay within <see cref="CurveTolerance"/> of the curve
+    /// (looser only if that would take more than twice as many points).
+    /// </summary>
+    public static List<V3> CurvePts(RoutePlan leg, double step)
+    {
+        double tol = CurveTolerance;
+        var pts = RouteCurve.Thin(leg.Curve, step, tol);
+        for (int n = 0; n < 8 && pts.Count > CurvePoints * 2; n++) pts = RouteCurve.Thin(leg.Curve, step, tol *= 2);
+        return pts;
     }
 
     /// <summary>A waypoint's reach radius: <see cref="DetourArrive"/>, but at most a quarter of the shorter leg either side
@@ -341,7 +364,7 @@ public static class RouteExport
                 }
             }
         }
-        return any && r.Version == Version && (r.Points.Count > 0 || r.Command == "stop" || r.Command == "brake");
+        return any && r.Version == Version && (r.Points.Count > 0 || r.Command == "stop" || r.Command == "brake" || r.Command == "manual");
     }
 
     /// <summary>Reads the autopilot's own status section; null if there's none.</summary>
@@ -387,6 +410,9 @@ public static class RouteExport
         public bool Flying => State == "flying";
         /// <summary>FULL STOP: turning retrograde and burning to a standstill.</summary>
         public bool Braking => State == "braking";
+        /// <summary>The pilot took over a route: the PB has let go but holds the route until manual control is
+        /// confirmed (or the route resumes).</summary>
+        public bool Manual => State == "manual";
     }
 }
 

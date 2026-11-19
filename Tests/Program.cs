@@ -39,19 +39,22 @@ internal static class Program
         UserWaypoints();
         Limits();
         PanelInput();
+        PadFocus();
+        Triggers();
         Trajectories();
         Render(outDir, "");
         MapTheme.Current = MapTheme.Tachi;
         Render(outDir, "-hud");
         MapTheme.Current = MapTheme.Unn;
         Render(outDir, "-unn");
-        MapTheme.Current = MapTheme.Opa;
-        Render(outDir, "-opa");
-        MapTheme.Current = MapTheme.Protogen;
-        Render(outDir, "-protogen");
         MapTheme.Current = MapTheme.Belter;
         Render(outDir, "-belter");
+        MapTheme.Current = MapTheme.Protogen;
+        Render(outDir, "-protogen");
+        MapTheme.Current = MapTheme.Opa;
+        Render(outDir, "-opa");
         ShipIconSheet(outDir);
+        FeedSheet(outDir);
         MapTheme.Current = MapTheme.Classic;
         Themes();
         HoverOnTop();
@@ -589,6 +592,27 @@ internal static class Program
         Check(last.Kind == "target" && last.Name == "Far (side)" && V3.Distance(r.Dest, earth + new V3(600e3, 0, 0)) < 0.01 && r.Command == "load", "last point is the target, dest and command kept");
         var stop = RouteExport.StopPoint(t.Path, out var why);
         Check(V3.Distance(last.Pos, stop) < 0.01 && r.Stop == why, "last point is the stop point");
+        // a curved route starting next to a moon (the 19 Nov crash: stopped 3.3 km over Phobos, route on to Tycho): the
+        // corners round it are a few km apart on a 4,000 km route, and the points sent to the PB must keep them
+        {
+            var phobos = SystemData.FindWorld("Phobos");
+            double wWell = phobos.Well, wG = phobos.SurfaceG, wF = phobos.Falloff, wH = phobos.Hills;
+            try
+            {
+                phobos.Well = 4400; phobos.Hills = 4400; phobos.SurfaceG = 0.05 * 9.81; phobos.Falloff = 7; // the game's numbers
+                var ship = new V3(-3506274.91, -585056.39, 5897633.21); var tychoAt = new V3(0, 0, 0);
+                var ct = new RouteTracker { Avoid = true, Curved = true };
+                ct.Update("Tycho Station", tychoAt, true, ship, V3.Zero, 169.26, 50000);
+                Check(ct.Waypoints.Exists(w => w.Around == phobos) && ct.Path.Curved, "by Phobos: the route goes round it, curved");
+                Check(RouteExport.Parse(RouteExport.Build(ct.Path, 3), out var cr), "by Phobos: export parses");
+                double lowest = double.MaxValue; V3 pa = ship;
+                foreach (var q in cr.Points) { lowest = Math.Min(lowest, V3.SegmentDistance(pa, q.Pos, phobos.Pos, out _)); pa = q.Pos; }
+                Check(lowest > DetourPlanner.Top(phobos) + 1000, "by Phobos: the points sent to the PB stay clear of it (" + Km(lowest) + " from its centre)");
+                Check(cr.Points.Count <= RouteExport.CurvePoints * 2 + 4, "by Phobos: no flood of points (" + cr.Points.Count + ")");
+                Check(cr.Points[0].Arrive <= V3.Distance(ship, cr.Points[0].Pos) * 0.25 + 1 || cr.Points[0].Arrive <= 100, "by Phobos: the first point isn't reached where the ship starts");
+            }
+            finally { phobos.Well = wWell; phobos.SurfaceG = wG; phobos.Falloff = wF; phobos.Hills = wH; }
+        }
         // world load: the route comes back from the PB copy, with the points already flown passed
         var back = new RouteTracker();
         Check(back.Restore(r, 1, earth + new V3(-600e3, 0, 0), null, V3.Zero) && back.TargetName == "Far (side)" && back.Waypoints.Count == t.Waypoints.Count
@@ -602,6 +626,112 @@ internal static class Program
         Check(back.UserPoints.Count == 0 && back.Waypoints.Count == wps && back.Bends.Count == 0 && back.TargetName == "Far (side)" && back.Revision > rev, "flight edit: cancel goes back");
         RouteExport.Parse(RouteExport.BuildStop(8), out var sr);
         Check(!new RouteTracker().Restore(sr, 0, V3.Zero, null, V3.Zero), "restore: a stop order isn't a route");
+
+        // flying by hand: the HUD line and the heads-up before a turn
+        Check(Math.Abs(ManualGuide.TurnAngle(V3.Zero, new V3(100e3, 0, 0), new V3(100e3, 100e3, 0)) - 90) < 0.01, "manual: turn angle");
+        Check(double.IsNaN(ManualGuide.TimeTo(V3.Zero, new V3(-500, 0, 0), new V3(100e3, 0, 0))), "manual: no time when moving away");
+        // flown by hand to a moon (the 19 Nov crash: the brake share was for a stop on Deimos's centre, and the hauler
+        // reached the surface at 824 m/s): the guide's leg ends where the autopilot stops, above the surface
+        {
+            var deimos = SystemData.FindWorld("Deimos");
+            var from = new V3(-7033734.69, -315354.85, 4319765.74);
+            var mt2 = new RouteTracker { Avoid = true, Curved = true };
+            mt2.Update("Deimos", deimos.Pos, true, from, V3.Zero, 170.27, 50000);
+            var hand = BurnGuide.HandLeg(mt2.Path);
+            double up = V3.Distance(hand.Target, deimos.Pos) - deimos.Radius;
+            Check(mt2.Path.Legs.Count == 1 && V3.Distance(hand.Target, RouteExport.StopPoint(mt2.Path, out _)) < 0.01 && up > 2000,
+                "manual: the hand-flown leg to a moon ends above its surface (" + Km(up) + " up), where the autopilot stops");
+            // braking to stop there from 126.9 km out at 6,305 m/s (the crash's last brake setting) leaves no speed at the surface
+            var ship2 = hand.Target + (from - hand.Target).Normalized * 126900;
+            double pct2 = BurnGuide.ThrustPct(BurnGuide.Phase.Brake, 170.27, 170.27, V3.Distance(ship2, hand.Target), 6305, hand.EndSpeed);
+            double old2 = BurnGuide.ThrustPct(BurnGuide.Phase.Brake, 170.27, 170.27, V3.Distance(ship2, deimos.Pos), 6305, 0);
+            Check(pct2 > old2 && pct2 <= 100 && Math.Abs(pct2 - 6305.0 * 6305 / (2 * 126900) / 170.27 * 100) < 0.5, "manual: the brake share stops the ship at that point (" + pct2.ToString("0") + "%, was " + old2.ToString("0") + "% for the centre)");
+            var straight = new RouteTracker { Avoid = false };
+            straight.Update("Deimos", deimos.Pos, true, from, V3.Zero, 170.27, 50000);
+            straight.AddUser("Mid", (from + deimos.Pos) * 0.5 + new V3(0, 200e3, 0));
+            straight.Update("Deimos", deimos.Pos, true, from, V3.Zero, 170.27, 50000);
+            Check(straight.Path.Legs.Count > 1 && BurnGuide.HandLeg(straight.Path) == straight.Path.First, "manual: a leg to a route point still ends on the point (" + straight.Path.Legs.Count + " legs, " + straight.UserPoints.Count + " points)");
+        }
+        string mt = ManualGuide.Text("Hygeia", 1, 3, "Waypoint 2", new V3(100e3, 0, 0), "Hygeia", new V3(100e3, 900e3, 0),
+            new V3(90e3, 0, 0), new V3(500, 0, 0), 910e3, 1800, "Waypoint 2", out string ms);
+        Check(mt.Contains("point 2 of 3") && ms.StartsWith("Turn 90") && ms.Contains("in 20 s"), "manual: turn heads-up 20 s out (" + ms + ")");
+        ManualGuide.Text("Hygeia", 1, 3, "Waypoint 2", new V3(100e3, 0, 0), "Hygeia", new V3(100e3, 900e3, 0),
+            new V3(0, 0, 0), new V3(500, 0, 0), 1000e3, 1800, "Waypoint 2", out ms);
+        Check(ms.StartsWith("Flip and Burn's box: Waypoint 2"), "manual: no heads-up far out (" + ms + ")");
+        ManualGuide.Text("Hygeia", 1, 3, "Waypoint 2", new V3(100e3, 0, 0), "Hygeia", new V3(100e3, 900e3, 0),
+            new V3(90e3, 0, 0), new V3(500, 0, 0), 910e3, 1800, "Somewhere", out ms);
+        Check(ms == "Pick \"Waypoint 2\" in N", "manual: asks for the pick when F&B points elsewhere");
+        {
+            // other mods' marker labels: two markers close on screen (F&B's destination and its hostile space warning)
+            LabelSpread.Reset();
+            var none = new System.Collections.Generic.List<Box>();
+            float a1 = LabelSpread.Shift(1, 870, 300, 0.0225f, 1920, 1080, none), a2 = LabelSpread.Shift(1, 870, 300, -0.01f, 1920, 1080, none);
+            float a3 = LabelSpread.Shift(1, 870 + 60, 300, -0.01f, 1920, 1080, none); // a line set beside another
+            float b1 = LabelSpread.Shift(1, 850, 290, 0.03f, 1920, 1080, none), b2 = LabelSpread.Shift(1, 850, 290, 0f, 1920, 1080, none);
+            Check(a1 == 0 && a2 == 0 && a3 == 0, "mod labels: the first marker's lines stay where they are");
+            Check(b1 != 0 && b1 == b2 && !LabelSpread.Block(850, 290 + b1, 1920, 1080).Overlaps(LabelSpread.Block(870, 300, 1920, 1080)),
+                "mod labels: a second marker's lines move together, clear of the first (" + b1.ToString("0") + " px)");
+            float c1 = LabelSpread.Shift(1, 300, 700, 0.0225f, 1920, 1080, none);
+            Check(c1 == 0, "mod labels: a marker elsewhere is left alone");
+            // the next frame (the same line again, even with the same frame number) starts afresh
+            Check(LabelSpread.Shift(1, 870, 300, 0.0225f, 1920, 1080, none) == 0 && LabelSpread.Shift(1, 850, 290, 0.03f, 1920, 1080, none) == b1, "mod labels: the same each frame");
+            // one of the plugin's own boxes: moved off it, the shorter way
+            var keep = new System.Collections.Generic.List<Box> { new Box(800, 200, 300, 110) };
+            float k = LabelSpread.Shift(2, 870, 300, 0.0225f, 1920, 1080, keep);
+            Check(k > 0 && !LabelSpread.Block(870, 300 + k, 1920, 1080).Overlaps(keep[0]), "mod labels: moved below the plugin's own box (" + k.ToString("0") + " px)");
+            float e = LabelSpread.Shift(3, 870, 1070, 0.0225f, 1920, 1080, new System.Collections.Generic.List<Box> { new Box(800, 1040, 300, 30) });
+            Check(e < 0, "mod labels: up when there is no room below");
+            LabelSpread.Reset();
+        }
+
+        // burn guide: on the line, burn along it; off it, tilt back toward it; brake points back along it
+        {
+            var a0 = BurnGuide.Aim(V3.Zero, new V3(1e9, 0, 0), new V3(1e6, 0, 0), new V3(1000, 0, 0), 10, BurnGuide.Phase.Burn);
+            Check(BurnGuide.Angle(a0, new V3(1, 0, 0)) < 0.01, "burn guide: on the line, along it");
+            var a1 = BurnGuide.Aim(V3.Zero, new V3(1e9, 0, 0), new V3(1e6, 50e3, 0), new V3(1000, 0, 0), 10, BurnGuide.Phase.Burn);
+            Check(a1.Y < 0 && BurnGuide.Angle(a1, new V3(1, 0, 0)) <= 45.01, "burn guide: off the line, tilted back (" + Fmt.Num(BurnGuide.Angle(a1, new V3(1, 0, 0)), "0.0") + ")");
+            var a2 = BurnGuide.Aim(V3.Zero, new V3(1e9, 0, 0), new V3(1e6, 0, 0), new V3(1000, 300, 0), 10, BurnGuide.Phase.Burn);
+            Check(a2.Y < 0, "burn guide: a drift across is taken out");
+            var a3 = BurnGuide.Aim(V3.Zero, new V3(1e9, 0, 0), new V3(1e6, 0, 0), new V3(1000, 0, 0), 10, BurnGuide.Phase.Brake);
+            Check(BurnGuide.Angle(a3, new V3(-1, 0, 0)) < 0.01, "burn guide: brake points back");
+            Check(BurnGuide.Aim(V3.Zero, new V3(1e9, 0, 0), new V3(1e6, 0, 0), new V3(1000, 0, 0), 10, BurnGuide.Phase.Coast).LengthSq < 0.5, "burn guide: on the line coasting, nothing to do");
+            BurnGuide.Project(new V3(0, 0, -1), 1, 1.7, 1920, 1080, 40, out float gx, out float gy, out bool gon);
+            Check(gon && Math.Abs(gx - 960) < 0.5 && Math.Abs(gy - 540) < 0.5, "burn guide: ahead is the screen's centre");
+            BurnGuide.Project(new V3(1, 0, 1), 1, 1.7, 1920, 1080, 40, out gx, out gy, out gon);
+            Check(!gon && Math.Abs(gx - 1880) < 0.5, "burn guide: behind-right goes to the right edge");
+            BurnGuide.Draw(new MeasureCanvas(), 20, 960, 540, true, 1200, 400, true, BurnGuide.Phase.Burn, 12, "FLIP in 45 s");
+            var gl = RoutePlan.Make("Far", V3.Zero, new V3(1e9, 0, 0), V3.Zero, 10, 50000);
+            string gn = BurnGuide.Next(gl, BurnGuide.PhaseOf(gl), null);
+            Check(BurnGuide.PhaseOf(gl) == BurnGuide.Phase.Burn && gn.StartsWith("COAST in"), "burn guide: countdown to the coast (" + gn + ")");
+            Check(BurnGuide.Next(gl, BurnGuide.Phase.Brake, "Hygeia").StartsWith("TURN for Hygeia in"), "burn guide: braking counts down to the turn");
+            // a pilot's slack: at speed the hand-flown plan flips earlier than the autopilot's
+            var fast = RoutePlan.Make("Far", V3.Zero, new V3(2e8, 0, 0), new V3(20000, 0, 0), 10, 50000);
+            var padded = BurnGuide.Padded(fast, V3.Zero, new V3(20000, 0, 0));
+            Check(padded.FlipAt < fast.FlipAt - 20000 * BurnGuide.ReactTime * 0.9, "burn guide: flips earlier by hand (" + Fmt.Dist(fast.FlipAt - padded.FlipAt) + ")");
+            var still = BurnGuide.Padded(gl, V3.Zero, V3.Zero);
+            Check(Math.Abs(still.Distance - gl.Distance) < 1, "burn guide: no slack taken from a standstill");
+            // thrust hints: BURN at the plan's share, BRAKE at what stops on the point
+            Check(Near(BurnGuide.ThrustPct(BurnGuide.Phase.Burn, 6, 10, 1e6, 0, 0), 60, 1e-9), "burn guide: BURN at the plan's thrust share");
+            Check(Near(BurnGuide.ThrustPct(BurnGuide.Phase.Brake, 6, 10, 50000, 1000, 0), 100, 1e-6), "burn guide: BRAKE share stops on the point");
+            Check(BurnGuide.ThrustPct(BurnGuide.Phase.Brake, 6, 10, 100000, 1000, 0) < 51, "burn guide: half the brake with twice the room");
+            Check(double.IsNaN(BurnGuide.ThrustPct(BurnGuide.Phase.Coast, 6, 10, 1e5, 100, 0)), "burn guide: no thrust hint while coasting");
+            // overshoot / short: 1000 m/s, 50 km out; slowing at 5 m/s² stops at 100 km (50 km over), at 20 m/s² at 25 km (25 km short)
+            Check(Near(BurnGuide.StopError(BurnGuide.Phase.Brake, 50000, 1000, 0, 5, 10), 50000, 1), "burn guide: overshoot at the slowing it has");
+            Check(BurnGuide.StopText(BurnGuide.Phase.Brake, BurnGuide.StopError(BurnGuide.Phase.Brake, 50000, 1000, 0, 20, 30), 50000) == "short 25.0 km", "burn guide: short with the distance");
+            Check(BurnGuide.StopText(BurnGuide.Phase.Brake, BurnGuide.StopError(BurnGuide.Phase.Brake, 50000, 1000, 0, 10, 10), 50000) == "stops on the mark", "burn guide: on the mark");
+            Check(BurnGuide.StopText(BurnGuide.Phase.Burn, BurnGuide.StopError(BurnGuide.Phase.Burn, 40000, 1000, 0, 0, 10), 40000) == "overshoot 10.0 km", "burn guide: overshoot even at full brake");
+            Check(BurnGuide.StopText(BurnGuide.Phase.Burn, BurnGuide.StopError(BurnGuide.Phase.Burn, 1e6, 1000, 0, 0, 10), 1e6) == null, "burn guide: nothing while there's room");
+            // the next change: FLIP back along the line, TURN onto the next leg, nothing when arriving
+            var nf = BurnGuide.NextAim(gl, BurnGuide.Phase.Burn, V3.Zero, new V3(1e6, 0, 0), null, out string nl1);
+            Check(nl1 == "FLIP" && nf.X < -0.99, "burn guide: next is the flip, pointing back");
+            var nt = BurnGuide.NextAim(gl, BurnGuide.Phase.Brake, V3.Zero, new V3(1e6, 0, 0), new V3(1e6, 1e6, 0), out string nl2);
+            Check(nl2 == "TURN" && nt.Y > 0.99, "burn guide: braking for a point, next is the turn onto the next leg");
+            BurnGuide.NextAim(gl, BurnGuide.Phase.Brake, V3.Zero, new V3(1e6, 0, 0), null, out string nl3);
+            Check(nl3 == null, "burn guide: nothing next when arriving");
+            var nc = new PropCanvas();
+            BurnGuide.DrawNext(nc, 20, 1900, 500, false, 960, 540, "FLIP", "1 m 20 s");
+            Check(nc.Texts.Exists(x => x.Text == "NEXT FLIP 1 m 20 s"), "burn guide: next change labelled with its time");
+        }
 
         // stop points: 3 km short of a station, at the clearance above a world, the point itself in open space
         var tycho = SystemData.Stations[3].Pos;
@@ -625,6 +755,23 @@ internal static class Program
             var above = low.Pos + lup * 400e3;
             Check(RouteExport.Parse(RouteExport.Build(RoutePath.Make(low.Name, above, low.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3), 9), out lr) && lr.Points.Count == 1,
                   "coming from above: straight to the stop");
+        }
+        // a ground facility (2 Pallas Station, in Pallas's hills): the planner's descent detour ends ~3.7 km from it, and
+        // the stop must still be above it, never on it (2026-11-19: stop=point on the station flew a hauler into the ground)
+        {
+            var pal = Array.Find(SystemData.Stations, x => x.Name == "2 Pallas Station");
+            var pw = SystemData.FindWorld("Pallas");
+            foreach (var from in new[] { new V3(11342873.83, -157987.76, 13924813.76), new V3(6222641.78, -274072.35, 6284849.9) })
+                foreach (bool curved in new[] { false, true })
+                {
+                    var dets = DetourPlanner.Plan(from, pal.Pos, pal.Name, 100e3);
+                    var palPath = RoutePath.Make(pal.Name, from, pal.Pos, V3.Zero, 161.58, 50000, dets, 0, 100e3, 0, curved);
+                    var stopP = RouteExport.StopPoint(palPath, out why);
+                    double over = V3.Distance(stopP, pw.Pos) - V3.Distance(pal.Pos, pw.Pos);
+                    Check(why == "station" && over >= DetourPlanner.SurfaceGap - 1 && (stopP - pal.Pos).Normalized.Dot((pal.Pos - pw.Pos).Normalized) > 0.999
+                          && RouteExport.Parse(RouteExport.Build(palPath, 9), out var palRoute) && V3.Distance(palRoute.Points[palRoute.Points.Count - 1].Pos, stopP) < 1,
+                          "Pallas station (" + (curved ? "curved" : "straight") + ", " + dets.Count + " detour): stop " + over.ToString("0") + " m straight above it, not on it");
+                }
         }
         var mars = SystemData.FindWorld("Mars");
         var pm = RoutePath.Make("Mars", mars.Pos + new V3(0, 0, 2e6), mars.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3);
@@ -659,6 +806,9 @@ internal static class Program
             Check(RouteExport.Parse(RouteExport.BuildCommand(11, "brake"), out var br) && br.Command == "brake" && br.Id == 11, "full stop order parses");
             var bst = RouteExport.ParseStatus(RouteExport.Merge(merged, "[SDX2 Autopilot]\nstate=braking\nack=11\nspeed=2400\ndist=120000\neta=95\nmsg=Full stop from the map\n", RouteExport.StatusHeader));
             Check(bst != null && bst.Braking && !bst.Flying && Near(bst.Speed, 2400, 1e-6), "full stop: the PB's braking status reads back");
+            Check(RouteExport.Parse(RouteExport.BuildCommand(12, "manual"), out var mo) && mo.Command == "manual" && mo.Id == 12, "confirm manual order parses");
+            var mst = RouteExport.ParseStatus(RouteExport.Merge(merged, "[SDX2 Autopilot]\nstate=manual\nack=11\ntarget=Hygeia\nmsg=Pilot took the controls\n", RouteExport.StatusHeader));
+            Check(mst != null && mst.Manual && !mst.Flying && mst.Target == "Hygeia", "taken over: the PB's paused status reads back");
         }
 
         // asteroid dodge: a rock on the line gets a pass point that keeps both straight lines clear
@@ -828,10 +978,128 @@ internal static class Program
         Frame(sig.X, sig.Y + 5, true, true, false);
         h = Frame(sig.X, sig.Y + 5, false, false, true);
         Check(lim.BySignature && lim.SignatureKm > 0 && h.Changed, "SIGNATURE switches the cap to a signature");
-        var en = c.Find("ENGAGE", 0);
+        var en = c.Find("ENGAGE AUTOPILOT", 0);
         Frame(en.X, en.Y + 5, true, true, false);
         h = Frame(en.X, en.Y + 5, false, false, true);
         Check(h.Engage && !h.Cancel, "clicking ENGAGE engages");
+    }
+
+    /// <summary>The second screen's list of places: its rows, its pages and a pick.</summary>
+    private static void DestinationListChecks()
+    {
+        var snap = new MapSnapshot();
+        snap.Gps.Add(new MapSnapshot.Marker { Name = "My base", Pos = new V3(1, 2, 3) });
+        var items = DestinationList.Build(snap);
+        int mars = items.FindIndex(e => e.Name == "Mars"), deimos = items.FindIndex(e => e.Name == "Deimos");
+        Check(items[0].Head && mars > 0 && !items[mars].Moon && deimos > mars && items[deimos].Moon, "destination list: worlds first, moons set in under their planet");
+        Check(!items.Exists(e => e.Name == "Sol") && items.Exists(e => e.Kind == "Trade station" && !string.IsNullOrEmpty(e.Detail)) && items[items.Count - 1].Name == "My base" && items[items.Count - 1].Kind == "GPS",
+            "destination list: no sun, stations with their GPS name, your GPS points last");
+        var ui = new PanelUi();
+        var c = new MeasureCanvas();
+        int page = 0;
+        DestinationList.Hit Frame(float mx, float my, bool down, bool pressed, bool released)
+        {
+            ui.Input(c, mx, my, down, pressed, released);
+            return DestinationList.Draw(ui, items, 0, 0, 400, 900, 20, snap, "Mars", false, ref page);
+        }
+        var h0 = Frame(-1, -1, false, false, false);
+        Check(h0.Picked < 0 && h0.Panel.H <= 900 && page == 0, "destination list: fits its height, nothing picked");
+        var m = c.Find("Mars", 0);
+        Frame(m.X + 5, m.Y + 5, true, true, false);
+        var h1 = Frame(m.X + 5, m.Y + 5, false, false, true);
+        Check(h1.Picked == mars, "destination list: a click on Mars picks Mars");
+        var nx = c.Find("NEXT", 0);
+        Frame(nx.X + 2, nx.Y + 5, true, true, false);
+        Frame(nx.X + 2, nx.Y + 5, false, false, true);
+        Check(page == 1, "destination list: NEXT turns the page");
+        page = 99; Frame(-1, -1, false, false, false);
+        Check(page == (items.Count - 1) / DestinationList.Rows(900, 20), "destination list: the page stays in range");
+    }
+
+    /// <summary>The controller on the route panel: D-pad focus, A on release, left / right on a slider, and the A that opened it.</summary>
+    private static void Triggers()
+    {
+        // a trigger held near the 50% line that wobbles gives one press, not one per wobble
+        var t = new TriggerLatch();
+        int presses = 0; bool was = false; double now = 1;
+        foreach (float v in new[] { 0f, 0.6f, 0.45f, 0.58f, 0.4f, 0.62f, 0.35f, 0.6f })
+        {
+            now += 0.1;
+            bool down = t.Update(v, now);
+            if (down && !was) presses++;
+            was = down;
+        }
+        Check(presses == 1 && was, "triggers: a wobbling held trigger is one press and stays down");
+        now += 0.1; t.Update(0.1f, now);
+        Check(!t.Down, "triggers: let go below 30% and it's up");
+        // a flick shorter than the hold time doesn't flip it back
+        var f = new TriggerLatch();
+        f.Update(1f, 5); f.Update(0f, 5.02);
+        Check(f.Down, "triggers: a 20 ms drop doesn't count as a release");
+        Check(TriggerLatch.SharedAxis(false, false, true) == 32767 && TriggerLatch.SharedAxis(true, false, false) == 65535
+            && TriggerLatch.SharedAxis(false, true, true) == 0, "triggers: the shared axis is centred, up for LT, down for RT");
+        Check(TriggerLatch.SharedAxis(true, true, true) == 65535 && TriggerLatch.SharedAxis(true, true, false) == 0,
+            "triggers: both pulled: the first one keeps the axis instead of cancelling");
+        Check(SystemKeys.Is(175) && SystemKeys.Is(173) && SystemKeys.Is(179) && !SystemKeys.Is(87) && !SystemKeys.Is(27) && !SystemKeys.Is(160),
+            "controller: volume/media keys don't count as keyboard use; W, Esc and Shift do");
+    }
+
+    private static void PadFocus()
+    {
+        // the focus moves by direction between boxes: a 2 x 2 grid
+        var grid = new List<PanelUi.Item>
+        {
+            new PanelUi.Item { Box = new Box(0, 0, 100, 30), Enabled = true },
+            new PanelUi.Item { Box = new Box(120, 0, 100, 30), Enabled = true },
+            new PanelUi.Item { Box = new Box(0, 50, 100, 30), Enabled = true },
+            new PanelUi.Item { Box = new Box(120, 50, 100, 30), Enabled = false },
+        };
+        Check(PanelUi.Next(grid, 0, PanelUi.PadDir.Right) == 1 && PanelUi.Next(grid, 0, PanelUi.PadDir.Down) == 2, "pad: right and down go to the neighbours");
+        Check(PanelUi.Next(grid, 1, PanelUi.PadDir.Down) == 2, "pad: down skips a disabled button and takes the nearest one below");
+        Check(PanelUi.Next(grid, 0, PanelUi.PadDir.Up) == 0 && PanelUi.Next(grid, 0, PanelUi.PadDir.Left) == 0, "pad: nothing that way: the focus stays");
+
+        var a = new V3(5e6, 3e6, 1e6);
+        var t = new RouteTracker { Avoid = false };
+        t.Update("Far", a + new V3(4e7, 0, 0), true, a, V3.Zero, 10, 50000);
+        var lim = new RouteLimits();
+        var ui = new PanelUi { PadActive = true };
+        var c = new MeasureCanvas();
+        var names = new List<string>();
+        AutopilotPanel.RouteHit Frame(PanelUi.PadDir move, bool aDown)
+        {
+            ui.Input(c, float.NaN, float.NaN, false, false, false);
+            ui.Pad(move, aDown);
+            return AutopilotPanel.RoutePanel(ui, 0, 0, 600, 1080, 20, t.Path, lim, 50000, 10, new SignatureInfo { Weight = 8 }, names, false, "Ctrl+M");
+        }
+        // A held as the panel opens (the A that opened it): letting go presses nothing
+        var h = Frame(PanelUi.PadDir.None, true);
+        h = Frame(PanelUi.PadDir.None, false);
+        Check(ui.Focus == 0 && !h.Engage && !h.Cancel && !h.Changed, "pad: the panel opens focused on its first control, and the A that opened it presses nothing");
+        // left / right on the top speed slider change it
+        int slider = -1;
+        for (int i = 0; i < ui.Drawn.Count; i++) if (ui.Drawn[i].Slider) { slider = i; break; }
+        ui.Focus = slider;
+        Frame(PanelUi.PadDir.None, false);
+        h = Frame(PanelUi.PadDir.Left, false);
+        Check(slider >= 0 && h.Changed && lim.MaxSpeed > 0 && lim.MaxSpeed < 50000, "pad: left on the speed slider lowers the cap " + lim.MaxSpeed.ToString("0"));
+        // down to ENGAGE, then A down and up presses it
+        var en = c.Find("ENGAGE AUTOPILOT", 0);
+        bool OnEngage() => ui.Focus >= 0 && ui.Focus < ui.Drawn.Count && ui.Drawn[ui.Focus].Box.Contains(en.X + 2, en.Y + 5);
+        for (int i = 0; i < 40 && !OnEngage(); i++)
+        {
+            Frame(PanelUi.PadDir.Down, false);
+            Frame(PanelUi.PadDir.None, false);
+            if (!OnEngage() && ui.Focus >= 0 && ui.Drawn[ui.Focus].Box.Bottom > en.Y) { Frame(PanelUi.PadDir.Left, false); Frame(PanelUi.PadDir.None, false); }
+        }
+        Check(OnEngage(), "pad: down reaches ENGAGE");
+        h = Frame(PanelUi.PadDir.None, true);
+        Check(!h.Engage, "pad: A pressing down doesn't press yet");
+        h = Frame(PanelUi.PadDir.None, false);
+        Check(h.Engage && !h.Cancel, "pad: letting A go presses ENGAGE");
+        // the focus is only on screen while the controller has the panel
+        ui.PadActive = false;
+        h = Frame(PanelUi.PadDir.Down, true); h = Frame(PanelUi.PadDir.None, false);
+        Check(!h.Engage, "pad: with the controller elsewhere, A presses nothing");
     }
 
     /// <summary>A ship leaving Earth's sector for Tycho Station, as the side window (beside F&amp;B's list) and the full map.</summary>
@@ -865,6 +1133,31 @@ internal static class Program
     {
         Check(MapTheme.Find("tachi") == MapTheme.Tachi && MapTheme.Find("Solar HUD") == MapTheme.Tachi && MapTheme.Find("nonsense") == MapTheme.Classic, "themes: found by name, unknown = Classic");
         {
+            // palettes: a theme's shapes with another's colours, the player's colours over them, built-ins untouched
+            var t = MapTheme.Make(MapTheme.Tachi, MapTheme.Unn, new Dictionary<string, int> { ["Burn"] = 0x123456 });
+            Check(t.Style == ThemeStyle.Tachi && t.Name == "Tachi" && t.Base == MapTheme.Tachi, "palette: keeps the theme's name and style");
+            Check(t.Accent.R == MapTheme.Unn.Accent.R && t.Burn.R == 0x12 && t.Burn.B == 0x56 && MapTheme.Tachi.Burn.R != 0x12, "palette: other theme's colours, own colour on top, built-in unchanged");
+            Check(t.Bg.A == MapTheme.Unn.Bg.A && t.Next() == MapTheme.Unn, "palette: opacity kept, K moves to the next built-in");
+            bool slots = true; foreach (var (k, _) in MapTheme.Slots) slots &= t.Set(k, t.Get(k));
+            Check(slots && MapTheme.ParseHex("#abc", out int h3) && h3 == 0xAABBCC && !MapTheme.ParseHex("zz", out _), "palette: every slot set and read, hex parsed");
+            var ms = new MapSettings { Theme = "Protogen", NoseStyle = "UNN" };
+            ms.Palettes["Protogen"] = "Belter"; ms.ColorsOf("Protogen")["Ship"] = 0xFF00FF;
+            var f = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sdx2map-palette-test.cfg");
+            ms.Save(f);
+            var back = MapSettings.Load(f);
+            var look = back.Look("Protogen");
+            Check(back.NoseOverride == ThemeStyle.Naval && look.Style == ThemeStyle.Protogen && look.Accent.R == MapTheme.Belter.Accent.R && look.Ship.R == 255 && look.Ship.G == 0,
+                "palette: nose style, palette and colours saved per theme");
+            Check(back.Look("Tachi").Accent.R == MapTheme.Tachi.Accent.R && new MapSettings().NoseOverride == null, "palette: other themes keep their own");
+            // a file saved before OPA and Belter changed names keeps the looks it chose
+            System.IO.File.WriteAllText(f, "Theme=OPA\nNoseStyle=Belter\nPalette.Tachi=Belter\nOverlay.OPA=OpaScrap\nOverlay.Belter=BelterContact\nColor.OPA.Ship=#FF00FF\n");
+            var old = MapSettings.Load(f);
+            Check(old.Theme == "Belter" && old.NoseOverride == ThemeStyle.Contact && old.Palettes["Tachi"] == "OPA" && old.OverlayOf(MapTheme.Belter) == FeedOverlay.BelterScrap
+                && old.OverlayOf(MapTheme.Opa) == FeedOverlay.OpaContact && old.ColorsOf("Belter")["Ship"] == 0xFF00FF, "themes: an older file's OPA and Belter choices follow the looks");
+            old.Save(f); var again = MapSettings.Load(f);
+            Check(again.Theme == "Belter" && again.Palettes["Tachi"] == "OPA" && again.OverlayOf(MapTheme.Belter) == FeedOverlay.BelterScrap, "themes: a file saved since is read as written");
+        }
+        {
             var leg = RoutePath.Make("T", V3.Zero, new V3(4e9, 0, 0), V3.Zero, 30, 50000, null, 0).First;
             bool inv = true;
             foreach (double f in new[] { 0.05, 0.3, 0.5, 0.8, 0.99 }) { double t = leg.Eta * f; inv &= Math.Abs(leg.TimeAt(leg.AlongAt(t)) - t) < 1; }
@@ -883,13 +1176,13 @@ internal static class Program
                 "fuel: warns below 10 % left (and when it runs dry), not without tanks");
             Check(RouteFuel.Volume(512) == "512 L" && RouteFuel.Volume(12_300) == "12.3 kL" && RouteFuel.Volume(2_500_000) == "2.50 ML", "fuel: volume text");
         }
-        Check(MapTheme.Classic.Next() == MapTheme.Tachi && MapTheme.Tachi.Next() == MapTheme.Unn && MapTheme.Unn.Next() == MapTheme.Opa && MapTheme.Opa.Next() == MapTheme.Protogen && MapTheme.Protogen.Next() == MapTheme.Belter && MapTheme.Belter.Next() == MapTheme.Classic, "themes: Next cycles through all six");
-        Check(MapTheme.Find("belter") == MapTheme.Belter && MapTheme.Match("green") == MapTheme.Belter && MapTheme.Belter.Style == ThemeStyle.Contact && !MapTheme.Belter.Hud, "themes: Belter found by name and colour, the contact chart style");
+        Check(MapTheme.Classic.Next() == MapTheme.Tachi && MapTheme.Tachi.Next() == MapTheme.Unn && MapTheme.Unn.Next() == MapTheme.Belter && MapTheme.Belter.Next() == MapTheme.Protogen && MapTheme.Protogen.Next() == MapTheme.Opa && MapTheme.Opa.Next() == MapTheme.Classic, "themes: Next cycles through all six");
+        Check(MapTheme.Find("opa") == MapTheme.Opa && MapTheme.Match("green") == MapTheme.Opa && MapTheme.Opa.Style == ThemeStyle.Contact && !MapTheme.Opa.Hud, "themes: OPA found by name and colour, the contact chart style");
         Check(MapTheme.Find("protogen") == MapTheme.Protogen && MapTheme.Match("cyan") == MapTheme.Protogen && MapTheme.Protogen.Style == ThemeStyle.Protogen && !MapTheme.Protogen.Hud, "themes: Protogen found by name and colour, its own style");
-        Check(MapTheme.Find("unn") == MapTheme.Unn && MapTheme.Find("OPA") == MapTheme.Opa, "themes: UNN and OPA found by name");
+        Check(MapTheme.Find("unn") == MapTheme.Unn && MapTheme.Find("Belter") == MapTheme.Belter, "themes: UNN and Belter found by name");
         Check(MapTheme.Match("mcrn") == MapTheme.Tachi && MapTheme.Match("navy") == MapTheme.Unn && MapTheme.Match("un") == MapTheme.Unn
-            && MapTheme.Match("belt") == MapTheme.Opa && MapTheme.Match("ceres") == MapTheme.Opa && MapTheme.Match("classic") == MapTheme.Classic && MapTheme.Match("purple") == null, "themes: faction words pick a theme");
-        Check(MapTheme.Unn.Style == ThemeStyle.Naval && MapTheme.Opa.Style == ThemeStyle.Belter && MapTheme.Tachi.Hud && !MapTheme.Unn.Hud, "themes: each has its own style");
+            && MapTheme.Match("belt") == MapTheme.Belter && MapTheme.Match("ceres") == MapTheme.Opa && MapTheme.Match("salvage") == MapTheme.Belter && MapTheme.Match("classic") == MapTheme.Classic && MapTheme.Match("purple") == null, "themes: faction words pick a theme");
+        Check(MapTheme.Unn.Style == ThemeStyle.Naval && MapTheme.Belter.Style == ThemeStyle.Belter && MapTheme.Tachi.Hud && !MapTheme.Unn.Hud, "themes: each has its own style");
         var dir = Path.Combine(Path.GetTempPath(), "sdx2map-theme-test.ini");
         var st = new MapSettings { Theme = "Tachi" }; st.Save(dir);
         Check(MapSettings.Load(dir).Theme == "Tachi", "themes: saved and loaded");
@@ -931,6 +1224,61 @@ internal static class Program
         Check(ko.KeyMap == "Shift+N" && ko.KeyAutopilot == "Ctrl+N" && ko.KeyPin == "Alt+N" && ko.KeySteer == "Ctrl+Shift+N", "keys: an old PreviewKey carries over");
         Check(SideLayout.Corner("top left") == "TL" && SideLayout.Corner("br") == "BR" && SideLayout.Corner("Bottom-Left") == "BL" && SideLayout.Corner("middle") == null, "pip: corner names");
         Check(SideLayout.NextCorner("TR") == "BR" && SideLayout.NextCorner("BR") == "BL" && SideLayout.NextCorner("BL") == "TL" && SideLayout.NextCorner("TL") == "TR" && SideLayout.NextCorner(null) == "TR", "pip: Q cycles the corners");
+        {
+            // a background inside a cut-corner frame: nothing in the cut corners, all of the middle filled
+            var rec = new RecordCanvas();
+            var fb = new Box(100, 50, 400, 200);
+            PanelStyle.FillInside(rec, fb, fb, 14, 34, new MapColor(0, 0, 0, 200));
+            bool inside = true; double area = 0;
+            foreach (var r in rec.Rects)
+            {
+                area += r.W * r.H;
+                foreach (var (px2, py2) in new[] { (r.X, r.Y), (r.X + r.W, r.Y), (r.X, r.Y + r.H), (r.X + r.W, r.Y + r.H) })
+                {
+                    float dl = px2 - fb.X, dr = fb.Right - px2, dt = py2 - fb.Y, db = fb.Bottom - py2;
+                    if (dl + dt < 14 - 0.01f || dr + dt < 34 - 0.01f || dr + db < 14 - 0.01f || dl + db < 14 - 0.01f) inside = false;
+                }
+            }
+            double want = 400.0 * 200 - 3 * 14 * 14 / 2.0 - 34 * 34 / 2.0;
+            Check(inside && Math.Abs(area - want) / want < 0.02 && rec.Rects.Count < 80, "panels: a background stays inside its cut-corner frame");
+            rec.Rects.Clear();
+            PanelStyle.FillInside(rec, new Box(100, 50, 400, 20), fb, 14, 34, new MapColor(0, 0, 0, 200));
+            bool clipped = true; foreach (var r in rec.Rects) if (r.Y < 50 || r.Y + r.H > 70.01f || r.X + r.W > fb.Right - (34 - (r.Y - 50)) + 0.01f) clipped = false;
+            Check(clipped && rec.Rects.Count > 0, "panels: a title bar in the frame's top keeps inside its cut corners");
+        }
+        // the destination view: within the set range (30 km at most) of an active route's destination, a camera block's lens, its own corner
+        Check(DestView.Shown(true, true, 9e3) && DestView.Shown(true, true, 30e3), "destination view: shown within 30 km");
+        Check(!DestView.Shown(true, true, 30.1e3) && !DestView.Shown(false, true, 5e3) && !DestView.Shown(true, false, 5e3) && !DestView.Shown(true, true, double.NaN), "destination view: hidden past 30 km, switched off, with no route or no distance");
+        Check(DestView.Shown(true, true, 2.9e3, 3e3) && !DestView.Shown(true, true, 3.1e3, 3e3) && !DestView.Shown(true, true, 30.5e3, 50e3), "destination view: the range setting, never past 30 km");
+        Check(DestView.Nearness(20e3, 4e3, 3e3) == 4e3 && DestView.Nearness(12e3, double.NaN, 3e3) == 9e3 && DestView.Nearness(1e3, 2e3) == 1e3 && DestView.Nearness(1e3, 5e3, 3e3) == 0, "destination view: a world's surface or the route's stop (outside its well), whichever is nearer");
+        Check(DestView.ClampRangeKm(0.2) == 1 && DestView.ClampRangeKm(45) == 30 && DestView.ClampRangeKm(4.5) == 4.5 && DestView.ClampRangeKm(double.NaN) == 30, "destination view: range kept to 1-30 km");
+        {
+            var ms = new MapSettings { DestViewRangeKm = 4, DestViewReplacesMap = true };
+            string ini = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sdx2map_destview_test.ini");
+            ms.Save(ini); var back = MapSettings.Load(ini); System.IO.File.Delete(ini);
+            Check(back.DestViewRangeKm == 4 && back.DestViewReplacesMap && !new MapSettings().DestViewReplacesMap && new MapSettings().DestViewRangeKm == 10, "destination view: range and map-place settings saved and loaded (off and 10 km by default)");
+        }
+        Check(Math.Abs(DestView.FitFov(100, 10e3) - DestView.MinFov) < 1e-9, "destination view: a small station 10 km off zooms no further than a camera block (0.1 rad)");
+        { double f = DestView.FitFov(500, 3e3); Check(f > DestView.MinFov && f < DestView.MaxFov && Math.Abs(Math.Tan(f / 2) * 3e3 - 500 * DestView.Margin) < 1, "destination view: a big station near frames it with room"); }
+        Check(DestView.FitFov(2e3, 1e3) == DestView.MaxFov && DestView.FitFov(0, 5e3) == DestView.PointFov && DestView.FitFov(100, 0) == DestView.PointFov, "destination view: right on it = widest lens; nothing to frame = the default lens");
+        {
+            var dv = DestView.Window(1920, 1080, 1, "TL", "TR", true);
+            Check(dv.X < 960 && dv.Y >= 0 && dv.Right <= 1920 && dv.Bottom <= 1080 && Math.Abs(dv.W / dv.H - 16f / 9f) < 0.01f, "destination view: 16:9 in its corner, on screen");
+            var moved = DestView.Window(1920, 1080, 1, "TR", "TR", true);
+            Check(moved.X < 960 && Math.Abs(moved.Y - dv.Y) < 0.5f, "destination view: the pinned map's corner taken = the other side");
+            var kept = DestView.Window(1920, 1080, 1, "TR", "TR", false);
+            Check(kept.Right > 960, "destination view: the map not pinned = its own corner");
+            var dvBig = DestView.Window(1920, 1080, 2, "BL", "TR", true); var dvSmall = DestView.Window(1920, 1080, 0.5f, "BL", "TR", true);
+            Check(dvBig.W > dvSmall.W && dvBig.Bottom <= 1080 && dvBig.W <= 1920 * 0.45f + 0.5f, "destination view: size factor, still on screen");
+            foreach (var fr in new[] { dv, dvBig, dvSmall })
+            {
+                float fu = DestView.Unit(fr), cs = 14 * fu, cb = 34 * fu;
+                var pc = DestView.Picture(fr, fu, cs, cb); var sq = DestView.Picture(fr, fu, 0, 0);
+                bool inside = (fr.Right - pc.Right) + (pc.Y - fr.Y) >= cb - 0.01f && (pc.X - fr.X) + (pc.Y - fr.Y) >= cs && 2 * (fr.Bottom - pc.Bottom) >= cs
+                    && pc.Y - fr.Y >= DestView.TitleH(fu) - 0.01f && pc.W > fr.W * 0.8f && pc.H > fr.H * 0.6f;
+                Check(inside && sq.W >= pc.W && sq.X > fr.X, "destination view: the picture sits under the title, its corners inside the frame's cut corners");
+            }
+        }
         var tr = SideLayout.Pip(1920, 1080, 1, "TR"); var bl = SideLayout.Pip(1920, 1080, 1, "BL"); var big = SideLayout.Pip(1920, 1080, 2, "TR");
         Check(tr.Right <= 1920 && tr.X > 960 && tr.Y > 0 && bl.X < 100 && bl.Bottom < 1080 && bl.Y > tr.Y && big.W > tr.W && big.Bottom <= 1080, "pip: corners on screen, size grows");
         MapTheme.Current = MapTheme.Tachi;
@@ -960,6 +1308,22 @@ internal static class Program
         nearWp = double.MaxValue; foreach (var q in pts) nearWp = Math.Min(nearWp, V3.Distance(q, wpS0));
         double off2 = 0; foreach (var q in pts) if (q.X > wpS0.X + 1e3) off2 = Math.Max(off2, V3.SegmentDistance(wpS0, new V3(1e6, 0, 0), q, out _));
         Check(ok && nearWp < 2500 && off2 < 5e3, "projection, flip and burn: stops at the waypoint (" + nearWp.ToString("0") + " m), then flies straight on (" + off2.ToString("0") + " m off)");
+        // the route screen's camera: straight down, north (-Z) up, east (+X) right, the points framed inside the view
+        var td = new OrbitCamera { TopDown = true };
+        td.Setup(0, 0, 400, 300);
+        var tdPts = new List<V3> { new V3(-5e5, 0, 0), new V3(5e5, 2e4, 0), new V3(0, 0, -3e5) };
+        td.FrameFlat(tdPts, 20e3);
+        td.Setup(0, 0, 400, 300);
+        td.Project(new V3(0, 0, -3e5), out _, out var nY, out _); td.Project(new V3(5e5, 0, 0), out var eX, out _, out _); td.Project(new V3(-5e5, 0, 0), out var wX, out _, out _);
+        Check(nY < 150 && eX > 200 && wX < 200 && wX > 0 && eX < 400, "route screen camera: north up, east right, all in view");
+        // a curved route, the ship moving across it: an arc from its velocity onto the curve, then the curve
+        var cleg = RoutePlan.Make("C", V3.Zero, new V3(2e6, 0, 0), V3.Zero, 10, 50000, through: new[] { new V3(1e6, 3e5, 0) });
+        var jph = new List<byte>();
+        ok = Trajectory.Join(V3.Zero, new V3(0, -3000, 0), cleg, 10, 50000, pts, jph);
+        double minY = 0; foreach (var q in pts) minY = Math.Min(minY, q.Y);
+        Check(ok && pts.Count == jph.Count && minY < -50e3 && V3.Distance(pts[pts.Count - 1], new V3(2e6, 0, 0)) < 1e3 && jph.Contains(Trajectory.Brake),
+            "curve join: swings round from the drift (" + (minY / 1e3).ToString("0") + " km out), then the curve to its end");
+        Check(!Trajectory.Join(V3.Zero, cleg.Dir * 3000, cleg, 10, 50000, pts, jph) && pts.Count == 0, "curve join: nothing to correct when already heading along it");
         // a sharp corner (the screenshot: past a waypoint, then most of the way back): arcs round it, no long overshoot
         var wpS = new V3(3e6, 0, 0); var destS = new V3(1.2e6, 1.2e6, 0);
         ok = Trajectory.Predict(V3.Zero, V3.Zero, new[] { wpS, destS }, 113, 50000, 25e3, pts);
@@ -1292,10 +1656,54 @@ internal static class Program
         played.Save(Path.Combine(outDir, "second-screen.png"), ImageFormat.Png);
     }
 
+    /// <summary>Every destination-view overlay in the theme it belongs to, on the stand-in picture (previews/feed-overlays.png).</summary>
+    private static void FeedSheet(string outDir)
+    {
+        var rows = new (FeedOverlay O, MapTheme T)[]
+        {
+            (FeedOverlay.TachiLock, MapTheme.Tachi), (FeedOverlay.TachiArcs, MapTheme.Tachi), (FeedOverlay.UnnPlot, MapTheme.Unn),
+            (FeedOverlay.BelterTag, MapTheme.Belter), (FeedOverlay.BelterScrap, MapTheme.Belter), (FeedOverlay.ProtoHex, MapTheme.Protogen),
+            (FeedOverlay.ProtoRing, MapTheme.Protogen), (FeedOverlay.OpaContact, MapTheme.Opa), (FeedOverlay.ClassicCorners, MapTheme.Classic),
+            (FeedOverlay.ClassicRulers, MapTheme.Classic),
+        };
+        float bw = 560, bh = 315, gap = 20;
+        using var bmp = new Bitmap((int)(2 * bw + 3 * gap), (int)(5 * (bh + gap) + gap));
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(System.Drawing.Color.FromArgb(40, 44, 52));
+        var c = new GdiMapCanvas(g);
+        var was = MapTheme.Current;
+        for (int i = 0; i < rows.Length; i++)
+        {
+            MapTheme.Current = rows[i].T;
+            var box = new Box(gap + (i % 2) * (bw + gap), gap + (i / 2) * (bh + gap), bw, bh);
+            DestView.DrawWindow(c, box, rows[i].T, "Pallas Station", 4820, rows[i].O, true, 1.3, true, null, true, standIn: true);
+        }
+        MapTheme.Current = was;
+        bmp.Save(Path.Combine(outDir, "feed-overlays.png"), ImageFormat.Png);
+        foreach (var t in MapTheme.All) Check(DestOverlay.Default(t.Style) != FeedOverlay.None, "feed overlay: " + t.Name + " has one of its own");
+        var ms = new MapSettings { FeedNoise = false };
+        ms.Overlays["Tachi"] = FeedOverlay.TachiArcs; ms.Overlays["Classic"] = FeedOverlay.None; ms.ColorsOf("Unn")["OvLine"] = 0x123456;
+        string ini = Path.Combine(Path.GetTempPath(), "sdx2map_overlay_test.ini");
+        ms.Save(ini); var back = MapSettings.Load(ini); File.Delete(ini);
+        Check(!back.FeedNoise && back.OverlayOf(MapTheme.Tachi) == FeedOverlay.TachiArcs && back.OverlayOf(MapTheme.Classic) == FeedOverlay.None
+            && back.OverlayOf(MapTheme.Belter) == FeedOverlay.BelterTag && new MapSettings().FeedNoise, "feed overlay: choice per theme and noise saved and loaded (theme's own by default)");
+        var unn = back.Look("UNN");
+        Check(unn.OverlayLine.R == 0x12 && unn.OverlayLine.B == 0x56 && unn.OverlayTrim.R == MapTheme.Unn.Trim.R && MapTheme.Tachi.OverlayLine.R == MapTheme.Tachi.Accent.R,
+            "feed overlay: colours default to the theme's accent and trim, and take the player's own");
+        var rec = new RecordCanvas();
+        foreach (var (o, _) in DestOverlay.Styles)
+        {
+            int before = rec.Count;
+            DestOverlay.Draw(rec, new Box(0, 0, 400, 225), o, MapTheme.Tachi, 1, "X", 1000, true, true, 0);
+            Check(o == FeedOverlay.None ? rec.Count == before : rec.Count > before, "feed overlay draws: " + o);
+        }
+    }
+
     /// <summary>Every class's ship icon in every theme, with each theme's trajectory marker (previews/ship-icons.png).</summary>
     private static void ShipIconSheet(string outDir)
     {
-        var themes = new[] { MapTheme.Classic, MapTheme.Tachi, MapTheme.Unn, MapTheme.Opa, MapTheme.Protogen, MapTheme.Belter };
+        var themes = new[] { MapTheme.Classic, MapTheme.Tachi, MapTheme.Unn, MapTheme.Belter, MapTheme.Protogen, MapTheme.Opa };
         float rowH = 220, w = 1800;
         using var bmp = new Bitmap((int)w, (int)(rowH * (themes.Length + 2)));
         using var g = Graphics.FromImage(bmp);
@@ -1323,6 +1731,52 @@ internal static class Program
         var sq2 = ShipIcons.FromMask("T", "t", new[] { "##", "##" });
         Check(sq2.Runs.Count == 2 && sq2.Details.Length == 8, "real ship icon: a 2x2 mask is two runs and a 4-sided outline");
         Check(ShipIcons.For("") == null && ShipIcons.For("Nonsense") == null, "no class: the plain marker");
+        DestinationListChecks();
+        // the icon from the ship you fly: a flat hull (nose along -Z) with a pod on its right and a fin on top at the tail
+        var hull = new List<ShipMask.Cells>
+        {
+            new ShipMask.Cells(-4, 0, 0, 4, 1, 29), new ShipMask.Cells(-1, 0, -6, 1, 1, -1),
+            new ShipMask.Cells(5, 0, 10, 6, 1, 15), new ShipMask.Cells(0, 2, 24, 0, 5, 29),
+        };
+        var fwdAxis = (0, 0, -1); var upAxis = (0, 1, 0);
+        Check(ShipMask.AutoSide(hull, fwdAxis, upAxis) == 0, "own ship icon: a flat ship is shown from the top");
+        var topM = ShipMask.Build(hull, fwdAxis, upAxis, 0); var botM = ShipMask.Build(hull, fwdAxis, upAxis, 2);
+        var rightM = ShipMask.Build(hull, fwdAxis, upAxis, 1); var leftM = ShipMask.Build(hull, fwdAxis, upAxis, 3);
+        Check(topM[0].Length == ShipMask.Length && topM.Length == 11, "own ship icon: " + ShipMask.Length + " cells nose to tail, 11 across");
+        int Hull(string r) { int n = 0; foreach (char ch in r) if (ch == '#') n++; return n; }
+        int noseCol = 0, tailCol = 0; foreach (var r in topM) { if (r[0] == '#') noseCol++; if (r[r.Length - 1] == '#') tailCol++; }
+        Check(noseCol > 0 && noseCol < tailCol, "own ship icon: the narrow nose is at column 0 (" + noseCol + " rows against " + tailCol + " at the tail)");
+        bool mirrored = topM.Length == botM.Length; for (int i = 0; mirrored && i < topM.Length; i++) mirrored = topM[i] == botM[topM.Length - 1 - i];
+        Check(mirrored, "own ship icon: the bottom is the top mirrored");
+        Check(Hull(topM[topM.Length - 1]) + Hull(topM[topM.Length - 2]) < Hull(topM[topM.Length / 2]) && Hull(topM[0]) >= Hull(topM[topM.Length - 1]), "own ship icon: from the top the pod is on the right (the last rows)");
+        mirrored = rightM.Length == leftM.Length; for (int i = 0; mirrored && i < rightM.Length; i++) mirrored = rightM[i] == leftM[rightM.Length - 1 - i];
+        Check(mirrored && string.Join("", rightM) != string.Join("", topM), "own ship icon: the left side is the right side mirrored, and not the top");
+        Check(ShipMask.Build(hull, fwdAxis, upAxis, ShipMask.Auto)[3] == topM[3] && ShipMask.Build(new List<ShipMask.Cells>(), fwdAxis, upAxis, 0) == null, "own ship icon: auto is the top here; no blocks, no icon");
+        var wide = ShipMask.Build(new List<ShipMask.Cells> { new ShipMask.Cells(0, 0, 0, 39, 0, 9) }, fwdAxis, upAxis, 0);
+        Check(wide.Length == ShipMask.Length && wide[0].Length == 9, "own ship icon: a ship wider than long keeps its proportions (" + wide.Length + " x " + wide[0].Length + ")");
+        var wideShape = ShipIcons.FromMask("T", "t", wide);
+        float maxX = 0, maxY = 0; foreach (var (x0, x1, yy) in wideShape.Runs) { maxX = Math.Max(maxX, Math.Max(Math.Abs(x0), Math.Abs(x1))); maxY = Math.Max(maxY, Math.Abs(yy)); }
+        Check(maxX < 0.3f && maxY > 0.9f && maxY <= 1.01f, "own ship icon: the wide ship's icon spans its beam, not its length");
+        {
+            string sf = Path.Combine(Path.GetTempPath(), "sdx2map-ship.ini");
+            new MapSettings { ShipIconFromShip = true, ShipIconSide = 2, PerShip = false }.Save(sf);
+            var back = MapSettings.Load(sf);
+            Check(back.ShipIconFromShip && back.ShipIconSide == 2 && !back.PerShip, "settings keep the ship icon's side and the all-ships switch");
+            File.WriteAllText(sf, "RealShipIcons=True\nShipIconSide=9\n");
+            back = MapSettings.Load(sf);
+            Check(back.ShipIconFromShip && back.ShipIconSide == ShipMask.Auto && back.PerShip, "an older file's real-ship icons become the current ship's; a bad side is auto; each ship its own by default");
+            File.Delete(sf);
+        }
+        {
+            using var sb = new Bitmap(1200, 330);
+            using var sg = Graphics.FromImage(sb);
+            sg.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var sc = new GdiMapCanvas(sg);
+            var masks = new[] { topM, rightM, botM, leftM };
+            for (int i = 0; i < 4; i++)
+                new MapScene().ShipPreview(sc, ShipIcons.FromMask("Hauler", "Test ship", masks[i]), i * 300, 0, 296, 330, "Test ship: " + ShipMask.SideNames[i].ToLowerInvariant(), null);
+            sb.Save(Path.Combine(outDir, "ship-icon-sides.png"), ImageFormat.Png);
+        }
         // the fill rows: a square from -1 to 1 is 2 wide on every row
         var sq = new (float X, float Y)[] { (-1, -1), (1, -1), (1, 1), (-1, 1) };
         var row = ShipIcons.Row(sq, 0.3f);
@@ -1360,13 +1814,13 @@ internal static class Program
         using (var g = Graphics.FromImage(bmp))
         {
             g.Clear(Color.FromArgb(30, 34, 40));
-            var scene = new MapScene { Snap = snap, Path = route, Help = "VIEW|Drag orbit" + MapScene.Sep + "Right-drag pan" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Click focus" + MapScene.Sep + "S follow ship: off" + MapScene.Sep + "F frame route" + MapScene.Sep + "H whole system\nROUTE|Shift+click set destination" + MapScene.Sep + "Shift+right-click add / remove waypoint" + MapScene.Sep + "A autopilot" + MapScene.Sep + "N Flip and Burn list" + MapScene.Sep + "R re-plan" + MapScene.Sep + "V detours: on" + MapScene.Sep + "C copy flip GPS\nSHOW|G grid: on" + MapScene.Sep + "O orbits: on" + MapScene.Sep + "X sectors: on" + MapScene.Sep + "T stations: on" + MapScene.Sep + "P GPS: on" + MapScene.Sep + "L labels: on" + MapScene.Sep + "J moons: on" + MapScene.Sep + "K theme: Classic" + MapScene.Sep + "Q pin corner" + MapScene.Sep + "Esc / M close" };
+            var scene = new MapScene { Snap = snap, Path = route, Help = "VIEW|Drag orbit" + MapScene.Sep + "Right-drag pan" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Click focus" + MapScene.Sep + "S follow ship: off" + MapScene.Sep + "F frame route" + MapScene.Sep + "H whole system\nROUTE|Shift+click set destination" + MapScene.Sep + "Shift+right-click add / remove waypoint" + MapScene.Sep + "A route plan" + MapScene.Sep + "N Flip and Burn list" + MapScene.Sep + "R re-plan" + MapScene.Sep + "V detours: on" + MapScene.Sep + "C copy flip GPS\nSHOW|G grid: on" + MapScene.Sep + "O orbits: on" + MapScene.Sep + "X sectors: on" + MapScene.Sep + "T stations: on" + MapScene.Sep + "P GPS: on" + MapScene.Sep + "L labels: on" + MapScene.Sep + "J moons: on" + MapScene.Sep + "K theme: Classic" + MapScene.Sep + "Q pin corner" + MapScene.Sep + "Esc / M close" };
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
             scene.Cam.Setup(0, 0, 1920, 1080);
             scene.FrameDefault(true);
             scene.MouseX = float.NaN;
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
-            Check(scene.Picks.Exists(p => p.Kind == "F&B destination"), "full map: destination is pickable");
+            Check(scene.Picks.Exists(p => p.Kind == "Destination"), "full map: destination is pickable");
             bmp.Save(Path.Combine(outDir, "full-map" + sfx + ".png"), ImageFormat.Png);
 
             // the autopilot card sits in the route panel's top slot; the panel key mirrors the whole panel to the right
@@ -1540,7 +1994,7 @@ internal static class Program
                 string[] rows = { "Earth", "  Luna", "Belt.Tycho.STN   ← selected", "Belt.Vesta.STN", "Mars", "Ice Field (GPS)" };
                 for (int i = 0; i < rows.Length; i++) g.DrawString(rows[i], f, i == 2 ? Brushes.LightGreen : Brushes.Gainsboro, 690, 350 + i * 34);
             }
-            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\nKEYS|Shift+M map, full map, off" + MapScene.Sep + "Ctrl+M autopilot" + MapScene.Sep + "Alt+M pin on screen" };
+            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "VIEW|Right-drag orbit" + MapScene.Sep + "Wheel zoom" + MapScene.Sep + "Middle-click re-frame\nKEYS|Shift+M map, full map, off" + MapScene.Sep + "Ctrl+M route plan" + MapScene.Sep + "Alt+M pin on screen" };
             var box = SideBox(1920, 1080, scene, new GdiMapCanvas(g));
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H - scene.Strip);
@@ -1579,7 +2033,7 @@ internal static class Program
             Check(dodge.HasValue, "render: the asteroid on the first leg gets a dodge point");
             snap.Asteroids.Add(new MapSnapshot.Marker { Name = "Asteroid", Pos = rock, Color = MapScene.HazardCol });
             snap.Dodges.Add(dodge.Value);
-            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "Shift+M map, full map, off · Ctrl+M autopilot" };
+            var scene = new MapScene { Snap = snap, Path = route, Compact = true, Help = "Shift+M map, full map, off · Ctrl+M route plan" };
             var box = SideBox(1920, 1080, scene, new GdiMapCanvas(g));
             scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
             scene.Cam.Setup(box.X, box.Y, box.W, box.H - scene.Strip);
@@ -1610,7 +2064,6 @@ internal static class Program
             var lines = AutopilotPanel.ConfirmLines(t2.Path, "Ctrl+M");
             Check(lines.Exists(l => l.Text.Contains("short of")) && lines.Exists(l => l.Text.Contains("1 waypoint")), "route lines say where it stops and count your waypoint");
             // under the list on the plain picture: the two choices
-            AutopilotPanel.Choice(ui, 960, list.Bottom + px * 0.8f, px, true, out _, out _);
             bmp.Save(Path.Combine(outDir, "autopilot" + sfx + ".png"), ImageFormat.Png);
             snap.Asteroids.Clear(); snap.Dodges.Clear();
         }
@@ -1650,8 +2103,22 @@ internal sealed class MeasureCanvas : IMapCanvas
     public (float X, float Y) Find(string s, int n)
     {
         int k = 0;
-        for (int i = texts.Count - 1; i >= 0; i--) if (texts[i].Text == "AUTOPILOT  to Far") { texts.RemoveRange(0, i); break; }
+        for (int i = texts.Count - 1; i >= 0; i--) if (texts[i].Text == "ROUTE PLAN  to Far") { texts.RemoveRange(0, i); break; }
         foreach (var t in texts) if (t.Text == s && k++ == n) return (t.X, t.Y);
         return (-1000, -1000);
     }
+}
+
+/// <summary>A canvas that remembers its rects (for checking where backgrounds go).</summary>
+internal sealed class RecordCanvas : IMapCanvas
+{
+    public readonly List<Box> Rects = new List<Box>();
+    public void Rect(float x, float y, float w, float h, MapColor col, float rotation = 0) { Rects.Add(new Box(x, y, w, h)); Count++; }
+    public int Count;
+    public void Line(float x1, float y1, float x2, float y2, float width, MapColor col) => Count++;
+    public void Disc(float cx, float cy, float r, MapColor col) => Count++;
+    public void Text(string text, float x, float y, float px, MapColor col, TextAnchor anchor = TextAnchor.Left) => Count++;
+    public float TextWidth(string text, float px) => text.Length * px * 0.5f;
+    public void PushClip(float x, float y, float w, float h) { }
+    public void PopClip() { }
 }

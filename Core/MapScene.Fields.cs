@@ -10,9 +10,9 @@ namespace SDX2_SystemMap;
 /// <item>Classic: a ring round a cluster of rocks.</item>
 /// <item>Tachi: a dashed red ring with corner ticks round red rock shards.</item>
 /// <item>UNN: a chart hazard mark: a dotted circle of rocks with gold ticks on the four bearings.</item>
-/// <item>OPA: a hazard triangle with rocks in it.</item>
+/// <item>Belter: a hazard triangle with rocks in it.</item>
 /// <item>Protogen: a cyan diamond in corner brackets, with magenta rocks.</item>
-/// <item>Belter: a hexagon with yellow rocks and a chevron over it.</item>
+/// <item>OPA: a hexagon with yellow rocks and a chevron over it.</item>
 /// </list>
 /// </summary>
 public sealed partial class MapScene

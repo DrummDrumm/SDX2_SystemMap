@@ -40,7 +40,7 @@ internal static class AutopilotLink
     /// <summary>Flying (or just told to fly and not answered yet, for up to 10 s).</summary>
     public static bool Engaged(double now) =>
         Pending && (lastCommand == "engage" || lastCommand == "update") && now - sentAt < 10 ? true
-        : Pending && (lastCommand == "stop" || lastCommand == "brake") && now - sentAt < 10 ? false
+        : Pending && (lastCommand == "stop" || lastCommand == "brake" || lastCommand == "manual") && now - sentAt < 10 ? false
         : Status != null && Status.Flying;
 
     public static void Reset()
@@ -73,7 +73,7 @@ internal static class AutopilotLink
     public static int Send(RoutePath path, string command, IList<V3> passes, double thrust, double brake, out string error)
     {
         error = null;
-        if (path == null) { error = "No route: pick a destination in Flip and Burn's list (N) first."; return -1; }
+        if (path == null) { error = "No route: pick a destination first."; return -1; }
         List<int> marks = null;
         int n = Write(id => RouteExport.Build(path, id, out marks, command, passes, thrust, brake), command, out error);
         if (n > 0) { sentMarks = marks; sentMarksCount = path.Waypoints.Count; }
@@ -98,6 +98,8 @@ internal static class AutopilotLink
     }
 
     public static int Stop(out string error) => Write(RouteExport.BuildStop, "stop", out error);
+    /// <summary>CONFIRM MANUAL: the pilot took over a route and keeps the ship; the PB drops its hold on the route.</summary>
+    public static int ConfirmManual(out string error) => Write(id => RouteExport.BuildCommand(id, "manual"), "manual", out error);
     /// <summary>FULL STOP: the PB burns the ship to a standstill, then switches the dampeners on and lets go.</summary>
     public static int FullStop(out string error) => Write(id => RouteExport.BuildCommand(id, "brake"), "brake", out error);
     /// <summary>When the last order went (Plugin.Now), -1 for none.</summary>

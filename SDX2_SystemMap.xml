@@ -12,7 +12,7 @@
 
     Optional: hands the route to the Protogen Systems autopilot PB script on your own ship through its Custom Data. The script needs script access on SDX2.
 
-    Client side only. It reads your own ship, your GPS list and Flip and Burn's list, and pauses in admin mode, spectator and when AFK. Needs the SDX2 Flip and Burn mod: in worlds without it the plugin stays off (only its settings window opens).
+    Client side only. It reads your own ship, your GPS list and Flip and Burn's list, and switches off in admin mode and spectator. When AFK it is read-only: the displays stay current, but no keys, mouse, prompts or writes to the PB or Flip and Burn. Needs the SDX2 Flip and Burn mod: in worlds without it the plugin stays off (only its settings window opens).
   </Description>
   <SourceDirectories>
     <Directory>ClientPlugin</Directory>
