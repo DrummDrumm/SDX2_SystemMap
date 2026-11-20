@@ -76,6 +76,23 @@ public sealed class MapSnapshot
     public readonly SignatureInfo Signature = new SignatureInfo();
 
     public readonly List<Marker> Gps = new List<Marker>();
+    /// <summary>Other ships of yours sent off on an autopilot route (the "ship routes" layer): from the plan kept when
+    /// each route was sent, not from the ships.</summary>
+    public readonly List<OtherRoute> Others = new List<OtherRoute>();
+    /// <summary>A ship other than the one you fly: the route it was sent on and where its plan has it now.</summary>
+    public sealed class OtherRoute
+    {
+        public string Ship = "", Target = "";
+        public V3 Pos;
+        /// <summary>By the plan it has reached its stop.</summary>
+        public bool Arrived;
+        /// <summary>Someone else's ship, from a share code; and who shared it ("" = not known).</summary>
+        public bool Shared; public string By = "";
+        /// <summary>Metres and seconds left by the plan.</summary>
+        public double Dist, TimeLeft;
+        /// <summary>The plan's points still ahead, the stop last; and the ones behind, from where it set off.</summary>
+        public readonly List<V3> Points = new List<V3>(), Flown = new List<V3>();
+    }
     /// <summary>Asteroids found on the route by Flip and Burn's scanner, and the fly-by points the autopilot uses round them.</summary>
     public readonly List<Marker> Asteroids = new List<Marker>();
     public readonly List<V3> Dodges = new List<V3>();
@@ -115,6 +132,8 @@ public sealed class MapSnapshot
 public sealed class MapOptions
 {
     public bool Grid = true, Orbits = true, Sectors = true, Stations = true, Gps = true, Labels = true, Moons = true;
+    /// <summary>Where your other ships should be: the routes you sent them on, each ship placed by its plan (MapSnapshot.Others).</summary>
+    public bool Routes = true;
 }
 
 /// <summary>Something on screen the mouse can point at.</summary>

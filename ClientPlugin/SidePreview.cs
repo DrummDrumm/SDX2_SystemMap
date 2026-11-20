@@ -75,7 +75,7 @@ internal static class SidePreview
         resumeTarget = null; stoppingSelf = asking = confirming = mapPanel = routePin = false; steeredTo = null; restoredId = -1; manualTarget = null;
         flightEdit = null; flightLimits = null; listHidden = false;
         padCaptured = false; ui.Focus = -1;
-        AutopilotLink.Reset(); AsteroidWatch.Reset(); Seat.Reset(); GridObstacles.Reset();
+        AutopilotLink.Reset(); FleetRoutes.Reset(); AsteroidWatch.Reset(); Seat.Reset(); GridObstacles.Reset();
     }
 
     /// <summary>Drawing quality, everywhere it applies: the sprite canvas, the map's curves, the destination view.</summary>
@@ -145,6 +145,7 @@ internal static class SidePreview
         KeepNavOpen.Intercept = null;
         GameState.Fill(Snap, now);
         AutopilotLink.Update(now);
+        FleetRoutes.Update(now, Snap, Plugin.Settings.Options.Routes, AutopilotLink.FlownShip, AutopilotLink.FlownIdle);
         if (now >= nextRoute)
         {
             nextRoute = now + 0.1; // as often as when you're here: the figures on show stay current
@@ -193,6 +194,7 @@ internal static class SidePreview
         if (!navOpen && !mapPanel && now > panelGrace && !listHidden) { routePanel = false; adding = false; }
 
         AutopilotLink.Update(now);
+        FleetRoutes.Update(now, Snap, Plugin.Settings.Options.Routes, AutopilotLink.FlownShip, AutopilotLink.FlownIdle);
         GridObstacles.Update(now);
         Tracker.Obstacles = GridObstacles.Current;
         bool engaged = AutopilotLink.Engaged(now);
@@ -203,6 +205,15 @@ internal static class SidePreview
             Tracker.AccelScale = !limited ? 1 : routePanel ? Limits.ThrustFraction(Snap.DriveWeight, Snap.Signature?.Gain ?? 4) : flyingThrust;
             Tracker.BrakeScale = !limited ? 1 : routePanel ? Limits.BrakeFraction(Snap.DriveWeight, Snap.Signature?.Gain ?? 4) : flyingBrake;
             Tracker.SpeedCap = limited ? Limits.MaxSpeed : 0;
+            // leading a formation: the autopilot holds this ship to the pace of the slowest ship in it, so the route is
+            // planned (burn, flip, ETA) at that pace
+            var fleet = AutopilotLink.Status;
+            if (fleet != null && fleet.Leading && fleet.FleetShare > 0)
+            {
+                Tracker.AccelScale = Math.Min(Tracker.AccelScale, fleet.FleetShare);
+                Tracker.BrakeScale = Math.Min(Tracker.BrakeScale, fleet.FleetShare);
+            }
+            if (fleet != null && fleet.Leading && fleet.FleetCap > 0) Tracker.SpeedCap = Tracker.SpeedCap > 0 ? Math.Min(Tracker.SpeedCap, fleet.FleetCap) : fleet.FleetCap;
             // what the ship can hold itself up with near a planet: its thrust at the autopilot's setting over its mass now
             // (how low routes go round, onto and off worlds). A route not yet flown is planned again when that changes a lot.
             double lift = Snap.MaxAccel * (engaged && flyingTarget != null ? flyingThrust : Limits.ThrustFraction(Snap.DriveWeight, Snap.Signature?.Gain ?? 4));
@@ -1334,18 +1345,77 @@ internal static class SidePreview
     /// </summary>
     public static bool PadInput()
     {
-        bool shown = navOpen && !MapScreen.IsOpen && !OutOfCockpit && !PlayGuard.Blocked && GamePad.Active
-            && Plugin.Now - panelsDrawn < 0.25 && ui.HasControls;
-        if (!shown) { padCaptured = false; return false; }
+        bool up = navOpen && !MapScreen.IsOpen && !OutOfCockpit && !PlayGuard.Blocked && GamePad.Active;
+        bool shown = up && Plugin.Now - panelsDrawn < 0.25 && ui.HasControls;
+        // the map window beside the list: the full map's controller buttons, while the cursor is over it
+        bool mapUsed = up && PadMap();
+        if (!shown) { padCaptured = false; return mapUsed; }
         if (!padCaptured)
         {
-            if (GamePad.Dpad() == PanelUi.PadDir.None) return false;
+            if (GamePad.Dpad() == PanelUi.PadDir.None) return mapUsed;
             padCaptured = true; ui.Focus = -1; // the first push lands on the first button
             return true;
         }
         // B closes the list and the Route Plan, as Esc does
         if (GamePad.BPressed || GamePad.BackPressed) { padCaptured = false; ui.Focus = -1; EscapeClose(); }
         return true;
+    }
+
+    private const double PadTurnRate = 1.8, PadZoomRate = 6, PadPanRate = 0.7; // as the full map's
+    private static double lastPadMap;
+
+    /// <summary>
+    /// The controller on the map window while the N list is open and the cursor (Rich HUD's: right stick, LB clicks)
+    /// is over the map: RT sets the destination at the cursor, LT adds / removes a waypoint, the left stick moves the
+    /// map, R3 focuses, X / Y / L3 follow, frame and turn with ship; with RB + LB held the right stick turns and
+    /// tilts, the left stick zooms, Y re-plans, X clears the route, R3 shows the whole system. True when something
+    /// was used this update, so the game screen doesn't act on the same press or stick.
+    /// </summary>
+    private static bool PadMap()
+    {
+        double now = Plugin.Now, dt = Math.Min(0.1, now - lastPadMap);
+        lastPadMap = now;
+        if (!GamePad.ReadMap(out var p) || dt <= 0 || !Visible || !OverMap()) return false;
+        var s = Plugin.Settings;
+        bool used = false;
+        bool x = GamePad.New(MyJoystickButtonsEnum.J03), y = GamePad.New(MyJoystickButtonsEnum.J04), r3 = GamePad.New(MyJoystickButtonsEnum.J10);
+        if (p.Bumpers)
+        {
+            if (p.Rx != 0 || p.Ry != 0)
+            {
+                double yaw = -p.Rx * PadTurnRate * dt;
+                scene.Cam.Orbit(yaw, p.Ry * PadTurnRate * dt);
+                if (s.PreviewFollow && s.FollowHeading) previewHeading.Turned(yaw);
+                used = true;
+            }
+            if (p.Ly != 0) { scene.Cam.Zoom(-p.Ly * PadZoomRate * dt); used = true; }
+            if (y) { bool back = Tracker.Skipped.Count > 0; Replan(true); Notify("Route re-planned" + (back ? " (removed detours restored)." : ".")); }
+            if (x) Notify(ClearRoute());
+            if (r3) { s.PreviewFollow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }
+        }
+        else
+        {
+            if (p.Lx != 0 || p.Ly != 0)
+            {
+                float k = (float)(MyGuiManager.GetFullscreenRectangle().Height * PadPanRate * dt);
+                scene.Cam.Pan(-p.Lx * k, -p.Ly * k);
+                if (s.PreviewFollow) { s.PreviewFollow = false; Notify("Follow ship: off (moved the map)"); }
+                used = true;
+            }
+            Mouse(out float mx, out float my);
+            if (p.RtNew) mouse.PadSelect(scene);
+            if (p.LtNew) mouse.PadWaypoint(scene, mx, my);
+            if (r3) mouse.PadFocus(scene);
+            if (x) { ToggleFollow(); Notify(!s.PreviewFollow ? "Follow ship: off" : Snap.HasShip ? "Follow ship: on" : "Follow ship: on (sit in a cockpit)"); }
+            if (y) { s.PreviewFollow = false; scene.FrameDefault(false); }
+            if (GamePad.New(MyJoystickButtonsEnum.J09))
+            {
+                s.FollowHeading = !s.FollowHeading; previewHeading.Offset = 0; Plugin.SaveSettings();
+                Notify(s.FollowHeading ? (s.PreviewFollow ? "Turn with ship: on (travel points up)" : "Turn with ship: on (when following: X)") : "Turn with ship: off");
+                used = true;
+            }
+        }
+        return used || x || y || r3 || p.RtNew || p.LtNew;
     }
 
     private static void HandleMouse()
@@ -1370,9 +1440,14 @@ internal static class SidePreview
         const string s = MapScene.Sep;
         var o = Plugin.Settings.Options;
         string On(bool b) => b ? "on" : "off";
+        // the controller was used last: its buttons instead
+        if (GamePad.Active) return "VIEW|Right stick cursor (LB clicks)" + s + "Left stick move map" + s + "RB+LB + right stick turn / tilt" + s + "RB+LB + left stick zoom" + s + "R3 focus" + s + "X follow ship" + s + "L3 turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "Y frame route" + s + "RB+LB + R3 whole system" + "\n"
+            + "ROUTE|RT set destination" + s + "LT add / remove waypoint or detour" + s + "D-pad buttons" + s + "A press" + s + "RB+LB + Y re-plan" + s + "RB+LB + X clear route" + s + "B close" + "\n"
+            + "SHOW|These work with the cursor over the map" + s + "Grid, orbits, labels, theme and the rest: keyboard" + "\n"
+            + keys;
         return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "Middle-click re-frame" + s + "S follow ship" + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system\n"
             + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint or detour" + s + "Shift+right-drag add above / below" + s + "Drag waypoint: up / down (Y) or sideways (X, Z)" + s + "Shift+right-drag waypoint: across" + s + "Right-click destination or Del: clear route" + s + "Drag flip point: bend leg" + s + "Shift+right-click bend: straighten" + s + "A route plan" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS\n"
-            + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Keys work with the mouse over the map\n"
+            + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "Y ship routes: " + On(o.Routes) + s + "E copy route share code" + s + "I import share code (Shift+I: clear shared)" + s + "K theme: " + MapTheme.Current.Name + s + "Keys work with the mouse over the map\n"
             + keys;
     }
 
@@ -1418,6 +1493,9 @@ internal static class SidePreview
         else if (input.IsNewKeyPressed(MyKeys.P)) o.Gps = !o.Gps;
         else if (input.IsNewKeyPressed(MyKeys.L)) o.Labels = !o.Labels;
         else if (input.IsNewKeyPressed(MyKeys.J)) o.Moons = !o.Moons;
+        else if (input.IsNewKeyPressed(MyKeys.Y)) { o.Routes = !o.Routes; Notify(o.Routes ? "Ship routes: on (where your other ships should be)" : "Ship routes: off"); }
+        else if (input.IsNewKeyPressed(MyKeys.E)) { string m = FleetRoutes.CopyCode(out bool ok); Notify(m, ok); }
+        else if (input.IsNewKeyPressed(MyKeys.I)) { bool ok = true; string m = input.IsAnyShiftKeyPressed() ? FleetRoutes.ClearShared() : FleetRoutes.ImportClipboard(out ok); Notify(m, ok); }
         else if (input.IsNewKeyPressed(MyKeys.K)) Notify(MapScreen.NextTheme());
         else save = false;
         if (save) Plugin.SaveSettings();

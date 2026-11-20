@@ -20,8 +20,11 @@ saving, so the save is unchanged.
       cleared it. Fixed 2026-11-19, not flown: the override now switches off when the route ends or is cleared, or
       when you leave the seat, with the note "Drives: override off". To test: match route burn, then clear the
       route; the drives should stop. It does not cover a save made mid-burn, or an override already on at load.
-- [ ] **Settings key clashes with Pulsar.** Ctrl+Alt+/ opens the plugin's settings and Pulsar's own "Configure a
-      plugin" list at the same time; closing the settings leaves Pulsar's list on screen. Not fixed.
+- [ ] **Settings key and Pulsar's list** (changed 2026-11-20, not seen in game). Ctrl+Alt+/ used to open the plugin's
+      settings and Pulsar's own "Configure a plugin" list at the same time. Now it opens only Pulsar's list (once, not
+      twice); picking SDX2 System Map there opens its settings; Close, the X or Esc on them goes back to the list;
+      Esc on the list closes it. Opened from Pulsar's main-menu Config button, the settings close straight out. With
+      the settings key rebound, the new key opens the list too. In the main menu the key opens the list as well.
 - [ ] **Settings tabs: "Map" stays highlighted** (light blue) whichever tab is selected. Cosmetic. Not fixed.
 
 ## Checked on 2026-11-19 (by Claude, on the desktop)
@@ -67,6 +70,60 @@ Seen in your own flights and screenshots the same day:
 ## Still to test: no flying needed
 
 - [ ] **GPS tab:** "Send to route planner" button on a selected GPS.
+- [ ] **PB `approach`** (added 2026-11-20, sims only, not flown). With a ship locked in WeaponCore, the PB argument
+      `approach` flies to about 500 m clear of its hull and stops (`approach 300`: 300 m). Check: WeaponCore's script
+      API answers on SDX2 (else the PB says so); a ship lying still ends with dampeners on; a drifting one ends matched
+      to its drift with dampeners off and doesn't then drift into it; dropping or changing the lock on the way doesn't
+      change where it goes; no lock = a message and nothing else changes; controls, dampeners, `manual` or `approach`
+      again end it; how the map's autopilot line and panels show state `approach`; PB run time stays low.
+- [ ] **PB `match`** (added 2026-11-20, sims only, not flown). With a ship locked in WeaponCore, `match` matches its
+      speed and direction and keeps the range it is at, never nearer than 3.5 km clear of the hull (`match 6000`: 6 km).
+      Check: run nearer than 3.5 km it backs off; matched, the drives rest and it corrects only when the range leaves
+      the 600 m band or the speeds part by 3 m/s; how often that is against a real drifting ship (each one is a turn
+      and a burn); a ship that burns is followed; dampeners stay off; controls, dampeners, `manual` or `match` again
+      end it; a lost lock flies on along the last drift and picks up again when the same ship is locked.
+- [ ] **Ship routes layer** (reworked 2026-11-20: saved plans, no live data; not seen in game). ENGAGE on a ship,
+      then leave it for another: the map shows the first as a diamond with "NAME > destination  time left", placed
+      where its route plan has it now, a faint line behind it and a line ahead to a ring at its stop; at the planned
+      arrival it sits at the stop as "NAME at destination". It shows the same after a reload of the world, with the
+      ship far away or not loaded. The entry goes on STOP / FULL STOP / CONFIRM MANUAL aboard it, a few seconds after
+      boarding it with its autopilot not flying, when a new route is sent to it, and a day after planned arrival.
+      A route changed while flying (re-plan, asteroid dodge) restarts the plan from there. Routes started before this
+      change, or from the PB's own `go`, don't show. Single player: the estimate stops while paused and matches the
+      save loaded. Y and SHIP ROUTES switch the layer. How far the estimate is from the real ship at arrival.
+- [ ] **Route share code** (added 2026-11-20, not seen in game; needs a second player). After ENGAGE, E (full map,
+      or the Route Plan with the cursor over the map) or COPY SHARE CODE on the second screen copies a line starting
+      SDX2R:. Pasted into faction chat (Ctrl+V) it fits one message for a route of up to four legs; a longer one is
+      copied with a warning. A faction member with the plugin gets "Route added: NAME > destination (from PLAYER)"
+      as the message arrives, and the ship shows on their map like one of their own, the pick reading "(shared by
+      PLAYER)", at the same place and time left as on yours. A code in global chat is ignored; one in a private
+      message is read. I (or IMPORT SHARE CODE) reads a code from the clipboard; your own code says the ship is
+      yours; a code for a ship already shared replaces it; Shift+I clears every shared route. Does faction chat on
+      SDX2 (Nexus) reach the plugin as normal chat at all, also from another sector? Does E in the Route Plan also
+      roll the ship?
+- [ ] **PB formation** (added 2026-11-20, flight sims only; needs two ships with antennas, same faction). Leader:
+      run `lead`; the PB shows "Leading 0 ships". Other ship, 5-10 km off: run `form`; it reads "Joining NAME", then
+      "Slot 1 on NAME: ... off station", flies to 2 km right of the leader and 1 km back (right = across the way the
+      leader moves or its route runs) and reads "on station"; the leader shows "Leading 1 ship" and, with a weaker
+      follower, "thrust held to N%". ENGAGE a route on the leader: the map's plan and ETA use the held pace; the
+      follower burns with the leader, flips when it flips, stays within a few hundred metres of its slot at speed
+      (how far off along the route at 10+ km/s: the message-age correction is the unproven part), and never comes
+      within 1 km of the leader (Flip and Burn's friendly-ship slowdown). At the leader's stop the follower comes
+      to rest in its slot and hands back with dampeners on. Also: `form` with no leader in range says so; touching
+      the controls or `form` again leaves (leader's count drops); `lead` again ends it (followers get the controls,
+      dampeners off); leader's antenna off mid-flight: follower says the link is lost and flies on straight; a
+      second follower gets slot 2 on the left; `lead 3000` spaces them 3 km. PB run time of leader and follower
+      (Last run, against the 0.5 ms watchdog). Does the antenna link (IGC) carry between two players' ships of one
+      faction on SDX2, and through a relay?
+- [ ] **Waypoint drag guide** (changed 2026-11-20, not seen in game). Pressing and dragging one of your waypoints
+      (or your point in space) shows three lines through it, UP, X and Z, and "drag along a line"; nothing moves for
+      the first 18 px. Past that it follows the line the drag runs closest to: that line goes bright, the other two
+      faint, and the label reads "up / down" or "along X / Z". Dragging back to within 18 px of the press lets go of
+      the line (all three show again) and a new direction picks again, without letting go of the button; letting go
+      there moves nothing. Looking straight down only X and Z are picked. Space while dragging switches between
+      up / down and level (a toast says which) and it stays that way until the button is let go; Space here doesn't
+      also do the game's own Space (thrust up in a seat) in the Route Plan. The guide lines' length and brightness read
+      well in each theme and in the Route Plan's small map; touch on the second screen still works.
 - [ ] **Hotbar:** PB `manual` keeps the route in MANUAL; "System Map: match route burn" on a drive group.
 - [ ] **FLY MANUAL** button on the Route Plan panel and on the AUTOPILOT FLYING card.
 - [ ] **Screen script** "System Map: route" on an LCD and a cockpit screen.
@@ -144,7 +201,32 @@ Virtual Displays (its own `IN-GAME-TESTS.md` holds the detail)
 
 - [ ] RB + Select opens the full map; RB + Select again closes it.
 - [ ] LB + Select opens the N list with the Route Plan; again closes the list. In the full map it goes to the list.
-- [ ] Neither shortcut sets off a game action bound to the same buttons (the game's own controller binds are not blocked).
+- [ ] Neither shortcut sets off the game's own Select action (LB + Select used to open the control panel as well;
+      fixed 2026-11-20 by skipping the game screen's input while the chord is held, not seen in game). Select alone
+      still opens the control panel, and LB or RB alone still do what the game binds to them.
+- [ ] Full map, RB + LB held (added 2026-11-20, not seen in game): the right stick turns (left / right) and tilts
+      (up / down) the view the same way round as a mouse drag; the left stick up zooms in, down zooms out; speeds feel
+      right; Y re-plans and X clears the route. With "turn with ship" on, turning by stick holds like a drag does.
+- [ ] Full map, bumpers not held (added 2026-11-20, not seen in game): the right stick moves a cross cursor (starts
+      where the mouse was, stays on screen, labels light up under it); the left stick moves the map the way it is
+      pushed and turns follow-ship off; RT on a world / station / GPS point sets it as the destination and opens the
+      Route controls; RT on nothing says so; LT adds a waypoint at the cursor (removes one it is on; with no route it
+      makes the destination); R3 focuses on what is under the cursor (A too, with no Route controls up); X follow,
+      Y frame, L3 turn with ship, Start the route plan; RB + LB + R3 shows the whole system.
+- [ ] Full map: the D-pad moves between the Route controls' buttons, A presses the one it is on (and does not also
+      refocus the view), B closes the map. The left stick no longer moves
+      the button focus here (it still does in the Route Plan beside the N list).
+- [ ] Full map: the bottom help shows controller buttons after any controller input and keyboard / mouse keys again
+      after a key, click or mouse move; the cross cursor shows only in controller mode; no flicker between the two.
+- [ ] Route Plan (N list open, added 2026-11-20, not seen in game), cursor over the map window: RT sets the
+      destination, LT adds / removes a waypoint, the left stick moves the map, R3 focuses, X / Y / L3 follow, frame and
+      turn with ship; RB + LB held: right stick turns / tilts, left stick zooms, Y re-plans, X clears, R3 whole
+      system. The help under the map window switches between controller and keyboard / mouse. None of these also
+      flies the ship, uses the toolbar or sets off a game action, and with the cursor off the map they are the game's.
+- [ ] Route Plan: holding LB (the list's click) with RB and moving the right stick does not turn the view twice (the
+      list's own cursor drag on top of the stick turn); the cursor drifting while turning is acceptable or not.
+- [ ] Triggers: RT and LT are read on this controller (XInput trigger axes), and none of the map's buttons also sets
+      off a game action while the map is open.
 - [ ] Esc with the N list / Route Plan up closes them and the pause menu does not open; Esc with only the (unpinned) map
       window up closes that; Esc again (nothing up, or only the pinned window) opens the pause menu as normal.
 - [ ] Stations: with no station GPS in your list the map shows none, routes ignore them and the second screen has no

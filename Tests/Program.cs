@@ -833,6 +833,10 @@ internal static class Program
               && RouteExport.Parse(withStatus, out r) && r.Id == 7, "status section round-trips beside the route");
         Check(RouteExport.ParseStatus(merged) == null, "no status before the PB writes one");
         {
+            var fst = RouteExport.ParseStatus(RouteExport.Merge(merged, "[SDX2 Autopilot]\nstate=flying\nack=11\nmsg=x\nfleet=2,0.64,0\n", RouteExport.StatusHeader));
+            Check(fst != null && fst.Leading && fst.Fleet == 2 && Math.Abs(fst.FleetShare - 0.64) < 1e-9 && fst.FleetCap == 0 && !fst.InFormation, "status: leading a formation, the slowest ship's share read");
+        }
+        {
             Check(RouteExport.Parse(RouteExport.BuildCommand(11, "brake"), out var br) && br.Command == "brake" && br.Id == 11, "full stop order parses");
             var bst = RouteExport.ParseStatus(RouteExport.Merge(merged, "[SDX2 Autopilot]\nstate=braking\nack=11\nspeed=2400\ndist=120000\neta=95\nmsg=Full stop from the map\n", RouteExport.StatusHeader));
             Check(bst != null && bst.Braking && !bst.Flying && Near(bst.Speed, 2400, 1e-6), "full stop: the PB's braking status reads back");
@@ -1179,6 +1183,60 @@ internal static class Program
             scene.MouseX = pl.X; scene.MouseY = pl.Y;
             scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
             Check(scene.Hovered is Pick h2 && h2.Name == "Jupiter", "hover: the planet's centre still picks the planet");
+            // the ship routes layer: another ship of yours on autopilot is on the map and pickable, and goes with the layer
+            var other = new MapSnapshot.OtherRoute { Ship = "Hauler 2", Target = "Somewhere", Pos = jup.Pos + new V3(jup.Radius * 4, 0, 0), Dist = 5e6 };
+            other.Points.Add(jup.Pos + new V3(jup.Radius * 8, 0, jup.Radius * 3));
+            scene.Snap.Others.Add(other);
+            scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+            Check(scene.Picks.Exists(q => q.Name == "Hauler 2" && q.Kind == "Ship" && q.Detail.Contains("Somewhere")), "ship routes: another ship on autopilot is drawn and pickable");
+            // the plan kept when a route is sent: the ship starts at the start, ends at the stop, never goes back, and
+            // half way through the time of a burn-and-brake leg it is half way along; the file line reads back the same
+            {
+                V3 ra = new V3(1e6, 2e5, -3e6), rb = new V3(9e6, -1e5, 4e6);
+                var rp = RoutePath.Make("Far Point", ra, rb, V3.Zero, 10, 50000, new List<Waypoint>(), 0);
+                var sr = SavedRoute.From(rp, 42, "Hauler|2", "sp:Test", 1000);
+                bool okPlan = sr != null && sr.Eta > 0 && V3.Distance(sr.At(0, out _), ra) < 1 && V3.Distance(sr.At(sr.Eta + 5, out int done), rb) < 1 && done == sr.Track.Count;
+                Check(okPlan, "saved route: starts at the start and ends at the stop");
+                if (sr != null)
+                {
+                    bool fwd = true; double lastD = -1;
+                    for (int k = 0; k <= 50; k++) { double dd = V3.Distance(sr.At(sr.Eta * k / 50, out _), ra); if (dd < lastD - 1) fwd = false; lastD = dd; }
+                    Check(fwd, "saved route: the ship only moves on along it");
+                    if (rp.Legs.Count == 1) Check(Math.Abs(V3.Distance(sr.At(sr.Eta / 2, out _), ra) / V3.Distance(ra, rb) - 0.5) < 0.03, "saved route: half way in time is half way along a burn-and-brake leg");
+                    // the share code: fits a chat message, and the route read from it has the ship where the plan does
+                    string code = ShareCode.Make(rp, 42, "Hauler 2", 5000);
+                    var got = ShareCode.Read("look: " + code + " thanks");
+                    Check(code != null && code.Length <= ShareCode.ChatMax && got != null && got.Shared && got.Ship == "Hauler 2" && got.Target == "Far Point" && got.Start == 5000, "share code: fits chat and reads back");
+                    if (got != null)
+                    {
+                        double worst = 0;
+                        for (int k = 0; k <= 40; k++) worst = Math.Max(worst, V3.Distance(got.At(sr.Eta * k / 40, out _), sr.At(sr.Eta * k / 40, out _)));
+                        Check(Math.Abs(got.Eta - sr.Eta) < 3 && worst < V3.Distance(ra, rb) * 0.01, "share code: the ship is where the plan has it (worst " + Fmt.Dist(worst) + ")");
+                        sr.Code = code; got.By = "Someone";
+                        var again = SavedRoute.Parse(got.ToLine());
+                        Check(again != null && again.Shared && again.By == "Someone" && again.Code == code && SavedRoute.Parse(sr.ToLine())?.Code == code, "share code: kept in the saved line");
+                    }
+                    Check(ShareCode.Read("SDX2R:notacode") == null && ShareCode.Read("hello") == null && ShareCode.Find("x SDX2R:AAAA") == null, "share code: junk is refused");
+                    var back = SavedRoute.Parse(sr.ToLine());
+                    Check(back != null && back.ShipId == 42 && back.Ship == "Hauler/2" && back.Target == "Far Point" && back.Start == 1000 && back.Track.Count == sr.Track.Count
+                        && V3.Distance(back.At(sr.Eta * 0.3, out _), sr.At(sr.Eta * 0.3, out _)) < 50, "saved route: reads back from its line");
+                }
+            }
+            scene.Opt.Routes = false;
+            scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+            Check(!scene.Picks.Exists(q => q.Name == "Hauler 2"), "ship routes: off hides it");
+            scene.Opt.Routes = true;
+            // the waypoint drag guide draws in every state
+            scene.GhostBase = other.Pos; scene.Ghost = other.Pos;
+            bool guideOk = true;
+            try { for (int gg = 1; gg <= 4; gg++) { scene.GhostGuide = gg; scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080)); } } catch { guideOk = false; }
+            Check(guideOk, "drag guide: draws with no line picked and with each line picked");
+            scene.Ghost = null; scene.GhostGuide = 0;
+            var ms2 = new MapSettings(); ms2.Options.Routes = false;
+            string sf2 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sdx2map-routes-test.cfg");
+            ms2.Save(sf2);
+            Check(MapSettings.Load(sf2).Options.Routes == false, "settings: the ship routes layer is kept");
+            try { System.IO.File.Delete(sf2); } catch { }
         }
     }
 

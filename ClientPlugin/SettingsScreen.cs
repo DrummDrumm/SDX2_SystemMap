@@ -14,8 +14,9 @@ using VRageMath;
 namespace SDX2_SystemMap;
 
 /// <summary>
-/// The settings window: Pulsar's Config button for the plugin, or Ctrl+Alt+/ in game (rebindable). Changes apply at
-/// once and are saved when it closes. Tabs split it into pages: the map (window, pinned map, second screen), keys, route
+/// The settings window: Pulsar's Config button for the plugin, or picked from Pulsar's "Configure a plugin" list,
+/// which Ctrl+Alt+/ opens in game (Pulsar's own key; ours, rebindable, opens the same list). Opened from that list,
+/// closing it goes back to the list. Changes apply at once and are saved when it closes. Tabs split it into pages: the map (window, pinned map, second screen), keys, route
 /// and HUD, and the look (theme, its palette and colours, the nose marker). A key button waits for the next key with its Ctrl/Shift/Alt (Esc cancels, Backspace unbinds).
 /// </summary>
 internal sealed class SettingsScreen : MyGuiScreenBase
@@ -48,19 +49,65 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         if (open != null) return;
         try
         {
+            // picked from Pulsar's list (it is still up while it opens us): closing goes back to it
+            bool fromList = PluginList() != null;
             open = new SettingsScreen();
-            open.Closed += (s, unloading) => { open = null; Plugin.SaveSettings(); };
+            open.Closed += (s, unloading) =>
+            {
+                open = null; Plugin.SaveSettings();
+                if (fromList && !unloading && PluginList() == null) OpenPluginList();
+            };
             MyGuiSandbox.AddScreen(open);
         }
         catch (Exception e) { open = null; Plugin.Log("can't open the settings window: " + e.Message); }
     }
 
-    /// <summary>The settings key (Ctrl+Alt+/ by default): every frame from Plugin.Update, also while paused and in any world.</summary>
+    private const string PluginListType = "Pulsar.Legacy.Screens.ConfigurePlugin";
+    private static Type pluginListType;
+    private static bool pluginListLooked;
+    private static int listWanted; // updates left before the key opens the list (Pulsar's own key gets to go first)
+
+    /// <summary>Pulsar's "Configure a plugin" list, when it is open.</summary>
+    private static MyGuiScreenBase PluginList()
+    {
+        try { foreach (var s in MyScreenManager.Screens) if (s != null && s.GetType().FullName == PluginListType) return s; }
+        catch { }
+        return null;
+    }
+
+    /// <summary>Opens Pulsar's "Configure a plugin" list (every plugin with settings). False when this Pulsar has none.</summary>
+    private static bool OpenPluginList()
+    {
+        try
+        {
+            if (!pluginListLooked)
+            {
+                pluginListLooked = true;
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try { pluginListType = a.GetType(PluginListType, false); } catch { }
+                    if (pluginListType != null) break;
+                }
+                if (pluginListType == null) Plugin.Log("Pulsar's plugin settings list wasn't found: the settings key opens the map's settings directly");
+            }
+            if (pluginListType == null) return false;
+            MyGuiSandbox.AddScreen((MyGuiScreenBase)Activator.CreateInstance(pluginListType));
+            return true;
+        }
+        catch (Exception e) { Plugin.LogThrottled("can't open Pulsar's plugin settings list: " + e.Message); return false; }
+    }
+
+    /// <summary>
+    /// The settings key (Ctrl+Alt+/ by default): every frame from Plugin.Update, also while paused and in any world.
+    /// It opens Pulsar's list of plugin settings, not this window: with the default key Pulsar opens the list itself in
+    /// a world, so ours waits an update and only opens it when it isn't up yet (the main menu, or a rebound key).
+    /// </summary>
     public static void CheckHotkey()
     {
+        if (listWanted > 0 && --listWanted == 0 && open == null && PluginList() == null && !OpenPluginList()) Open();
         if (open != null || MyInput.Static == null || !Binds.Settings.Pressed()) return;
         if (MyAPIGateway.Gui?.ChatEntryVisible ?? false) return;
-        Open();
+        listWanted = 2;
     }
 
     private SettingsScreen() : base(new Vector2(0.5f, 0.5f), MyGuiConstants.SCREEN_BACKGROUND_COLOR, new Vector2(W, H), false, null,
@@ -114,7 +161,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
             new Bind { Name = "Steer round asteroid", Tip = "While the autopilot flies: steer round an asteroid on the route.", Get = () => s.KeySteer, Set = v => s.KeySteer = v },
             new Bind { Name = "Free the mouse (hold)", Tip = "Hold to use the mouse on the map without turning the ship (needs Rich HUD Master).", Get = () => s.KeyCursor, Set = v => s.KeyCursor = v },
             new Bind { Name = "Map panel side", Tip = "Full map: move the route panel to the other side.", Get = () => s.KeyPanel, Set = v => s.KeyPanel = v },
-            new Bind { Name = "This window", Tip = "Open these settings in game (Pulsar's Config button also works).", Get = () => s.KeySettings, Set = v => s.KeySettings = v },
+            new Bind { Name = "Plugin settings list", Tip = "Open Pulsar's list of plugin settings in game; pick the map there. Closing the map's settings goes back to the list.", Get = () => s.KeySettings, Set = v => s.KeySettings = v },
             secondBind,
         };
 
@@ -158,7 +205,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         Controls.Add(keep);
         string whose = !Plugin.PerShip ? "These settings are for all ships."
             : Plugin.SettingsShip != null ? "These settings are for " + Plugin.SettingsShip + "." : "These settings are for all ships (sit in a ship for its own).";
-        string foot = note ?? ((Binds.Settings.IsNone ? "Changes apply at once." : Binds.Settings.Display + " opens this window in game. Changes apply at once.") + " " + whose);
+        string foot = note ?? ((Binds.Settings.IsNone ? "Changes apply at once." : Binds.Settings.Display + " opens the plugin settings list in game. Changes apply at once.") + " " + whose);
         note = null;
         Controls.Add(new MyGuiControlLabel(new Vector2(0, bottom - 0.052f), text: foot,
             textScale: 0.7f, originAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_BOTTOM) { ColorMask = new Vector4(0.7f, 0.7f, 0.7f, 1) });

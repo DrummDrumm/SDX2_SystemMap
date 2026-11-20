@@ -40,7 +40,48 @@
 //      brake       retrograde full stop: turn retrograde, burn at full thrust until under 50 m/s, then dampeners on
 //    A hold lasts until you touch the controls or run manual; brake also ends when stopped. Running the same
 //    argument again turns it off.
-//  - Arguments: manual (or stop) | go (fly the route already in Custom Data) | prograde | retrograde | brake
+//  - Hotbar approach (no route needed): lock a ship in WeaponCore, then run
+//      approach        fly to 500 m from the locked ship and stop there
+//      approach 300    the same, to 300 m (any distance from 100 m up)
+//    It is meant for a disabled ship: one lying still, or drifting with its drives dead. It matches the ship's drift
+//    (burn, flip, brake against the ship, not against space), stops about the distance (within some 50 m) clear of its hull (its bounding
+//    box, so the HUD's range to its centre reads a little more), and hands back: dampeners on if the ship lies
+//    still, left off if it drifts (they would stop you dead while it drifts on). It flies at full thrust (the route
+//    panel's caps don't apply) and does not steer round anything in between. The lock is read when you run it: a
+//    different or dropped lock afterwards doesn't change where it goes (it flies on along the ship's last drift).
+//    Touching the controls, the dampeners, manual, or approach again ends it. It needs WeaponCore to know the
+//    grid (a WeaponCore weapon on it) and the ship inside its targeting range.
+//  - Hotbar match (no route needed): lock a ship in WeaponCore, then run
+//      match           match the locked ship's speed and direction and keep the range you are at, never under 3.5 km
+//      match 6000      the same, keeping 6 km (anything under 3500 counts as 3500)
+//    It flies in the ship's own frame like approach, but doesn't hand back: it holds until you end it. The range
+//    kept is a band 600 m deep that starts at the range asked (so never nearer than that, or than 3.5 km clear of
+//    the hull): matched inside the band it lets the drives rest, and burns again when the range leaves the band
+//    (on the near side a little before, so it has room to turn) or the ship's speed against yours passes 3 m/s. Nearer than the band when you run it, it backs off first. A ship
+//    that burns is followed with a lag (each correction is a turn and a burn of the main drives). Dampeners stay
+//    off. The lock, the thrust and what ends it are as for approach.
+//  - Formation (ships linked by antenna; each needs this script, an antenna switched on and broadcasting, and
+//    owners in the same faction): one ship leads and flies the route, the others hold a place beside it.
+//      lead            on the leading ship: start (or, run again, end) leading. It then says where it is twice a
+//                      second over the antenna, whether it is on a route, flown by hand or lying still
+//      lead 3000       the same, with 3 km between ships (2 km when not given; never under 1.2 km, as Flip and Burn
+//                      slows ships within 1 km of a friendly one)
+//      form            on each other ship: join the nearest leader heard (run again, or touch the controls, to leave)
+//    The leader gives each ship that joins a slot: 1 to its right and half a spacing back, 2 the same to the left,
+//    3 and 4 two spacings out and one back, and so on (right and left of the way the route runs, level with the
+//    system's plane), so every ship has its own lane beside the route. A ship in formation flies in the leader's
+//    frame: it burns as the leader burns, turns its drives the way the leader's face (so it flips when the leader
+//    flips), and corrects toward its slot. It never uses the route itself, so only the leader needs one.
+//    The pace is the slowest ship's: every ship reports its full acceleration, and the leader holds its own burn and
+//    brake to 80% of the lowest (the other 20% is what that ship corrects with), and its speed to the lowest MaxSpeed
+//    set. The map plans the leader's route with that pace. Join before the leader engages: a ship that joins a
+//    leader already burning has only that 20% to catch up with.
+//    Arriving: when the leader has arrived, each ship comes to rest in its slot and hands back (dampeners on).
+//    When the leader ends the formation, or you leave it, you have the controls with the dampeners off (the ship
+//    keeps its speed). If the antenna link drops, the ship flies on along the leader's last course and says so; it
+//    does not brake by itself. Followers do not steer round anything: the leader's route is planned for the leader.
+//    SDX2: fly this with a pilot aboard each ship; an unpiloted follower counts as a drone under the server rules.
+//  - Arguments: manual (or stop) | go (fly the route already in Custom Data) | prograde | retrograde | brake | approach [m] | match [m] | lead [m] | form
 //  - Optional settings: a [SDX2 Autopilot Config] section in Custom Data, keys below (defaults shown):
 //      TurnRate=0.6      max turn rate, rad/s
 //      BrakeMargin=0.8   share of max acceleration planned for stops, bends and corners (the rest is a reserve)
@@ -80,7 +121,34 @@ const double QuietFor = 1.5; // after a takeover: s without input before it paus
 bool handHeld; string handWhy = ""; // the input has become a takeover (held TakeoverAfter s, or dampeners on), and why
 bool flying;
 bool paused; // a route the pilot took over from: let go, but held until manual control is confirmed (or it resumes)
-string mode = "route"; // what Fly() does: route | prograde | retrograde | brake
+string mode = "route"; // what Fly() does: route | prograde | retrograde | brake | approach | match | form
+// formation over the antenna (IGC). The leader broadcasts its state on FormTag + its owner's faction tag; a ship in
+// formation answers the leader alone (FormJoin) with its name, full acceleration and speed cap
+const string FormTag = "SDX2.Form.", FormJoin = "SDX2.Form.Join";
+const double FormSpacing = 2000, FormSpacingMin = 1200; // m between ships (Flip and Burn slows ships within 1 km of a friendly one)
+const double LeadShare = 0.8;     // the leader burns at no more than this share of the slowest ship's acceleration
+const double LinkLost = 5, MemberTimeout = 15; // s without hearing the leader / a member
+const int MaxMembers = 8;
+class Member { public string Name = ""; public double Accel, Cap, Seen; public int Slot; }
+class Heard { public string Name = ""; public Vector3D Pos; public double Seen; }
+IMyBroadcastListener formListen; string formTag = "";
+bool leading; double formSpacing = FormSpacing, fleetAccel, fleetCap, fleetShare; int castRun;
+readonly Dictionary<long, Member> members = new Dictionary<long, Member>();
+readonly Dictionary<long, Heard> heard = new Dictionary<long, Heard>();
+readonly List<long> gone = new List<long>();
+// the leader's own state as flown this run (curRun), and the way its route runs (the formation's axis)
+Vector3D curP, curV, curAcc, curDrive, leadAxis = Vector3D.Forward; int curRun = -1;
+// in formation: the leader followed, its state as last heard (moved on by the message's age) and this ship's slot
+long leadId; string leadName = ""; Vector3D ldPos, ldVel, ldAcc, ldDrive, ldAxis = Vector3D.Forward;
+double ldSeen = -100, ldSpacing = FormSpacing, helloAt = -100; int ldFlag, mySlot; bool ldLost;
+// approach: the ship locked in WeaponCore when the command ran (its id), where it was last seen and how it drifts
+Func<long, int, MyDetectedEntityInfo> wcFocus;
+long apId; Vector3D apPos, apVel; double apSeen, apKeep, apRadius; string apName = ""; bool apLost;
+readonly Nav.VelocityEstimator apTrack = new Nav.VelocityEstimator();
+readonly List<Nav.Wp> apRoute = new List<Nav.Wp>();
+const double ApproachTo = 500; // m clear of the ship's hull, when the argument gives no distance
+const double MatchFloor = 3500; // match: never nearer than this clear of the ship's hull
+bool apKeeping; // match: matched and inside the band (drives resting)
 Nav.Cmd last;
 // turn log (TurnLog=1): what the gyros were asked for against what the ship really did, kept in Custom Data
 readonly List<string> turnLog = new List<string>();
@@ -109,10 +177,13 @@ public Program()
         if (s[1] == "1" && ReadRoute(Me.CustomData, false) && Blocks()) { flying = true; state = "flying"; msg = "Resumed"; startedAt = -10; }
         else if (s[1] == "2" && ReadRoute(Me.CustomData, false)) { paused = true; state = "manual"; msg = "Pilot took the controls"; }
     }
-    Runtime.UpdateFrequency = flying ? UpdateFrequency.Update10 : UpdateFrequency.Update100;
+    if (s.Length >= 5 && s[3] == "1") { leading = true; formSpacing = Math.Max(FormSpacingMin, Nav.D(s[4])); }
+    try { formTag = FormTag + Me.GetOwnerFactionTag(); formListen = IGC.RegisterBroadcastListener(formTag); } catch { formListen = null; }
+    Runtime.UpdateFrequency = flying || leading ? UpdateFrequency.Update10 : UpdateFrequency.Update100;
 }
 
-public void Save() { Storage = lastId + "|" + (flying && mode == "route" ? "1" : paused ? "2" : "0") + "|" + idx; } // hotbar turns aren't resumed
+// hotbar turns and a place in a formation aren't resumed; leading is
+public void Save() { Storage = lastId + "|" + (flying && mode == "route" ? "1" : paused ? "2" : "0") + "|" + idx + "|" + (leading ? "1" : "0") + "|" + formSpacing.ToString("0"); }
 
 public void Main(string arg, UpdateType source)
 {
@@ -128,17 +199,39 @@ public void Main(string arg, UpdateType source)
         if (flying && mode == m) Release("override", "Turned off from the hotbar", false); // same key again: off
         else Turn(m);
     }
+    else if (arg == "approach" || arg.StartsWith("approach "))
+    {
+        if (flying && mode == "approach") Release("override", "Approach turned off from the hotbar", false); // same key again: off
+        else Approach("approach", arg.Length > 9 ? Nav.D(arg.Substring(9).Trim()) : 0);
+    }
+    else if (arg == "match" || arg.StartsWith("match "))
+    {
+        if (flying && mode == "match") Release("override", "Match turned off from the hotbar", false); // same key again: off
+        else Approach("match", arg.Length > 6 ? Nav.D(arg.Substring(6).Trim()) : 0);
+    }
+
+    else if (arg == "lead" || arg.StartsWith("lead ")) Lead(arg.Length > 5 ? Nav.D(arg.Substring(5).Trim()) : 0);
+    else if (arg == "form" || arg == "formation" || arg == "join")
+    {
+        if (flying && mode == "form") Release("override", "Left the formation: you have the controls", false); // same key again: off
+        else Join();
+    }
 
     var cd = Me.CustomData;
     if (!ReferenceEquals(cd, lastCd) && cd != lastCd) { lastCd = cd; ReadSettings(cd); Orders(cd); }
 
+    Hear();
     if (flying) Fly();
+    if (leading) Cast();
     if (flying && runs % 10 == 0 || lastStatus == null) WriteStatus();
-    Echo("Protogen Systems - Autopilot\n" + state.ToUpperInvariant() + (target != "" ? " - " + target : "") + "\n" + msg
+    Echo("Protogen Systems - Autopilot\n" + state.ToUpperInvariant() + ((mode == "approach" || mode == "match") && flying ? " - " + apName : mode == "form" && flying ? " - " + leadName : target != "" ? " - " + target : "") + "\n" + msg
+         + (leading ? "\nLeading " + members.Count + " ship" + (members.Count == 1 ? "" : "s") + ", " + Nav.Km(formSpacing) + " apart" + (fleetShare > 0 && fleetShare < 0.995 ? ", thrust held to " + (fleetShare * 100).ToString("0") + "%" : "") : "")
          + (flying && mode == "route" ? "\nPoint " + (idx + 1) + " of " + route.Count + "\n" + Nav.Km(last.Dist) + "  " + Nav.Speed(last.SpeedNow) : "")
-         + (flying && mode != "route" ? "\n" + Nav.Speed(last.SpeedNow) : "")
+         + (flying && mode == "approach" ? "\n" + Nav.Km(last.Dist) + " to go  closing " + Nav.Speed(last.SpeedNow) : "")
+         + (flying && mode == "match" ? "\nRange " + Nav.Km(last.Dist) + "  speed against it " + Nav.Speed(last.SpeedNow) : "")
+         + (flying && mode != "route" && mode != "approach" && mode != "match" ? "\n" + Nav.Speed(last.SpeedNow) : "")
          + (thrustCap < 0.995 || brakeCap < 0.995 ? "\nThrust cap " + (thrustCap * 100).ToString("0") + "% burn, " + (brakeCap * 100).ToString("0") + "% brake" : "")
-         + "\n\nRun: manual | go | prograde | retrograde | brake\nLast run " + Runtime.LastRunTimeMs.ToString("0.000") + " ms");
+         + "\n\nRun: manual | go | prograde | retrograde | brake | approach | match | lead | form\nLast run " + Runtime.LastRunTimeMs.ToString("0.000") + " ms");
 }
 
 // ------------------------------------------------------------------ orders from the plugin
@@ -301,6 +394,227 @@ void Turn(string m)
     WriteStatus();
 }
 
+/// <summary>The ship locked in WeaponCore from this grid (WeaponCore's programmable block API). False: no lock, the
+/// ship is out of WeaponCore's targeting range, or (wcFocus still null) WeaponCore isn't answering.</summary>
+bool Focus(out MyDetectedEntityInfo info)
+{
+    info = new MyDetectedEntityInfo();
+    try
+    {
+        if (wcFocus == null)
+        {
+            var prop = Me.GetProperty("WcPbAPI");
+            var api = prop == null ? null : prop.As<IReadOnlyDictionary<string, Delegate>>().GetValue(Me);
+            Delegate d;
+            if (api != null && api.TryGetValue("GetAiFocus", out d)) wcFocus = d as Func<long, int, MyDetectedEntityInfo>;
+        }
+        if (wcFocus == null) return false;
+        info = wcFocus(Me.CubeGrid.EntityId, 0);
+    }
+    catch { return false; }
+    return !info.IsEmpty() && info.EntityId != Me.CubeGrid.EntityId;
+}
+
+/// <summary>approach [m]: fly to that far (500 m) clear of the ship locked in WeaponCore and stop there, matched to
+/// its drift. match [m]: match its speed and direction and keep the range (the one asked, else the one now; never
+/// under MatchFloor) until ended. Takes over from a route being flown; with nothing locked it changes nothing.</summary>
+void Approach(string m, double keep)
+{
+    MyDetectedEntityInfo t;
+    string what = m == "match" ? "Match" : "Approach";
+    if (!Focus(out t))
+    {
+        msg = wcFocus == null ? what + ": WeaponCore isn't answering (it needs a WeaponCore weapon on this grid)"
+            : what + ": no ship locked in WeaponCore (lock it first, inside targeting range)";
+        lastStatus = null; WriteStatus();
+        return;
+    }
+    Turn(m);
+    if (!flying) return;
+    Controller().DampenersOverride = false; // the drives do the stopping; dampeners would brake against space, not the ship
+    apId = t.EntityId; apName = t.Name ?? "ship"; apPos = t.Position; apVel = t.Velocity; apSeen = time; apLost = false;
+    apRadius = (t.BoundingBox.Max - t.BoundingBox.Min).Length() / 2;
+    apKeep = Math.Max(100, keep > 0 ? keep : ApproachTo);
+    if (m == "match")
+    {
+        // the near edge of the band: the range asked, else the range now (less half the band, so it holds where it
+        // is), never under the floor
+        double now = Vector3D.Distance(Controller().CenterOfMass, apPos) - apRadius;
+        apKeep = Math.Max(MatchFloor, keep > 0 ? keep : now - Nav.MatchBand);
+    }
+    apKeeping = false; settings.Keeping = false;
+    apTrack.Reset(); apTrack.Update(apPos, t.Velocity, time);
+    settings.Observed = 0; settings.Stuck = 0;
+    msg = ApMsg();
+    Log(m + " " + apName + " at " + apKeep.ToString("0") + " m, drifting " + apVel.Length().ToString("0") + " m/s", true);
+    WriteStatus();
+}
+
+// ------------------------------------------------------------------ formation
+
+static string N(double d, string f) { return d.ToString(f, System.Globalization.CultureInfo.InvariantCulture); }
+static void Put(StringBuilder sb, Vector3D v, string f) { sb.Append('|').Append(N(v.X, f)).Append('|').Append(N(v.Y, f)).Append('|').Append(N(v.Z, f)); }
+static Vector3D Vec(string[] f, int i) { return new Vector3D(Nav.D(f[i]), Nav.D(f[i + 1]), Nav.D(f[i + 2])); }
+string ShipName() { return (Me.CubeGrid.CustomName ?? "ship").Replace('|', '/').Replace(',', ' ').Replace('\n', ' '); }
+
+/// <summary>lead [m]: start leading a formation (again with no distance: end it). The ship says where it is over the
+/// antenna from then on, on a route or not.</summary>
+void Lead(double spacing)
+{
+    if (formListen == null) { msg = "Formation: this block can't use the antenna link"; lastStatus = null; WriteStatus(); return; }
+    if (leading && spacing <= 0)
+    {
+        Cast(2); // tell the ships in formation it's over
+        leading = false; members.Clear(); fleetAccel = fleetCap = fleetShare = 0;
+        if (!flying) Runtime.UpdateFrequency = UpdateFrequency.Update100;
+        msg = "Formation ended"; Log("formation: ended", true);
+        lastStatus = null; WriteStatus();
+        return;
+    }
+    if (flying && mode == "form") Release("override", "", false);
+    if (spacing > 0) formSpacing = Math.Max(FormSpacingMin, spacing);
+    if (!flying && !Blocks()) { lastStatus = null; WriteStatus(); return; }
+    if (!leading) { leading = true; castRun = 0; Log("formation: leading, " + formSpacing.ToString("0") + " m apart", true); }
+    msg = "Leading a formation, ships " + Nav.Km(formSpacing) + " apart: the others run 'form'";
+    Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    lastStatus = null; WriteStatus();
+}
+
+/// <summary>form: join the nearest leader heard in the last few seconds and hold the slot it gives.</summary>
+void Join()
+{
+    if (!Blocks()) { state = "error"; lastStatus = null; WriteStatus(); return; }
+    var c = Controller(); var p = c.CenterOfMass;
+    long best = 0; double bd = double.MaxValue;
+    foreach (var kv in heard)
+    {
+        if (time - kv.Value.Seen > 5) continue;
+        double d = Vector3D.Distance(p, kv.Value.Pos);
+        if (d < bd) { bd = d; best = kv.Key; }
+    }
+    if (best == 0)
+    {
+        msg = "Formation: no leader heard (antennas on and in range, same faction, and the leader running 'lead'?)";
+        lastStatus = null; WriteStatus();
+        return;
+    }
+    if (flying || paused) Release("override", "", false);
+    if (leading) { Cast(2); leading = false; members.Clear(); fleetAccel = fleetCap = fleetShare = 0; }
+    c.DampenersOverride = false; // the drives hold the slot; dampeners would brake against space, not the leader
+    mode = "form"; flying = true; handStart = -1; startedAt = time; state = "formation";
+    leadId = best; leadName = heard[best].Name; ldSeen = -100; mySlot = 0; ldLost = false; helloAt = -100; ldFlag = 0;
+    velocity.Reset();
+    settings.Observed = 0; settings.Stuck = 0; settings.Burning = false;
+    msg = "Joining " + leadName;
+    Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    Log("formation: joining " + leadName + ", " + Nav.Km(bd) + " away", true);
+    WriteStatus();
+}
+
+/// <summary>Every run: what came over the antenna. Leaders heard (for form to pick from), the state of the one this
+/// ship follows, and, leading, the ships that have joined or left.</summary>
+void Hear()
+{
+    if (formListen == null) return;
+    while (formListen.HasPendingMessage)
+    {
+        var m = formListen.AcceptMessage();
+        var f = (m.Data as string ?? "").Split('|');
+        if (f.Length < 21 || f[0] != "L" || m.Source == IGC.Me) continue;
+        var pos = Vec(f, 3);
+        Heard h;
+        if (!heard.TryGetValue(m.Source, out h)) { if (heard.Count >= 16) continue; heard[m.Source] = h = new Heard(); }
+        h.Name = f[2]; h.Pos = pos; h.Seen = time;
+        if (m.Source != leadId || !flying || mode != "form") continue;
+        // moved on by the message's age (the clock both blocks share: the server's), so a leader at 20 km/s isn't
+        // placed kilometres behind where it is
+        long ticks; long.TryParse(f[1], out ticks);
+        double lat = MathHelper.Clamp((DateTime.UtcNow.Ticks - ticks) / 1e7, 0, 2);
+        ldVel = Vec(f, 6); ldAcc = Vec(f, 9); ldDrive = Vec(f, 12); ldAxis = Vec(f, 15);
+        ldPos = pos + ldVel * lat + ldAcc * (lat * lat / 2); ldVel += ldAcc * lat;
+        ldSpacing = Math.Max(FormSpacingMin, Nav.D(f[18]));
+        int.TryParse(f[19], out ldFlag);
+        leadName = f[2]; ldSeen = time;
+        mySlot = 0;
+        string me = IGC.Me.ToString() + ":";
+        foreach (var e in f[20].Split(',')) if (e.StartsWith(me)) int.TryParse(e.Substring(me.Length), out mySlot);
+    }
+    var u = IGC.UnicastListener;
+    while (u.HasPendingMessage)
+    {
+        var m = u.AcceptMessage();
+        if (!leading || m.Tag != FormJoin) continue;
+        var f = (m.Data as string ?? "").Split('|');
+        Member mb;
+        if (f[0] == "Q")
+        {
+            if (members.TryGetValue(m.Source, out mb)) { Log("formation: " + mb.Name + " left", true); members.Remove(m.Source); lastStatus = null; }
+            continue;
+        }
+        if (f[0] != "J" || f.Length < 4) continue;
+        if (!members.TryGetValue(m.Source, out mb))
+        {
+            if (members.Count >= MaxMembers) continue;
+            // the lowest slot free
+            int slot = 1; bool taken = true;
+            while (taken) { taken = false; foreach (var x in members.Values) if (x.Slot == slot) { taken = true; slot++; break; } }
+            members[m.Source] = mb = new Member { Slot = slot };
+            Log("formation: " + f[1] + " joined, slot " + slot, true);
+            lastStatus = null;
+        }
+        mb.Name = f[1]; mb.Accel = Nav.D(f[2]); mb.Cap = Nav.D(f[3]); mb.Seen = time;
+    }
+}
+
+void Cast() { Cast(-1); }
+
+/// <summary>Leading: the pace (the slowest ship heard from), and twice a second this ship's state over the antenna.
+/// flag: -1 = as it is (0 on a route, 1 arrived, 3 anything else), 2 = the formation is over (sent at once).</summary>
+void Cast(int flag)
+{
+    // ships not heard from are dropped; the slowest of the rest sets the pace
+    gone.Clear(); fleetAccel = 0; fleetCap = 0;
+    foreach (var kv in members)
+    {
+        if (time - kv.Value.Seen > MemberTimeout) { gone.Add(kv.Key); continue; }
+        if (kv.Value.Accel > 0 && (fleetAccel <= 0 || kv.Value.Accel < fleetAccel)) fleetAccel = kv.Value.Accel;
+        if (kv.Value.Cap > 0 && (fleetCap <= 0 || kv.Value.Cap < fleetCap)) fleetCap = kv.Value.Cap;
+    }
+    foreach (var id in gone) { Log("formation: " + members[id].Name + " dropped (not heard for " + MemberTimeout.ToString("0") + " s)", true); members.Remove(id); lastStatus = null; }
+    if (flag < 0 && runs - castRun < 3) return;
+    castRun = runs;
+    var c = Controller();
+    if (c == null) { if (!Blocks()) return; c = Controller(); if (c == null) return; }
+    Vector3D p, v, a = Vector3D.Zero, d;
+    if (flying && curRun == runs) { p = curP; v = curV; a = curAcc; d = curDrive; }
+    else
+    {
+        // not under the autopilot this run (idle, or the pilot flying): as the ship is, no burn told
+        p = c.CenterOfMass; v = velocity.Update(p, c.GetShipVelocities().LinearVelocity, time);
+        d = drives.Count > 0 ? drives[0].WorldMatrix.Backward : c.WorldMatrix.Forward;
+        double mass = c.CalculateShipMass().PhysicalMass, thrust = 0;
+        foreach (var t in drives) if (t.IsWorking) thrust += t.MaxEffectiveThrust;
+        if (mass > 0 && thrust > 0 && fleetAccel > 0) fleetShare = Math.Min(1, fleetAccel * LeadShare / (thrust / mass));
+        else if (fleetAccel <= 0) fleetShare = 0;
+    }
+    // the formation's axis: the way the route runs from here (kept over the last 5 km), else the way the ship moves
+    if (flying && mode == "route" && idx < route.Count) { var to = route[idx].Pos - p; if (to.Length() > 5000) leadAxis = Vector3D.Normalize(to); }
+    else if (v.Length() > 50) leadAxis = Vector3D.Normalize(v);
+    if (flag < 0) flag = flying && mode == "route" ? 0 : state == "arrived" ? 1 : 3;
+    var sb = new StringBuilder("L|").Append(DateTime.UtcNow.Ticks).Append('|').Append(ShipName());
+    Put(sb, p, "0"); Put(sb, v, "0.00"); Put(sb, a, "0.000"); Put(sb, d, "0.0000"); Put(sb, leadAxis, "0.0000");
+    sb.Append('|').Append(N(formSpacing, "0")).Append('|').Append(flag).Append('|');
+    bool first = true;
+    foreach (var kv in members) { if (!first) sb.Append(','); first = false; sb.Append(kv.Key).Append(':').Append(kv.Value.Slot); }
+    IGC.SendBroadcastMessage(formTag, sb.ToString(), TransmissionDistance.AntennaRelay);
+}
+
+string ApMsg()
+{
+    if (mode == "match") return apKeeping ? "Matched with " + apName + ": holding " + Nav.Km(apKeep) + " or more" : "Matching " + apName + ", range " + Nav.Km(apKeep) + " or more";
+    return "Closing to " + apKeep.ToString("0") + " m from " + apName;
+}
+
 void Fly()
 {
     var c = Controller();
@@ -372,7 +686,74 @@ void Fly()
     settings.AxisUp = drives[0].WorldMatrix.Up; settings.AxisLeft = drives[0].WorldMatrix.Left;
     settings.Learn(last.W, c.GetShipVelocities().AngularVelocity, time);
 
-    if (mode != "route")
+    if (mode == "approach" || mode == "match")
+    {
+        // where the ship is now: as WeaponCore sees it while the lock holds, else along its last drift
+        MyDetectedEntityInfo t;
+        bool seen = Focus(out t) && t.EntityId == apId;
+        if (seen)
+        {
+            apPos = t.Position; apVel = apTrack.Update(apPos, t.Velocity, time); apSeen = time;
+            apRadius = (t.BoundingBox.Max - t.BoundingBox.Min).Length() / 2;
+        }
+        if (seen == apLost)
+        {
+            apLost = !seen;
+            msg = seen ? ApMsg() : "Lock on " + apName + " lost: flying on along its last drift";
+            Log(msg, true);
+        }
+        var tp = seen ? apPos : apPos + apVel * (time - apSeen);
+        double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
+        if (mode == "match")
+        {
+            last = Nav.Match(p, v, g, drive, aFull, tp, apVel, apKeep + apRadius, cap * 0.98, apRoute, settings);
+            last.Dist = Vector3D.Distance(p, tp) - apRadius; // shown: the range to its hull
+            if (settings.Keeping != apKeeping) { apKeeping = settings.Keeping; if (!apLost) msg = ApMsg(); Log(apKeeping ? "matched at " + last.Dist.ToString("0") + " m" : "correcting at " + last.Dist.ToString("0") + " m, " + last.SpeedNow.ToString("0.0") + " m/s against it", true); }
+        }
+        else last = Nav.Approach(p, v, g, drive, aFull, tp, apVel, apKeep + apRadius, cap * 0.98, apRoute, settings);
+        if (last.Arrived)
+        {
+            // a ship lying still: dampeners hold you there. One drifting: they'd stop you dead while it drifts on
+            bool still = apVel.Length() < 2;
+            Release("arrived", (Vector3D.Distance(p, tp) - apRadius).ToString("0") + " m from " + apName
+                + (still ? ": dampeners on" : ", matched to its " + Nav.Speed(apVel.Length()) + " drift: dampeners off"), still);
+            return;
+        }
+    }
+    else if (mode == "form")
+    {
+        // the leader hears from this ship every 2 s: its name, what its drives can do, its speed cap
+        if (time - helloAt > 2) { helloAt = time; IGC.SendUnicastMessage(leadId, FormJoin, "J|" + ShipName() + "|" + N(aFull, "0.000") + "|" + N(settings.MaxSpeed, "0")); }
+        double age = time - ldSeen;
+        if (ldFlag == 2 && age < LinkLost) { Release("override", leadName + " ended the formation: you have the controls", false); return; }
+        if (mySlot == 0 || ldSeen < 0)
+        {
+            // no slot yet: wait for the leader's answer
+            last = new Nav.Cmd { SpeedNow = v.Length() };
+            if (time - startedAt > 10 && !ldLost) { ldLost = true; msg = "No answer from " + leadName + ": is the antenna link up?"; Log(msg, true); }
+        }
+        else
+        {
+            bool lost = age > LinkLost;
+            if (lost != ldLost) { ldLost = lost; msg = lost ? "Link to " + leadName + " lost: flying on along its last course" : "Link to " + leadName + " back"; Log(msg, true); }
+            // where the leader is now: on from what it last said, its burn kept up for 3 s at most
+            double te = Math.Min(age, 3);
+            var tv = ldVel + ldAcc * te;
+            var tp = ldPos + ldVel * age + ldAcc * (te * age - te * te / 2) + Nav.Slot(ldAxis, mySlot, ldSpacing);
+            double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
+            last = Nav.Formation(p, v, g, drive, aFull, tp, tv, age < 3 ? ldAcc : Vector3D.Zero, ldDrive, cap * 0.98, apRoute, settings);
+            double off = Vector3D.Distance(p, tp);
+            last.Dist = last.Remaining = off;
+            if (ldFlag == 1 && !lost && off < Nav.FormReach && last.SpeedNow < 2)
+            {
+                bool still = tv.Length() < 2;
+                Release("arrived", "In slot " + mySlot + " beside " + leadName + " at its stop" + (still ? ": dampeners on" : ""), still);
+                return;
+            }
+            if (!lost) msg = "Slot " + mySlot + " on " + leadName + (off > Nav.FormReach ? ": " + Nav.Km(Math.Round(off / 100) * 100) + " off station" : ": on station");
+        }
+    }
+    else if (mode != "route")
     {
         // FULL STOP: under DampenBelow the dampeners finish the stop (drives off, dampeners on, pilot has the ship)
         if (mode == "brake" && v.Length() < DampenBelow) { Release("stopped", "Under " + DampenBelow.ToString("0") + " m/s: dampeners on", true); return; }
@@ -383,7 +764,13 @@ void Fly()
     {
         double cap = settings.MaxSpeed > 0 ? Math.Min(settings.MaxSpeed, routeMax) : routeMax;
         KeepOffGround(c, g);
-        last = Nav.Steer(p, v, g, drive, aFull, thrustCap, brakeCap, route, idx, cap * 0.98, settings);
+        // leading a formation: no harder than LeadShare of what the slowest ship's drives can do (it keeps the rest
+        // to correct with), and no faster than the lowest speed cap
+        double burnCap = thrustCap, stopCap = brakeCap;
+        fleetShare = leading && fleetAccel > 0 ? Math.Max(0.02, Math.Min(1, fleetAccel * LeadShare / aFull)) : 0;
+        if (fleetShare > 0) { burnCap = Math.Min(burnCap, fleetShare); stopCap = Math.Min(stopCap, fleetShare); }
+        if (leading && fleetCap > 0) cap = Math.Min(cap, fleetCap);
+        last = Nav.Steer(p, v, g, drive, aFull, burnCap, stopCap, route, idx, cap * 0.98, settings);
         if (last.Idx != idx) { idx = last.Idx; msg = idx < route.Count ? Heading(route[idx]) : ""; Log("point " + (idx + 1) + " of " + route.Count + ": " + msg, false); }
         if (last.Arrived) { Release("arrived", "Arrived at " + target, true); return; }
         // braking above the cap to make the stop: say so while it lasts (and when even all of it won't do)
@@ -407,6 +794,7 @@ void Fly()
     // really changes: unrounded, nearly every run sent one update per drive and per gyro.
     float thr = Nav.Throttle(last.Throttle);
     foreach (var t in drives) t.ThrustOverridePercentage = thr;
+    curP = p; curV = v; curDrive = drive; curAcc = drive * (thr * aFull); curRun = runs; // what a formation is told
     foreach (var gy in gyros)
     {
         var local = Vector3D.TransformNormal(last.W, MatrixD.Transpose(gy.WorldMatrix));
@@ -491,11 +879,12 @@ void TakeOver(string why)
 void Release(string newState, string why, bool dampeners)
 {
     bool was = flying || paused;
+    if (flying && mode == "form" && leadId != 0) { try { IGC.SendUnicastMessage(leadId, FormJoin, "Q"); } catch { } } // the slot is free again
     flying = false; paused = false; handStart = -1; state = newState; msg = why; wasOver = false;
     foreach (var t in drives) t.ThrustOverridePercentage = 0f;
     foreach (var gy in gyros) { gy.Pitch = 0; gy.Yaw = 0; gy.Roll = 0; gy.GyroOverride = false; }
     if (dampeners && was) { var c = Controller(); if (c != null) c.DampenersOverride = true; }
-    Runtime.UpdateFrequency = UpdateFrequency.Update100;
+    Runtime.UpdateFrequency = leading ? UpdateFrequency.Update10 : UpdateFrequency.Update100;
     if (was) Log(newState + ": " + why, true);
     WriteStatus();
 }
@@ -511,6 +900,8 @@ void WriteStatus()
       .Append("\nspeed=").Append(flying ? Math.Round(last.SpeedNow) : 0)
       .Append("\neta=").Append(flying ? Math.Round(last.Eta) : 0)
       .Append("\nmsg=").Append(msg.Replace('\n', ' ')).Append('\n');
+    // leading a formation: the ships in it, and the share of this ship's thrust the slowest holds it to (0 = none)
+    if (leading) sb.Append("fleet=").Append(members.Count).Append(',').Append(N(fleetShare, "0.00")).Append(',').Append(N(fleetCap, "0")).Append('\n');
     var text = sb.ToString();
     if (text == lastStatus) return;
     lastStatus = text;
@@ -555,6 +946,8 @@ public static class Nav
         public bool Burning;    // correcting now (the dead band is narrower until it's done, so it doesn't stutter)
         public double Observed; // fastest turn seen while asking for full rate (0 = not yet)
         public bool Holding;    // a hotbar turn has had a direction to hold
+        public double ArriveSpeed = 10; // m/s: inside the last point's reach and under this, it has arrived
+        public bool Keeping;    // match: matched and inside the band, the drives resting
         // Flip and Burn, above physics speed with nobody turning the ship from a seat, damps any turn (angular damping
         // 0.5, so a turn tops out at Accel / 0.5) and zeroes a turn under 0.001 rad/s every tick
         public const double FbDamping = 0.5;
@@ -746,7 +1139,7 @@ public static class Nav
         cmd.Remaining = remaining;
 
         bool last = cmd.Idx == route.Count - 1;
-        if (last && d < wp.Arrive && cmd.SpeedNow < 10) { cmd.Arrived = true; return cmd; } // dampeners take the rest
+        if (last && d < wp.Arrive && cmd.SpeedNow < s.ArriveSpeed) { cmd.Arrived = true; return cmd; } // dampeners take the rest
 
         // speed we can still stop from: v*tFlip + v^2/(2a) = s
         double a = aBrake * s.BrakeMargin - Math.Max(0, Vector3D.Dot(g, dir));
@@ -901,6 +1294,92 @@ public static class Nav
             cmd.Eta = cmd.SpeedNow / aFull + angle / s.FlipRate;
         }
         return cmd;
+    }
+
+    /// <summary>
+    /// approach: one guidance step toward a ship at tp drifting at tv, to stop keep metres from its centre on the side
+    /// the ship comes from. It is Steer flown in the target's own frame (the velocity against the target's), so the
+    /// flip and the braking burn end at rest beside it, whatever it drifts at. Arrived within the reach of that
+    /// point and under ApproachSpeed against the target: slow enough to hand back without drifting into it.
+    /// SpeedNow is the closing speed. one: a list kept by the caller for the single point.
+    /// </summary>
+    public static Cmd Approach(Vector3D p, Vector3D v, Vector3D g, Vector3D drive, double aFull, Vector3D tp, Vector3D tv, double keep, double cap, List<Wp> one, Settings s)
+    {
+        var off = p - tp; double d = off.Length();
+        var dir = d > 1 ? off / d : -drive;
+        // Steer plans its stop 0.4 of the reach short of the point and runs on a few tens of metres past that plan
+        // as it sheds the last of its speed: with the point at keep, it ends within about 50 m of keep either way
+        one.Clear();
+        one.Add(new Wp { Pos = tp + dir * keep, Arrive = ApproachReach, Kind = "target", Name = "" });
+        s.ArriveSpeed = ApproachSpeed;
+        var cmd = Steer(p, v - tv, g, drive, aFull, 1, 1, one, 0, Math.Max(100, cap - tv.Length()), s);
+        s.ArriveSpeed = 10;
+        return cmd;
+    }
+    public const double ApproachReach = 100, ApproachSpeed = 1;
+
+    /// <summary>
+    /// match: keep station on a ship at tp moving at tv, in a band of ranges from near (from its centre) to near +
+    /// 2 x MatchBand. It is Approach to the middle of the band, never done: once at rest against the ship there
+    /// (Keeping) the drives rest, until the range is out of the band or the speed against the ship passes MatchLoose,
+    /// and then it flies to the middle again. Never Arrived. SpeedNow is the speed against the ship.
+    /// </summary>
+    public static Cmd Match(Vector3D p, Vector3D v, Vector3D g, Vector3D drive, double aFull, Vector3D tp, Vector3D tv, double near, double cap, List<Wp> one, Settings s)
+    {
+        double mid = near + MatchBand, range = Vector3D.Distance(p, tp), rel = (v - tv).Length();
+        // the near edge is a floor: it corrects while there is still room to turn and burn before reaching it
+        // (50 m and half a minute of the closing speed)
+        double closing = range > 1 ? Vector3D.Dot(v - tv, (tp - p) / range) : 0;
+        if (s.Keeping && (range - mid > MatchBand || range - near < 50 + Math.Max(0, closing) * 30 || rel > MatchLoose)) s.Keeping = false;
+        if (!s.Keeping)
+        {
+            var cmd = Approach(p, v, g, drive, aFull, tp, tv, mid, cap, one, s);
+            if (!cmd.Arrived) return cmd;
+            s.Keeping = true; s.Burning = false;
+        }
+        return new Cmd { SpeedNow = rel, Dist = range, Remaining = Math.Abs(range - mid) };
+    }
+    public const double MatchBand = 300, MatchLoose = 3;
+
+    /// <summary>
+    /// Formation: one guidance step holding a slot at tp that moves at tv and speeds up at ta (the leader's burn),
+    /// tdrive the way the leader's drives push. It is Steer flown in the slot's own frame, with the leader's burn as
+    /// a pull the other way (as gravity is), so a ship on station burns as the leader does and one off it corrects on
+    /// top of that. Never Arrived. With nothing to burn for, the drives turn the way the leader's face, so the ship
+    /// flips when the leader flips and is lined up for its next burn. Within 0.4 of FormReach of the slot it only
+    /// matches velocity. SpeedNow is the speed against the slot.
+    /// </summary>
+    public static Cmd Formation(Vector3D p, Vector3D v, Vector3D g, Vector3D drive, double aFull, Vector3D tp, Vector3D tv, Vector3D ta, Vector3D tdrive, double cap, List<Wp> one, Settings s)
+    {
+        one.Clear();
+        one.Add(new Wp { Pos = tp, Arrive = FormReach, Kind = "target", Name = "" });
+        s.ArriveSpeed = -1; // a slot is never arrived at
+        var cmd = Steer(p, v - tv, g - ta, drive, aFull, 1, 1, one, 0, Math.Max(100, cap - tv.Length()), s);
+        s.ArriveSpeed = 10;
+        if (cmd.Throttle <= 0 && cmd.W.LengthSquared() == 0 && tdrive.LengthSquared() > 0.5)
+        {
+            var want = Vector3D.Normalize(tdrive);
+            double angle = Math.Acos(MathHelper.Clamp(Vector3D.Dot(drive, want), -1, 1));
+            if (angle > 0.02) cmd.W = s.TurnAxis(drive, want, angle) * s.TurnCmd(angle);
+        }
+        return cmd;
+    }
+    public const double FormReach = 250;
+
+    /// <summary>
+    /// Where a formation slot lies from the leader: axis = the way the route runs. Slots 1, 2 are one spacing to the
+    /// right and left and half a spacing back, 3, 4 two out and one back, and so on (right = across the route, level
+    /// with the system's plane), so no two ships share a lane along the route.
+    /// </summary>
+    public static Vector3D Slot(Vector3D axis, int slot, double spacing)
+    {
+        if (slot < 1) slot = 1;
+        axis = axis.LengthSquared() > 0.5 ? Vector3D.Normalize(axis) : Vector3D.Forward;
+        var right = Vector3D.Cross(axis, Vector3D.Up);
+        if (right.LengthSquared() < 0.01) right = Vector3D.Cross(axis, Vector3D.Right);
+        right = Vector3D.Normalize(right);
+        int n = (slot + 1) / 2;
+        return right * ((slot % 2 == 1 ? 1 : -1) * n * spacing) - axis * (n * spacing * 0.5);
     }
 
     /// <summary>Seconds ahead along a curve the ship aims.</summary>

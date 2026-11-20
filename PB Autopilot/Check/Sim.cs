@@ -507,8 +507,196 @@ namespace PbCheck
                 Check(kicked, "real turn the ship ignores: kicks");
             }
 
+            // approach: a ship lying still 20 km off, one drifting across at 300 m/s, and one at 2 km/s (over the
+            // game's own speed, so its drift comes from its position) with the lock lost half way
+            {
+                var a1 = FlyApproach(new Vector3D(20e3, 0, 0), Vector3D.Zero, 500, -1);
+                Console.WriteLine("approach still: " + (a1.Arrived ? "arrived" : "NOT arrived") + " t=" + a1.Time.ToString("0") + " s, " + a1.FinalDist.ToString("0") + " m off, closing " + a1.FinalSpeed.ToString("0.00") + " m/s, closest " + a1.ClosestTo.ToString("0") + " m");
+                Check(a1.Arrived && a1.FinalDist > 450 && a1.FinalDist < 560, "approach, ship lying still: stops 450-560 m off");
+                Check(a1.ClosestTo > 440, "approach, ship lying still: never nearer than 440 m");
+                var a2 = FlyApproach(new Vector3D(20e3, 5e3, 0), new Vector3D(0, 0, 300), 500, -1);
+                Console.WriteLine("approach drifting 300: " + (a2.Arrived ? "arrived" : "NOT arrived") + " t=" + a2.Time.ToString("0") + " s, " + a2.FinalDist.ToString("0") + " m off, closing " + a2.FinalSpeed.ToString("0.00") + " m/s, closest " + a2.ClosestTo.ToString("0") + " m");
+                Check(a2.Arrived && a2.FinalDist > 450 && a2.FinalDist < 560, "approach, ship drifting at 300 m/s: stops 450-560 m off");
+                Check(a2.FinalSpeed < 1.5 && a2.ClosestTo > 440, "approach, drifting: matched within 1.5 m/s, never nearer than 440 m");
+                var a3 = FlyApproach(new Vector3D(-30e3, 0, 8e3), new Vector3D(2000, 0, 0), 300, 40);
+                Console.WriteLine("approach drifting 2 km/s, lock lost at 40 s: " + (a3.Arrived ? "arrived" : "NOT arrived") + " t=" + a3.Time.ToString("0") + " s, " + a3.FinalDist.ToString("0") + " m off, closing " + a3.FinalSpeed.ToString("0.00") + " m/s, closest " + a3.ClosestTo.ToString("0") + " m");
+                Check(a3.Arrived && a3.FinalDist > 250 && a3.FinalDist < 400, "approach to 300 m, 2 km/s drift, lock lost: stops 250-400 m off");
+                Check(a3.FinalSpeed < 1.5 && a3.ClosestTo > 240, "approach, lock lost: matched within 1.5 m/s, never nearer than 240 m");
+            }
+
+            // match. An hour from 20 km behind a ship drifting at 300 m/s, from 2 km (inside the 3.5 km floor)
+            // beside one at 2 km/s, and from 8 km with the ship burning at 2 m/s2 for a minute from 200 s
+            {
+                var m1 = FlyApproach(new Vector3D(20e3, 5e3, 0), new Vector3D(0, 0, 300), 3500, -1, 3600);
+                Console.WriteLine("match from 20 km, 300 m/s drift: range " + m1.FinalDist.ToString("0") + " m, " + m1.FinalSpeed.ToString("0.00") + " m/s against it, closest " + m1.ClosestTo.ToString("0") + " m, burning " + m1.OverTime.ToString("0") + " s of 3600");
+                Check(m1.ClosestTo >= 3500 && m1.FinalDist <= 4100, "match from 20 km: never nearer than 3.5 km, ends inside the band");
+                Check(m1.FinalSpeed < 3, "match from 20 km: within 3 m/s of the ship's velocity");
+                var m2 = FlyApproach(new Vector3D(0, 2e3, 0), new Vector3D(2000, 0, 0), 3500, -1, 600);
+                Console.WriteLine("match from 2 km, 2 km/s drift: range " + m2.FinalDist.ToString("0") + " m, " + m2.FinalSpeed.ToString("0.00") + " m/s against it, closest " + m2.ClosestTo.ToString("0") + " m, burning " + m2.OverTime.ToString("0") + " s of 600");
+                Check(m2.FinalDist >= 3500 && m2.FinalDist <= 4100 && m2.ClosestTo > 1900, "match from 2 km: backs off into the band, never nearer than it began");
+                Check(m2.FinalSpeed < 3, "match from 2 km: within 3 m/s of the ship's velocity");
+                var m3 = FlyApproach(new Vector3D(8e3, 0, 0), new Vector3D(0, 300, 0), 7700, -1, 900, new Vector3D(-2, 0, 0));
+                Console.WriteLine("match at 8 km, ship burns 2 m/s2 toward it for 60 s: range " + m3.FinalDist.ToString("0") + " m, " + m3.FinalSpeed.ToString("0.00") + " m/s against it, closest " + m3.ClosestTo.ToString("0") + " m, burning " + m3.OverTime.ToString("0") + " s of 900");
+                Check(m3.FinalDist >= 7700 && m3.FinalDist <= 8300 && m3.FinalSpeed < 3, "match, ship burns: back in the band and matched afterwards");
+            }
+
+            // formation. A leader with 6 m/s2 drives and one follower with 5 (so the leader is held to 4): the
+            // follower joins from 10 km off while the leader lies still, then the leader flies 2,000 km and stops
+            {
+                var f1 = FlyFormation(2000e3, 6, 5, new Vector3D(-6e3, 3e3, 8e3), 2000);
+                Console.WriteLine("formation, 2,000 km: on station after " + f1.FlipTime.ToString("0") + " s, worst " + f1.MaxBurn.ToString("0") + " m off its slot under way (peak " + f1.MaxSpeed.ToString("0") + " m/s), ships never nearer than " + f1.ClosestTo.ToString("0") + " m, ends " + f1.FinalDist.ToString("0") + " m off its slot at " + f1.FinalSpeed.ToString("0.00") + " m/s after " + f1.Time.ToString("0") + " s");
+                Check(f1.Arrived, "formation: the leader arrives and the follower comes to rest in its slot");
+                Check(f1.FlipTime > 0 && f1.FlipTime < 400, "formation: joins from 10 km within 400 s");
+                Check(f1.MaxBurn < 600, "formation: within 600 m of its slot all the way");
+                Check(f1.ClosestTo > 1200, "formation: ships never within 1.2 km of each other");
+                Check(f1.FinalDist < 250 && f1.FinalSpeed < 2, "formation: ends in its slot, at rest against the leader");
+                // slot 4 (two spacings to the left), 3 km spacing, a 600 km hop with a weak follower (3 m/s2 against 8)
+                var f2 = FlyFormation(600e3, 8, 3, new Vector3D(4e3, -2e3, -9e3), 3000, 4);
+                Console.WriteLine("formation, slot 4, 600 km: on station after " + f2.FlipTime.ToString("0") + " s, worst " + f2.MaxBurn.ToString("0") + " m off, nearest " + f2.ClosestTo.ToString("0") + " m, ends " + f2.FinalDist.ToString("0") + " m off at " + f2.FinalSpeed.ToString("0.00") + " m/s");
+                Check(f2.Arrived && f2.MaxBurn < 600 && f2.ClosestTo > 1200, "formation, slot 4 with a weak follower: holds its slot and arrives");
+                var o1 = Nav.Slot(new Vector3D(1, 0, 0), 1, 2000); var o2 = Nav.Slot(new Vector3D(1, 0, 0), 2, 2000); var o3 = Nav.Slot(new Vector3D(1, 0, 0), 3, 2000);
+                Check(o1.Length() > 2000 && (o1 - o2).Length() > 3999 && (o1 - o3).Length() > 2000 && Math.Abs(Vector3D.Reject(o1 - o3, new Vector3D(1, 0, 0)).Length() - 2000) < 1, "formation: slots are a spacing or more apart, each in its own lane");
+            }
+
             Console.WriteLine(string.Format("{0}/{1} sim checks passed", checks - fails, checks));
             return fails == 0 ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Formation: a leader (drives aLead m/s2) lies still at the origin for 200 s, then flies dist along +X and
+        /// stops, held to 80% of the follower's acceleration as the script holds it; a follower (aFollow) starts at
+        /// fStart at rest and holds the slot. The leader's state reaches the follower every third run, a run late,
+        /// and is flown on from as the script does. FlipTime = when first on station (within 150 m), MaxBurn = the
+        /// worst distance off the slot from then until the leader arrives, ClosestTo = between the ships, Arrived =
+        /// the leader arrived and the follower came to rest in its slot; FinalDist / FinalSpeed against the slot.
+        /// </summary>
+        static Result FlyFormation(double dist, double aLead, double aFollow, Vector3D fStart, double spacing, int slot = 1)
+        {
+            var sL = new Nav.Settings(); var sF = new Nav.Settings();
+            var estL = new Nav.VelocityEstimator(); var estF = new Nav.VelocityEstimator();
+            var one = new List<Nav.Wp>();
+            var route = new List<Nav.Wp> { W(new Vector3D(dist, 0, 0), 3000, "target") };
+            Vector3D pL = Vector3D.Zero, vL = Vector3D.Zero, dL = new Vector3D(0, 1, 0), wL = Vector3D.Zero;
+            Vector3D pF = fStart, vF = Vector3D.Zero, dF = new Vector3D(0, 0, 1), wF = Vector3D.Zero;
+            var axis = new Vector3D(1, 0, 0);
+            double share = Math.Min(1, aFollow * 0.8 / aLead);
+            double dt = RunTicks / 60.0, alpha = 0.6, t = 0;
+            // the state as sent (sT) and the one waiting a run to be heard
+            Vector3D mP = pL, mV = vL, mA = Vector3D.Zero, mD = dL; double mT = -1; bool mDone = false;
+            Vector3D qP = pL, qV = vL, qA = Vector3D.Zero, qD = dL; double qT = -1; bool qDone = false, queued = false;
+            int run = 0; bool leadDone = false;
+            var r = new Result { ClosestTo = double.MaxValue, FlipTime = -1 };
+            Nav.Cmd cL = new Nav.Cmd(), cF = new Nav.Cmd();
+            while (t < 6000)
+            {
+                var physL = vL.Length() > 100 ? Vector3D.Normalize(vL) * 100 : vL;
+                var veL = estL.Update(pL, physL, t);
+                sL.PhysMax = Math.Max(sL.PhysMax, physL.Length());
+                cL = new Nav.Cmd();
+                if (t >= 200 && !leadDone)
+                {
+                    cL = Written(Nav.Steer(pL, veL, Vector3D.Zero, dL, aLead, share, share, route, 0, 49000, sL));
+                    if (cL.Arrived) { leadDone = true; cL = new Nav.Cmd(); vL = Vector3D.Zero; } // (the dampeners stop the rest)
+                }
+                if (queued) { mP = qP; mV = qV; mA = qA; mD = qD; mT = qT; mDone = qDone; queued = false; }
+                if (run % 3 == 0) { qP = pL; qV = veL; qA = dL * (cL.Throttle * aLead); qD = dL; qT = t; qDone = leadDone; queued = true; }
+                run++;
+
+                var physF = vF.Length() > 100 ? Vector3D.Normalize(vF) * 100 : vF;
+                var veF = estF.Update(pF, physF, t);
+                sF.PhysMax = Math.Max(sF.PhysMax, physF.Length());
+                cF = new Nav.Cmd();
+                var slotNow = pL + Nav.Slot(axis, slot, spacing);
+                double offNow = Vector3D.Distance(pF, slotNow);
+                if (mT >= 0)
+                {
+                    double age = t - mT, te = Math.Min(age, 3);
+                    var tv = mV + mA * te;
+                    var tp = mP + mV * age + mA * (te * age - te * te / 2) + Nav.Slot(axis, slot, spacing);
+                    cF = Written(Nav.Formation(pF, veF, Vector3D.Zero, dF, aFollow, tp, tv, mA, mD, 49000, one, sF));
+                    if (mDone && Vector3D.Distance(pF, tp) < Nav.FormReach && cF.SpeedNow < 2) { r.Arrived = true; break; }
+                }
+                if (r.FlipTime < 0 && offNow < 150) r.FlipTime = t;
+                if (r.FlipTime >= 0 && !leadDone && offNow > r.MaxBurn) r.MaxBurn = offNow;
+                r.MaxSpeed = Math.Max(r.MaxSpeed, vL.Length());
+                for (int k = 0; k < RunTicks; k++)
+                {
+                    double h = 1.0 / 60;
+                    var dw = cL.W - wL;
+                    if (dw.Length() > alpha * h) dw = Vector3D.Normalize(dw) * alpha * h;
+                    wL += dw;
+                    if (wL.LengthSquared() > 0) dL = Vector3D.Normalize(dL + Vector3D.Cross(wL, dL) * h);
+                    vL += dL * cL.Throttle * aLead * h;
+                    pL += vL * h;
+                    dw = cF.W - wF;
+                    if (dw.Length() > alpha * h) dw = Vector3D.Normalize(dw) * alpha * h;
+                    wF += dw;
+                    if (wF.LengthSquared() > 0) dF = Vector3D.Normalize(dF + Vector3D.Cross(wF, dF) * h);
+                    vF += dF * cF.Throttle * aFollow * h;
+                    pF += vF * h;
+                    double dc = Vector3D.Distance(pL, pF); if (dc < r.ClosestTo) r.ClosestTo = dc;
+                }
+                t += dt;
+            }
+            r.Time = t;
+            r.FinalDist = Vector3D.Distance(pF, pL + Nav.Slot(axis, slot, spacing));
+            r.FinalSpeed = (vF - vL).Length();
+            return r;
+        }
+
+        /// <summary>
+        /// The approach command against a ship at tp0 drifting at tv (the flying ship starts at rest at the origin,
+        /// drive facing +Y): the target's place and physics velocity (capped at 100 m/s) read each run as the script
+        /// does, until lostAt s (-1: never), then flown on along its last drift. FinalDist / FinalSpeed / ClosestTo are
+        /// against the target.
+        /// </summary>
+        // matchFor > 0: the match command instead, flown that many seconds (keep = the band's near edge); OverTime is
+        // then the time the drives burned. burn: the target's acceleration from 200 s to 260 s.
+        static Result FlyApproach(Vector3D tp0, Vector3D tv, double keep, double lostAt, double matchFor = 0, Vector3D burn = default(Vector3D))
+        {
+            var s = new Nav.Settings();
+            var est = new Nav.VelocityEstimator(); var track = new Nav.VelocityEstimator();
+            var one = new List<Nav.Wp>();
+            Vector3D p = Vector3D.Zero, v = Vector3D.Zero, drive = new Vector3D(0, 1, 0), w = Vector3D.Zero, tp = tp0;
+            Vector3D seenPos = tp0, seenVel = tv.Length() > 100 ? Vector3D.Normalize(tv) * 100 : tv; double seenAt = 0;
+            double dt = RunTicks / 60.0, alpha = 0.6, t = 0;
+            var r = new Result { ClosestTo = double.MaxValue };
+            Nav.Cmd cmd = new Nav.Cmd();
+            while (t < (matchFor > 0 ? matchFor : 4000))
+            {
+                var phys = v.Length() > 100 ? Vector3D.Normalize(v) * 100 : v;
+                var vEst = est.Update(p, phys, t);
+                s.PhysMax = Math.Max(s.PhysMax, phys.Length());
+                if (lostAt < 0 || t < lostAt)
+                {
+                    seenPos = tp; seenAt = t;
+                    seenVel = track.Update(tp, tv.Length() > 100 ? Vector3D.Normalize(tv) * 100 : tv, t);
+                }
+                var at = seenPos + seenVel * (t - seenAt);
+                cmd = Written(matchFor > 0 ? Nav.Match(p, vEst, Vector3D.Zero, drive, 10, at, seenVel, keep, 49000, one, s)
+                    : Nav.Approach(p, vEst, Vector3D.Zero, drive, 10, at, seenVel, keep, 49000, one, s));
+                if (cmd.Arrived) { r.Arrived = true; break; }
+                if (cmd.Throttle > 0) r.OverTime += dt;
+                bool burning = t >= 200 && t < 260;
+                var want = cmd.W;
+                for (int k = 0; k < RunTicks; k++)
+                {
+                    double h = 1.0 / 60;
+                    var dw = want - w;
+                    if (dw.Length() > alpha * h) dw = Vector3D.Normalize(dw) * alpha * h;
+                    w += dw;
+                    if (w.LengthSquared() > 0) drive = Vector3D.Normalize(drive + Vector3D.Cross(w, drive) * h);
+                    v += drive * cmd.Throttle * 10 * h;
+                    if (burning) tv += burn * h;
+                    p += v * h; tp += tv * h;
+                    double dc = Vector3D.Distance(p, tp); if (dc < r.ClosestTo) r.ClosestTo = dc;
+                }
+                t += dt;
+            }
+            r.Time = t; r.End = p;
+            r.FinalDist = Vector3D.Distance(p, tp);
+            r.FinalSpeed = (v - tv).Length();
+            return r;
         }
 
         static Result FlyMoving(List<Nav.Wp> route, Vector3D v0, Vector3D watch)

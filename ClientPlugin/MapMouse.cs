@@ -12,9 +12,11 @@ namespace SDX2_SystemMap;
 ///    on a bend: straighten the leg; with no route
 ///    yet it becomes the destination);
 ///  - Shift+right-drag: add one above or below the plane (tilt the view);
-///  - drag one of your waypoints (or your point in space): along the screen's up / down raises or lowers it, side to
-///    side (or any way when looking down on it) moves it along the X or Z axis, whichever runs most along the drag; Shift+right-drag: anywhere across
-///    the level plane;
+///  - drag one of your waypoints (or your point in space): guide lines show its up / down line and the X and Z axes
+///    through it; the drag follows the line it runs closest to (up / down raises or lowers it, X or Z moves it level
+///    along that axis), picked once the drag is PickAfter px from the press and picked again whenever it comes back
+///    that near. Space while dragging switches between up / down and level and holds it for that drag;
+///    Shift+right-drag: anywhere across the level plane;
 ///  - drag a flip point or a bend: bend that leg up or down.
 /// A press only counts when it starts on the map, so dragging in from the N list or a panel does nothing.
 /// </summary>
@@ -43,8 +45,12 @@ internal sealed class MapMouse
     // hFlat: across the level plane (Shift+right-drag) instead of up / down
     private int hMode;
     private bool hRight, hWarned, hFlat;
-    /// <summary>A left-drag of your waypoint or point: up / down or across is picked from the first move.</summary>
-    private bool hAuto;
+    /// <summary>A left-drag of your waypoint or point that hasn't picked up / down or an axis yet (hPick: this drag picks).</summary>
+    private bool hAuto, hPick;
+    /// <summary>Space switched this drag between up / down and level: it stays as set (no picking from the drag's direction).</summary>
+    private bool hForced;
+    /// <summary>px from the press before a drag of your point picks its line (and inside which it lets go of it again).</summary>
+    private float PickAfter => Math.Max(18, ClickSlop * 2.5f);
     /// <summary>A sideways left-drag: along one level axis only, X or Z (whichever runs most along the drag on screen), keeping the rest.</summary>
     private bool hAxisLock, hAlongZ;
     private string hName;
@@ -56,7 +62,7 @@ internal sealed class MapMouse
     public void Reset(MapScene scene)
     {
         leftDown = rightDown = false;
-        if (hMode != 0) { hMode = 0; if (scene != null) scene.Ghost = null; }
+        if (hMode != 0) { hMode = 0; if (scene != null) { scene.Ghost = null; scene.GhostGuide = 0; } }
     }
 
     /// <summary>
@@ -72,7 +78,7 @@ internal sealed class MapMouse
         float dx = mx - lastX, dy = my - lastY;
         if (!active)
         {
-            if (hMode != 0 && !(hRight ? right : left)) { hMode = 0; scene.Ghost = null; } // let go off the map: cancelled
+            if (hMode != 0 && !(hRight ? right : left)) { hMode = 0; scene.Ghost = null; scene.GhostGuide = 0; } // let go off the map: cancelled
             leftDown = left && leftDown; rightDown = right && rightDown;
             lastX = mx; lastY = my;
             return;
@@ -89,9 +95,9 @@ internal sealed class MapMouse
         // Shift+right-drag on one of your waypoints (or the point in space you set as the destination) moves it across
         // the plane instead
         if (hMode == 0 && newLeft && scene.Hovered is Pick hp && hp.Kind == "Your waypoint" && SidePreview.UserWaypoint(hp.Name, out var hb))
-            { StartHeight(2, false, hp.Name, hb); hAuto = true; }
+            { StartHeight(2, false, hp.Name, hb); hAuto = hPick = true; }
         else if (hMode == 0 && newLeft && scene.Hovered is Pick dp && dp.Kind == DestKind && SidePreview.OwnDestination(dp.Name))
-            { StartHeight(4, false, dp.Name, dp.Pos); hAuto = true; }
+            { StartHeight(4, false, dp.Name, dp.Pos); hAuto = hPick = true; }
         else if (hMode == 0 && newLeft && scene.Hovered is Pick fp && fp.Leg != null)
             StartHeight(3, false, fp.Leg, SidePreview.LegBend(fp.Leg, out var lb) ? lb : fp.Pos);
         else if (hMode == 0 && newRight && shift)
@@ -104,9 +110,29 @@ internal sealed class MapMouse
         if (hMode != 0)
         {
             bool held = hRight ? right : left, dragging = hRight ? rMoved : moved;
-            if (dragging)
+            // your own point: no line picked while the drag is still near the press (the guide shows all three), and
+            // coming back there lets go of the line picked, so a wrong pick is undone without letting go of the button
+            if (hPick && dragging)
             {
-                if (hAuto) { hAuto = false; hFlat = hAxisLock = SideDrag(scene, hBase, mx - downX, my - downY, out hAlongZ); }
+                float px = mx - downX, py = my - downY;
+                bool near = px * px + py * py < PickAfter * PickAfter;
+                if (input.Toggle)
+                {
+                    // Space: up / down <-> level, held for the rest of this drag. Level takes the axis the drag runs
+                    // closest to now (X when it can't tell)
+                    bool toLevel = !hAuto && !hAxisLock;
+                    SideDrag(scene, hBase, px, py, out hAlongZ);
+                    hForced = true; hAuto = false; hFlat = hAxisLock = toLevel; hWarned = false;
+                    Toast(toLevel ? "Drag: level, along " + (hAlongZ ? "Z" : "X") + " (Space: up / down)" : "Drag: up / down (Space: level)");
+                }
+                else if (hForced) { }
+                else if (near) { hAuto = true; hFlat = hAxisLock = false; hPos = hBase; hWarned = false; }
+                else if (hAuto) { hAuto = false; hFlat = hAxisLock = SideDrag(scene, hBase, px, py, out hAlongZ); }
+            }
+            scene.GhostGuide = !hPick || !held ? 0 : hAuto ? 1 : !hAxisLock ? 2 : hAlongZ ? 4 : 3;
+            if (dragging && hPick && hAuto) { scene.Ghost = hBase; scene.GhostBase = hBase; }
+            else if (dragging)
+            {
                 if (hAxisLock ? AlongAxis(scene, mx, my, hBase, hAlongZ, out var hp2)
                     : hFlat ? FlatPlace(scene, mx, my, hBase, out hp2) : RouteClick.HeightOnVertical(scene.Cam.Eye, scene.Cam.Ray(mx, my), hBase, out hp2)) hPos = hp2;
                 else if (!hWarned) { hWarned = true; Toast(hAxisLock ? "Turn the view to move it along " + (hAlongZ ? "Z" : "X") : hFlat ? "Tilt the view down to move it across" : "Tilt the view to set height"); }
@@ -114,7 +140,8 @@ internal sealed class MapMouse
             }
             if (!held)
             {
-                if (dragging)
+                scene.GhostGuide = 0;
+                if (dragging && !(hPick && hAuto)) // (let go with no line picked: nothing moves)
                 {
                     double rise = hPos.Y - hBase.Y;
                     if (hMode == 1 && SidePreview.Path == null) FirstDestination(new Pick { Name = FirstName, Kind = "Waypoint", Pos = hPos });
@@ -152,14 +179,33 @@ internal sealed class MapMouse
         if (notches != 0) scene.Cam.Zoom(notches);
     }
 
+    /// <summary>Controller, right trigger: what the cursor is on becomes the destination (as Shift+click).</summary>
+    public void PadSelect(MapScene scene)
+    {
+        if (scene.Hovered is Pick p) { Toast(SidePreview.SetDestination(p.Name, p.Kind, p.Pos, p.Detail)); if (p.Kind != "Your ship") Destination(p); }
+        else Toast("Nothing under the cursor (LT places a point in space)");
+    }
+
+    /// <summary>Controller, A: the view goes to what the cursor is on (as a click).</summary>
+    public void PadFocus(MapScene scene)
+    {
+        if (!(scene.Hovered is Pick p)) return;
+        if (p.Kind != "Your ship") Unfollow();
+        scene.Cam.FlyTo(p.Pos, MapScene.FocusDistance(p));
+    }
+
+    /// <summary>Controller, left trigger: add / remove a waypoint or detour at the cursor (as Shift+right-click).</summary>
+    public void PadWaypoint(MapScene scene, float x, float y) => AddWaypointAt(scene, x, y);
+
     private void StartHeight(int mode, bool rightButton, string name, V3 basePos, bool flat = false)
     {
-        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false; hFlat = flat; hAuto = hAxisLock = false;
+        hMode = mode; hRight = rightButton; hName = name; hBase = basePos; hPos = basePos; hWarned = false; hFlat = flat; hAuto = hAxisLock = hPick = hForced = false;
     }
 
     /// <summary>
-    /// A drag (dx, dy screen px) of the point at p: across the level plane, unless it runs along the screen's up / down
-    /// line through p (within 35°) with the view tilted enough to show height.
+    /// A drag (dx, dy screen px) of the point at p: which of the three lines through p it runs closest to on screen,
+    /// up / down (false) or a level axis (true; alongZ says which). An axis seen nearly end-on isn't a choice, and
+    /// looking (nearly) straight down, where height hardly shows, any drag is level.
     /// </summary>
     internal static bool SideDrag(MapScene scene, V3 p, float dx, float dy, out bool alongZ)
     {
@@ -176,7 +222,9 @@ internal sealed class MapMouse
         // the level axis that runs most along the drag on screen (one seen end-on can't be dragged along)
         alongZ = zl > 0.15 * h && (zCos > xCos || xl < 0.15 * h);
         if (ml < 1 || vl < 0.2 * h) return true;
-        return Math.Abs(vx * dx + vy * dy) / (vl * ml) < Math.Cos(35 * Math.PI / 180);
+        double vCos = Math.Abs(vx * dx + vy * dy) / (vl * ml);
+        double level = Math.Max(xl > 0.15 * h ? xCos : 0, zl > 0.15 * h ? zCos : 0);
+        return vCos < level;
     }
 
     private const string DestKind = "Destination";
@@ -258,13 +306,15 @@ internal sealed class MapMouse
 internal struct MouseInput
 {
     public bool Left, Right, NewLeft, NewRight, LeftReleased, RightReleased, Shift;
+    /// <summary>Space went down: while one of your points is dragged, switches between up / down and level.</summary>
+    public bool Toggle;
     /// <summary>Wheel notches this frame (positive: closer).</summary>
     public double Notches;
 
     public static MouseInput From(IMyInput i) => new MouseInput
     {
         Left = i.IsLeftMousePressed(), Right = i.IsRightMousePressed(), NewLeft = i.IsNewLeftMousePressed(), NewRight = i.IsNewRightMousePressed(),
-        LeftReleased = i.IsNewLeftMouseReleased(), RightReleased = i.IsNewRightMouseReleased(), Shift = i.IsAnyShiftKeyPressed(),
+        LeftReleased = i.IsNewLeftMouseReleased(), RightReleased = i.IsNewRightMouseReleased(), Shift = i.IsAnyShiftKeyPressed(), Toggle = i.IsNewKeyPressed(MyKeys.Space),
         Notches = OrbitCamera.WheelNotches(i.MouseScrollWheelValue(), i.PreviousMouseScrollWheelValue()),
     };
 }

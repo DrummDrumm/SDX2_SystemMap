@@ -50,6 +50,32 @@ no keys, no map, no toolbar actions, no speed-dial fix. Only its settings window
    [Settings](#settings)). The **Route Plan** panel stands on the list's other side; **Ctrl+M** opens the list, the
    plan and the map window in one go, with or without a destination. On a controller, **LB + Select** does the same
    and **RB + Select** opens the full-screen map (again closes it).
+
+   **Controller in the full-screen map.** The key help at the bottom shows the controller's buttons while the
+   controller is the input used last, and the keyboard and mouse ones again as soon as those are used.
+
+   | Controller | Does |
+   |---|---|
+   | Right stick | moves the select cursor |
+   | Left stick | moves the map |
+   | RT | what the cursor is on becomes the destination |
+   | LT | adds a waypoint at the cursor (on a waypoint or detour: removes it; with no route: the destination) |
+   | R3 | focuses the view on what the cursor is on |
+   | A | presses the button the D-pad is on (with no buttons up: focuses, as R3) |
+   | D-pad | moves between the Route controls' buttons and panels |
+   | X / Y | follow ship / frame the route |
+   | L3 | turn with ship |
+   | Start | the route plan (as the A key) |
+   | RB + LB held | right stick turns and tilts the view, left stick zooms, Y re-plans, X clears the route, R3 shows the whole system |
+   | B | back |
+
+   The show toggles (grid, orbits, labels and so on), the theme and dragging a waypoint stay on the keyboard and
+   mouse.
+
+   **Controller in the Route Plan** (the N list with the map window beside it). The same buttons work on the map
+   window while the cursor is over it, and its key help switches the same way. The cursor there is the N list's own
+   (right stick, LB clicks); the D-pad and A work the Route Plan's buttons, B closes the list, and Start is left to
+   the game.
    **Esc**, or **B** on a controller, closes what is up (the list with its Route Plan, else the map window unless
    it's pinned, or the full-screen map) and does not open the pause menu; with none of them up, Esc and B are the
    game's as usual.
@@ -131,7 +157,7 @@ destination (as Shift+click on it in the full map).
 
 Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini` (the set for all ships; each ship's own is a file of the same form in `Storage\SDX2_SystemMap_Ships`):
 - `KeyMap` (`Shift+M`), `KeyAutopilot` (`Ctrl+M`), `KeyPin` (`Alt+M`), `KeySteer` (`Ctrl+Shift+M`), `KeySettings`
-  (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/), `KeyCursor` (`F2`, held; extra Ctrl/Shift/Alt are fine): Ctrl/Shift/Alt plus a game key name, a side mouse button (`Mouse 4` / `Mouse 5`, stored as
+  (`Ctrl+Alt+OemQuestion`, which is Ctrl+Alt+/; it opens Pulsar's "Configure a plugin" list, where you pick the map, and closing the map's settings goes back to that list), `KeyCursor` (`F2`, held; extra Ctrl/Shift/Alt are fine): Ctrl/Shift/Alt plus a game key name, a side mouse button (`Mouse 4` / `Mouse 5`, stored as
   `ExtraButton1` / `ExtraButton2`), or `None`. A key fires only with
   exactly its modifiers. In the window, click a key and press the new keys (Esc or controller B cancels, Backspace unbinds); a combo
   already in use moves over and the other action is unbound. If the keys are also one of the game's controls

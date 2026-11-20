@@ -128,7 +128,7 @@ public class Plugin : IPlugin
         try { harmony?.UnpatchAll(Id); } catch { }
     }
 
-    /// <summary>Pulsar's "Config" button opens the settings window (Ctrl+Alt+/ in game does too).</summary>
+    /// <summary>Pulsar's "Config" button and its "Configure a plugin" list (Ctrl+Alt+/ in game) open the settings window.</summary>
     public void OpenConfigDialog() => SettingsScreen.Open();
 
     public static void SaveSettings()

@@ -211,6 +211,7 @@ public sealed class MapSettings
                     case "Gps": s.Options.Gps = B(v, true); break;
                     case "Labels": s.Options.Labels = B(v, true); break;
                     case "Moons": s.Options.Moons = B(v, true); break;
+                    case "ShipRoutes": s.Options.Routes = B(v, true); break;
                     case "NoseStyle": names.Add((k, v)); break;
                     default:
                         // Palette.<theme>=<theme>; Color.<theme>.<slot>=#RRGGBB
@@ -278,7 +279,7 @@ public sealed class MapSettings
         L("ApBrakePct", Limits.BrakePct); L("ApBrakeConeSignatureKm", Limits.BrakeSignatureKm);
         L("Yaw", Yaw); L("Pitch", Pitch);
         L("Grid", Options.Grid); L("Orbits", Options.Orbits); L("Sectors", Options.Sectors); L("Stations", Options.Stations);
-        L("Gps", Options.Gps); L("Labels", Options.Labels); L("Moons", Options.Moons);
+        L("Gps", Options.Gps); L("Labels", Options.Labels); L("Moons", Options.Moons); L("ShipRoutes", Options.Routes);
         L("ThemeNames", 2); L("NoseStyle", NoseStyle);
         foreach (var kv in Palettes) L("Palette." + kv.Key, kv.Value);
         foreach (var kv in Overlays) L("Overlay." + kv.Key, kv.Value);

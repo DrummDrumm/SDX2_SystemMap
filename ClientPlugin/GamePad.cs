@@ -56,6 +56,32 @@ internal static class GamePad
         catch (Exception e) { Plugin.LogThrottled("controller read failed: " + e.Message); return Shortcut.None; }
     }
 
+    private static bool selectHeld;
+
+    /// <summary>
+    /// From the game screen's input, each update: Select went down with RB or LB held (one of the shortcuts above) and
+    /// hasn't been let go yet, plus the update it comes up in. The game screen skips its input meanwhile, so the
+    /// game's own Select action (the control panel) doesn't open as well, whether it acts on the press or the release.
+    /// </summary>
+    public static bool SelectShortcutHeld()
+    {
+        try
+        {
+            var i = MyInput.Static;
+            if (i == null || !i.IsJoystickConnected()) return selectHeld = false;
+            bool select = i.IsJoystickButtonPressed(MyJoystickButtonsEnum.J07);
+            if (i.IsJoystickButtonNewPressed(MyJoystickButtonsEnum.J07))
+            {
+                bool lb = i.IsJoystickButtonPressed(MyJoystickButtonsEnum.J05), rb = i.IsJoystickButtonPressed(MyJoystickButtonsEnum.J06);
+                selectHeld = lb != rb;
+            }
+            bool was = selectHeld;
+            if (!select) selectHeld = false;
+            return was;
+        }
+        catch { return selectHeld = false; }
+    }
+
     /// <summary>B (the game's J02) went down this update, read from the button itself: closes what Esc closes.</summary>
     public static bool BackPressed
     {
@@ -86,12 +112,80 @@ internal static class GamePad
             if (!Active) { pending = stickDir = PanelUi.PadDir.None; return; }
             var d = Dpad();
             if (d != PanelUi.PadDir.None) { pending = d; return; }
-            var s = Stick();
+            var s = MapScreen.IsOpen ? PanelUi.PadDir.None : Stick(); // in the full map the left stick moves the map
             if (s == PanelUi.PadDir.None) { stickDir = s; return; }
             if (s != stickDir) { stickDir = s; stickNext = now + RepeatFirst; pending = s; }
             else if (now >= stickNext) { stickNext = now + RepeatNext; pending = s; }
         }
         catch (Exception e) { Plugin.LogThrottled("controller read failed: " + e.Message); }
+    }
+
+    private const float ViewDead = 0.2f;
+
+    /// <summary>RB (J06) and LB (J05) both held, read from the buttons themselves.</summary>
+    public static bool BothBumpers
+    {
+        get
+        {
+            try
+            {
+                var i = MyInput.Static;
+                return i != null && i.IsJoystickConnected() && i.IsJoystickButtonPressed(MyJoystickButtonsEnum.J05) && i.IsJoystickButtonPressed(MyJoystickButtonsEnum.J06);
+            }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>The sticks and triggers for the full map, one update's worth.</summary>
+    public struct MapSticks
+    {
+        /// <summary>RB + LB held: the sticks turn / tilt and zoom instead of moving the cursor and the map.</summary>
+        public bool Bumpers;
+        /// <summary>Left and right stick, -1..1 past a dead zone: X right = +1, Y down = +1.</summary>
+        public float Lx, Ly, Rx, Ry;
+        /// <summary>The right / left trigger went past half this update.</summary>
+        public bool RtNew, LtNew;
+    }
+
+    private static bool rtWas, ltWas;
+
+    /// <summary>Reads the sticks and triggers (call once per game update). False with no controller.</summary>
+    public static bool ReadMap(out MapSticks p)
+    {
+        p = default;
+        try
+        {
+            var i = MyInput.Static;
+            if (i == null || !i.IsJoystickConnected()) { rtWas = ltWas = false; return false; }
+            p.Bumpers = BothBumpers;
+            p.Lx = Dead(Axis(i, MyJoystickAxesEnum.Xpos) - Axis(i, MyJoystickAxesEnum.Xneg));
+            p.Ly = Dead(Axis(i, MyJoystickAxesEnum.Ypos) - Axis(i, MyJoystickAxesEnum.Yneg));
+            p.Rx = Dead(Axis(i, MyJoystickAxesEnum.RotationXpos) - Axis(i, MyJoystickAxesEnum.RotationXneg));
+            p.Ry = Dead(Axis(i, MyJoystickAxesEnum.RotationYpos) - Axis(i, MyJoystickAxesEnum.RotationYneg));
+            // the triggers: XInput's own axes, or the shared Z axis of an older pad (left = +, right = -)
+            bool rt = Math.Max(Axis(i, MyJoystickAxesEnum.ZRight), Axis(i, MyJoystickAxesEnum.Zneg)) > 0.5f;
+            bool lt = Math.Max(Axis(i, MyJoystickAxesEnum.ZLeft), Axis(i, MyJoystickAxesEnum.Zpos)) > 0.5f;
+            p.RtNew = rt && !rtWas; p.LtNew = lt && !ltWas;
+            rtWas = rt; ltWas = lt;
+            return true;
+        }
+        catch (Exception e) { Plugin.LogThrottled("controller read failed: " + e.Message); return false; }
+    }
+
+    private static float Axis(IMyInput i, MyJoystickAxesEnum a) => i.GetJoystickAxisStateForGameplay(a);
+
+    /// <summary>A controller button went down this update, read from the button itself.</summary>
+    public static bool New(MyJoystickButtonsEnum b)
+    {
+        try { var i = MyInput.Static; return i != null && i.IsJoystickConnected() && i.IsJoystickButtonNewPressed(b); }
+        catch { return false; }
+    }
+
+    private static float Dead(float v)
+    {
+        float a = Math.Abs(v);
+        if (a < ViewDead) return 0;
+        return Math.Sign(v) * Math.Min(1f, (a - ViewDead) / (1f - ViewDead));
     }
 
     private static PanelUi.PadDir Stick()

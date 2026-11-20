@@ -48,6 +48,10 @@ internal static class AutopilotLink
         autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; sentIds.Clear(); lastCommand = null; sentAt = -1; nextScan = 0;
     }
 
+    /// <summary>The ship you fly (0: none), and whether its autopilot has answered and isn't on a route.</summary>
+    public static long FlownShip => ControlledGrid()?.EntityId ?? 0;
+    public static bool FlownIdle => Status != null && !Pending && !Status.Flying && !Status.Manual;
+
     private static MyCubeGrid ControlledGrid() =>
         Sandbox.Game.World.MySession.Static?.ControlledEntity?.Entity?.GetTopMostParent() as MyCubeGrid;
 
@@ -77,6 +81,8 @@ internal static class AutopilotLink
         List<int> marks = null;
         int n = Write(id => RouteExport.Build(path, id, out marks, command, passes, thrust, brake), command, out error);
         if (n > 0) { sentMarks = marks; sentMarksCount = path.Waypoints.Count; }
+        // the plan as sent, for the map's ship routes layer once you have left this ship
+        if (n > 0 && command != "load" && ControlledGrid() is MyCubeGrid g) FleetRoutes.Started(g.EntityId, g.DisplayName, path);
         return n;
     }
 
@@ -127,6 +133,7 @@ internal static class AutopilotLink
         else
         {
             lastId = id; lastCommand = command; sentAt = Plugin.Now; sentIds.Add(id);
+            if (command == "stop" || command == "brake" || command == "manual") FleetRoutes.Ended(ControlledGrid()?.EntityId ?? 0);
             // the copy read before writing is stale now: read the route back, so the old one isn't mistaken for a
             // route sent from somewhere else (and taken back over the new one) until the next scan
             Route = RouteExport.Parse(autopilots[0].CustomData, out var r) ? r : null;

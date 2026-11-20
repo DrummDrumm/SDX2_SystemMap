@@ -93,9 +93,13 @@ internal sealed class MapScreen : MyGuiScreenBase
         {
             const string s = MapScene.Sep;
             var o = scene.Opt;
+            // the controller was used last: its buttons instead (the game's own switch, as its controller icons)
+            if (padMode) return "VIEW|Right stick cursor" + s + "Left stick move map" + s + "RB+LB + right stick turn / tilt" + s + "RB+LB + left stick zoom" + s + "R3 focus" + s + "X follow ship: " + On(follow) + s + "L3 turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "Y frame route" + s + "RB+LB + R3 whole system" + "\n"
+                + "ROUTE|RT set destination" + s + "LT add / remove waypoint or detour" + s + "Start route plan" + s + "D-pad buttons" + s + "A press" + s + "LB + Select N list" + s + "RB+LB + Y re-plan" + s + "RB+LB + X clear route" + "\n"
+                + "MAP|B back" + s + "RB + Select close" + s + "Grid, orbits, labels, theme and the rest: keyboard";
             return "VIEW|Drag orbit" + s + "Right-drag pan" + s + "Wheel zoom" + s + "Click focus" + s + "S follow ship: " + On(follow) + s + "U turn with ship: " + On(Plugin.Settings.FollowHeading) + s + "F frame route" + s + "H whole system" + "\n"
                 + "ROUTE|Shift+click set destination" + s + "Shift+right-click add / remove waypoint or detour" + s + "Shift+right-drag add above / below" + s + "Drag waypoint: up / down (Y) or sideways (X, Z)" + s + "Shift+right-drag waypoint: across" + s + "Right-click destination or Del: clear route" + s + "Drag flip point: bend leg" + s + "Shift+right-click bend: straighten" + s +"A route plan" + s + "N list" + s + "R re-plan" + s + "V detours: " + On(Plugin.Settings.AvoidBodies) + s + "C copy flip GPS" + "\n"
-                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + (Binds.PanelSide.IsNone ? "" : s + Binds.PanelSide.Display + " panel side") + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
+                + "SHOW|G grid: " + On(o.Grid) + s + "O orbits: " + On(o.Orbits) + s + "X sectors: " + On(o.Sectors) + s + "T stations: " + On(o.Stations) + s + "P GPS: " + On(o.Gps) + s + "L labels: " + On(o.Labels) + s + "J moons: " + On(o.Moons) + s + "Y ship routes: " + On(o.Routes) + s + "E copy route share code" + s + "I import share code (Shift+I: clear shared)" + s + "K theme: " + MapTheme.Current.Name + s + "Q pin corner" + (Binds.PanelSide.IsNone ? "" : s + Binds.PanelSide.Display + " panel side") + s + "Esc back" + (Binds.Map.IsNone ? "" : s + Binds.Map.Display + " off");
         }
     }
 
@@ -116,21 +120,12 @@ internal sealed class MapScreen : MyGuiScreenBase
         var pad = GamePad.Pressed();
         if (pad == GamePad.Shortcut.FullMap) { CloseScreen(); return; }
         if (pad == GamePad.Shortcut.Autopilot) { CloseScreen(); SidePreview.AutopilotKey(); return; }
+        PadInput();
         var o = scene.Opt;
         if (input.IsNewKeyPressed(MyKeys.F)) { follow = false; scene.FrameDefault(false); }
         if (input.IsNewKeyPressed(MyKeys.H)) { follow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }
-        if (input.IsNewKeyPressed(MyKeys.S))
-        {
-            follow = !follow;
-            var sn = SidePreview.Snap;
-            if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
-            Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (sit in a cockpit)");
-        }
-        if (input.IsNewKeyPressed(MyKeys.U))
-        {
-            Plugin.Settings.FollowHeading = !Plugin.Settings.FollowHeading; heading.Offset = 0; Plugin.SaveSettings();
-            Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (travel points up)" : "Turn with ship: on (when following: S)") : "Turn with ship: off");
-        }
+        if (input.IsNewKeyPressed(MyKeys.S)) ToggleFollow();
+        if (input.IsNewKeyPressed(MyKeys.U)) ToggleTurn();
         if (input.IsNewKeyPressed(MyKeys.C)) Toast(CopyFlip());
         if (input.IsNewKeyPressed(MyKeys.Delete)) Toast(SidePreview.ClearRoute());
         if (input.IsNewKeyPressed(MyKeys.A)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
@@ -148,6 +143,9 @@ internal sealed class MapScreen : MyGuiScreenBase
         if (input.IsNewKeyPressed(MyKeys.P)) o.Gps = !o.Gps;
         if (input.IsNewKeyPressed(MyKeys.L)) o.Labels = !o.Labels;
         if (input.IsNewKeyPressed(MyKeys.J)) o.Moons = !o.Moons;
+        if (input.IsNewKeyPressed(MyKeys.Y)) { o.Routes = !o.Routes; Toast(o.Routes ? "Ship routes: on (where your other ships should be)" : "Ship routes: off"); }
+        if (input.IsNewKeyPressed(MyKeys.E)) Toast(FleetRoutes.CopyCode(out _));
+        if (input.IsNewKeyPressed(MyKeys.I)) Toast(input.IsAnyShiftKeyPressed() ? FleetRoutes.ClearShared() : FleetRoutes.ImportClipboard(out _));
         if (input.IsNewKeyPressed(MyKeys.K)) Toast(NextTheme());
         if (input.IsNewKeyPressed(MyKeys.Q)) Toast(SidePreview.NextPipCorner());
         if (Binds.PanelSide.Pressed())
@@ -168,7 +166,7 @@ internal sealed class MapScreen : MyGuiScreenBase
             mouse.Handle(scene, input, m.X, m.Y, false);
             return;
         }
-        mouse.Handle(scene, input, m.X, m.Y, true);
+        mouse.Handle(scene, input, m.X, m.Y, !padMode);
     }
 
     /// <summary>C: the first leg's flip point to the clipboard as a GPS line. Returns what happened.</summary>
@@ -180,6 +178,98 @@ internal sealed class MapScreen : MyGuiScreenBase
         string gps = string.Format(System.Globalization.CultureInfo.InvariantCulture, "GPS:Flip - {0}:{1:0.##}:{2:0.##}:{3:0.##}:#FF7CFC9A:", r.TargetName.Replace(":", " "), f.X, f.Y, f.Z);
         try { MyClipboardHelper.SetClipboard(gps); return "Flip point copied: paste it in the GPS tab."; }
         catch (Exception e) { return "Copy failed: " + e.Message; }
+    }
+
+    private void ToggleFollow()
+    {
+        follow = !follow;
+        var sn = SidePreview.Snap;
+        if (follow && sn.HasShip) scene.Cam.FlyTo(sn.ShipPos, Math.Min(scene.Cam.GoalDistance, MapScene.ShipViewDistance));
+        Toast(!follow ? "Follow ship: off" : sn.HasShip ? "Follow ship: on" : "Follow ship: on (sit in a cockpit)");
+    }
+
+    private void ToggleTurn()
+    {
+        Plugin.Settings.FollowHeading = !Plugin.Settings.FollowHeading; heading.Offset = 0; Plugin.SaveSettings();
+        string key = padMode ? "X" : "S";
+        Toast(Plugin.Settings.FollowHeading ? (follow ? "Turn with ship: on (travel points up)" : "Turn with ship: on (when following: " + key + ")") : "Turn with ship: off");
+    }
+
+    // at full stick: radians, wheel notches and screen heights a second
+    private const double PadTurnRate = 1.8, PadZoomRate = 6, PadCursorRate = 0.75, PadPanRate = 0.7;
+    private double lastPadInput;
+    /// <summary>The controller was used last: its cursor and button help are shown instead of the mouse's.</summary>
+    private bool padMode;
+    private float padX, padY;
+
+    /// <summary>
+    /// The controller in the full map. Right stick: the select cursor; left stick: moves the map; RT: destination at
+    /// the cursor; LT: waypoint there; R3 (or A with no buttons up): focus; X / Y / L3 / Start: follow, frame, turn with ship,
+    /// the route plan. With RB + LB held the right stick turns and tilts, the left stick zooms, Y re-plans, X clears, R3 shows the whole system.
+    /// </summary>
+    private void PadInput()
+    {
+        double now = Plugin.Now, dt = Math.Min(0.1, now - lastPadInput);
+        lastPadInput = now;
+        bool read = GamePad.ReadMap(out var p), was = padMode;
+        padMode = read && GamePad.Active;
+        if (!padMode || dt <= 0) return;
+        var full = MyGuiManager.GetFullscreenRectangle();
+        if (!was)
+        {
+            // the cursor starts where the mouse is
+            var m = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(MyGuiManager.MouseCursorPosition);
+            padX = m.X; padY = m.Y;
+            mouse.Reset(scene);
+        }
+        if (p.Bumpers)
+        {
+            // the same way round as a mouse drag: stick right is a drag to the right, stick up a drag up
+            if (p.Rx != 0 || p.Ry != 0)
+            {
+                double yaw = -p.Rx * PadTurnRate * dt;
+                scene.Cam.Orbit(yaw, p.Ry * PadTurnRate * dt);
+                if (Turning) heading.Turned(yaw);
+            }
+            if (p.Ly != 0) scene.Cam.Zoom(-p.Ly * PadZoomRate * dt);
+            if (GamePad.New(MyJoystickButtonsEnum.J04)) { bool back = SidePreview.Tracker.Skipped.Count > 0; SidePreview.Replan(true); Toast("Route re-planned" + (back ? " (removed detours restored)." : ".")); }
+            if (GamePad.New(MyJoystickButtonsEnum.J03)) Toast(SidePreview.ClearRoute());
+            if (GamePad.New(MyJoystickButtonsEnum.J10)) { follow = false; scene.Cam.FlyTo(V3.Zero, 6e7); }
+        }
+        else
+        {
+            // the cursor: slow near the centre of the stick for small moves
+            double c = full.Height * PadCursorRate * dt;
+            padX += (float)(p.Rx * Math.Abs(p.Rx) * c); padY += (float)(p.Ry * Math.Abs(p.Ry) * c);
+            if (p.Lx != 0 || p.Ly != 0)
+            {
+                float k = (float)(full.Height * PadPanRate * dt);
+                scene.Cam.Pan(-p.Lx * k, -p.Ly * k); // the view goes the way the stick is pushed
+                if (follow) { follow = false; Toast("Follow ship: off (moved the map)"); }
+            }
+            if (p.RtNew) mouse.PadSelect(scene);
+            if (p.LtNew) mouse.PadWaypoint(scene, padX, padY);
+            // A presses the Route controls' focused button while they are up; otherwise it focuses like R3
+            if (GamePad.New(MyJoystickButtonsEnum.J10) || GamePad.New(MyJoystickButtonsEnum.J01) && controls.W <= 0) mouse.PadFocus(scene);
+            if (GamePad.New(MyJoystickButtonsEnum.J03)) ToggleFollow();
+            if (GamePad.New(MyJoystickButtonsEnum.J04)) { follow = false; scene.FrameDefault(false); }
+            if (GamePad.New(MyJoystickButtonsEnum.J09)) ToggleTurn();
+            if (GamePad.New(MyJoystickButtonsEnum.J08)) { var why = SidePreview.MapAutopilotKey(); if (why != null) Toast(why); else showControls = true; }
+        }
+        padX = Math.Max(0, Math.Min(full.Width - 1, padX)); padY = Math.Max(0, Math.Min(full.Height - 1, padY));
+    }
+
+    /// <summary>The controller's select cursor: a small cross with a gap in the middle.</summary>
+    private void DrawPadCursor(float unit)
+    {
+        float r = unit * 1.1f, g = unit * 0.35f, w = Math.Max(2f, unit * 0.14f);
+        var dark = MapColor.Rgb(0x05090E, 200); var col = MapColor.Rgb(0xFFFFFF);
+        for (int pass = 0; pass < 2; pass++)
+        {
+            float lw = pass == 0 ? w * 2.2f : w; var cc = pass == 0 ? dark : col;
+            canvas.Line(padX - r, padY, padX - g, padY, lw, cc); canvas.Line(padX + g, padY, padX + r, padY, lw, cc);
+            canvas.Line(padX, padY - r, padX, padY - g, lw, cc); canvas.Line(padX, padY + g, padX, padY + r, lw, cc);
+        }
     }
 
     private void Toast(string text) { toast = text; toastUntil = Plugin.Now + 4; }
@@ -199,8 +289,10 @@ internal sealed class MapScreen : MyGuiScreenBase
             if (Turning && scene.Snap.HasShip) heading.Update(scene.Cam, scene.Snap.ShipVel, scene.Snap.ShipFwd, dt);
             scene.Cam.Tick(dt);
             var m = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(MyGuiManager.MouseCursorPosition);
-            bool overPanel = controls.W > 0 && controls.Contains(m.X, m.Y) || panelGrab;
-            scene.MouseX = overPanel ? float.NaN : m.X; scene.MouseY = overPanel ? float.NaN : m.Y;
+            // the controller's cursor points at the map instead of the mouse while the controller is in use
+            float hx = padMode ? padX : m.X, hy = padMode ? padY : m.Y;
+            bool overPanel = controls.W > 0 && controls.Contains(hx, hy) || !padMode && panelGrab;
+            scene.MouseX = overPanel ? float.NaN : hx; scene.MouseY = overPanel ? float.NaN : hy;
             scene.Help = Help;
             var input = MyInput.Static;
             bool wanted = MapControls.Prepare(scene, showControls, now, out bool card) && input != null;
@@ -219,6 +311,7 @@ internal sealed class MapScreen : MyGuiScreenBase
                 controls = MapControls.Draw(ui, scene, box, card, now, out bool closeMap);
                 if (closeMap) { CloseScreen(); return base.Draw(); }
             }
+            if (padMode) DrawPadCursor(Math.Max(14f, full.Height / 50f));
             if (toast != null && now < toastUntil)
             {
                 float px = Math.Max(14f, full.Height / 50f), w = canvas.TextWidth(toast, px) + px * 2;

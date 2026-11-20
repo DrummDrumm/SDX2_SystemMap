@@ -68,6 +68,9 @@ public sealed partial class MapScene
     /// <summary>A waypoint being placed or raised / lowered in the full map (null = none), drawn with a line from GhostBase.</summary>
     public V3? Ghost;
     public V3 GhostBase;
+    /// <summary>Guide lines through GhostBase while one of your points is dragged: 0 none, 1 no line picked yet (up /
+    /// down, X and Z all shown), 2 up / down picked, 3 X, 4 Z (the picked one bright, the others faint).</summary>
+    public int GhostGuide;
     /// <summary>
     /// While you edit the route the autopilot flies: that route's points as it flies them (start, waypoints, target),
     /// drawn dim and dashed under your edited copy until the changes are sent. Null = no edit open.
@@ -129,6 +132,7 @@ public sealed partial class MapScene
         AsteroidFields();
         if (Opt.Stations) Stations();
         if (Opt.Gps) GpsMarkers();
+        if (Opt.Routes) OtherRoutes();
         if (Original != null && Original.Length > 1) OriginalRoute();
         if (Path != null) PathLines();
         TrackLines();
@@ -250,6 +254,19 @@ public sealed partial class MapScene
     {
         if (!Ghost.HasValue) return;
         var g = Ghost.Value; var col = WaypointCol;
+        if (GhostGuide != 0)
+        {
+            // the three lines the drag can follow, each a tenth of the view's distance either way, named at its end
+            double len = Math.Max(1, V3.Distance(Cam.Eye, GhostBase)) * 0.18;
+            GuideLine(new V3(0, len, 0), "UP", GhostGuide == 2, GhostGuide == 1, col);
+            GuideLine(new V3(len, 0, 0), "X", GhostGuide == 3, GhostGuide == 1, col);
+            GuideLine(new V3(0, 0, len), "Z", GhostGuide == 4, GhostGuide == 1, col);
+            if (GhostGuide == 1)
+            {
+                if (P(GhostBase, out var px, out var py)) { ScreenCircle(px, py, 9 * u, 2 * u, col, 24); Label("drag along a line (Space: up / level)", px, py, 11 * u, col, 0, 11 * u, true); }
+                return;
+            }
+        }
         Seg(GhostBase, g, Math.Max(1, 1.4f * u), col.WithAlpha(0.85f));
         if (P(GhostBase, out var bx, out var by)) c.Disc(bx, by, 2.2f * u, col.WithAlpha(0.7f));
         Stalk(g, col.WithAlpha(0.5f));
@@ -258,7 +275,8 @@ public sealed partial class MapScene
         c.Disc(x, y, 3 * u, col);
         double h = g.Y - GhostBase.Y;
         double across = Math.Sqrt((g.X - GhostBase.X) * (g.X - GhostBase.X) + (g.Z - GhostBase.Z) * (g.Z - GhostBase.Z));
-        string text = across > Math.Abs(h) ? Fmt.Dist(across) + " across" : Math.Abs(h) < 1 ? "level" : Fmt.Dist(Math.Abs(h)) + (h > 0 ? " up" : " down");
+        string axis = GhostGuide == 3 ? " along X" : GhostGuide == 4 ? " along Z" : " across";
+        string text = across > Math.Abs(h) ? Fmt.Dist(across) + axis : Math.Abs(h) < 1 ? "level" : Fmt.Dist(Math.Abs(h)) + (h > 0 ? " up" : " down");
         Label(text, x, y, 11 * u, col, 0, 11 * u, true);
     }
 
@@ -291,6 +309,14 @@ public sealed partial class MapScene
             if (!P(Cam.Eye + dir * (Cam.Distance * 1e4), out var x, out var y) || !OnView(x, y)) continue;
             c.Disc(x, y, (0.6f + bright) * u * 0.8f, MapColor.White.WithAlpha(bright * 0.7f * T.Stars));
         }
+    }
+
+    /// <summary>One of the drag guide's lines through GhostBase, d each way: bright when picked, plain while none is, faint otherwise.</summary>
+    private void GuideLine(V3 d, string name, bool picked, bool open, MapColor col)
+    {
+        var lc = col.WithAlpha(picked ? 0.9f : open ? 0.55f : 0.16f);
+        Seg(GhostBase - d, GhostBase + d, Math.Max(1, (picked ? 1.8f : 1.1f) * u), lc);
+        if ((picked || open) && P(GhostBase + d, out var x, out var y) && OnView(x, y, 4)) c.Text(name, x + 4 * u, y - 5 * u, 9 * u, lc);
     }
 
     private static double Nice(double v)
@@ -741,6 +767,29 @@ public sealed partial class MapScene
     private bool curved;
 
     /// <summary>The route the autopilot still flies while you edit a copy: dim, dashed, labelled FLYING.</summary>
+    /// <summary>The "ship routes" layer: each other ship you sent off, where its plan has it now (an estimate, not
+    /// the ship itself): a faint line behind it from where it set off, a line ahead to a ring at its stop.</summary>
+    private void OtherRoutes()
+    {
+        float w = Math.Max(1f, 1.3f * u);
+        foreach (var r in Snap.Others)
+        {
+            var col = PlanCol.WithAlpha(0.55f); var behind = PlanCol.WithAlpha(0.2f);
+            for (int i = 1; i < r.Flown.Count; i++) Seg(r.Flown[i - 1], r.Flown[i], w, behind);
+            if (r.Flown.Count > 0) Seg(r.Flown[r.Flown.Count - 1], r.Pos, w, behind);
+            var a = r.Pos;
+            foreach (var b in r.Points) { Seg(a, b, w, col); a = b; }
+            if (r.Points.Count > 0 && P(a, out var ex, out var ey) && OnView(ex, ey, 4)) ScreenCircle(ex, ey, 3.5f * u, w, col, 14);
+            if (!P(r.Pos, out var x, out var y) || !OnView(x, y, 10)) continue;
+            Diamond(x, y, 6 * u, PlanCol);
+            Diamond(x, y, 3 * u, Bg);
+            string to = string.IsNullOrEmpty(r.Target) ? "a point" : r.Target;
+            string by = !r.Shared ? "" : r.By != "" ? " (shared by " + r.By + ")" : " (shared)";
+            AddPick(r.Ship, "Ship", (r.Arrived ? "Should be at " + to + " by its route plan" : "By its route plan: " + Fmt.Dist(r.Dist) + " from " + to + ", there in " + Fmt.Time(r.TimeLeft)) + by, r.Pos, x, y, 5 * u);
+            if (Opt.Labels) Label(r.Ship + (r.Arrived ? " at " : " > ") + to + (r.Arrived ? "" : "  " + Fmt.Time(r.TimeLeft)), x, y, 5 * u, PlanCol, 8, 10 * u);
+        }
+    }
+
     private void OriginalRoute()
     {
         var pts = new List<V3> { Snap.HasShip ? Snap.ShipPos : Original[0] };

@@ -191,7 +191,10 @@ internal static class GamePlayInputPatch
     {
         try
         {
-            if (!WorldGate.Active || !SidePreview.PadInput()) return true;
+            if (!WorldGate.Active) return true;
+            // LB / RB + Select is ours: the game's Select (the control panel) stays shut
+            bool chord = GamePad.SelectShortcutHeld();
+            if (!SidePreview.PadInput() && !chord) return true;
             Sandbox.Game.World.MySession.Static?.ControlledEntity?.MoveAndRotate(VRageMath.Vector3.Zero, VRageMath.Vector2.Zero, 0f);
             return false;
         }

@@ -474,6 +474,9 @@ internal static class SecondScreen
             side.Add(("GPS", o.Gps, () => o.Gps = !o.Gps));
             side.Add(("LABELS", o.Labels, () => o.Labels = !o.Labels));
             side.Add(("MOONS", o.Moons, () => o.Moons = !o.Moons));
+            side.Add(("SHIP ROUTES", o.Routes, () => o.Routes = !o.Routes));
+            side.Add(("COPY SHARE CODE", false, () => Toast(FleetRoutes.CopyCode(out _))));
+            side.Add(("IMPORT SHARE CODE", false, () => Toast(FleetRoutes.ImportClipboard(out _))));
             side.Add(("THEME: " + MapTheme.Current.Name.ToUpperInvariant(), false, () => Toast(MapScreen.NextTheme())));
         }
         float colW = 0;

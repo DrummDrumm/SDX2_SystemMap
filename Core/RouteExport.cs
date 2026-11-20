@@ -384,6 +384,7 @@ public static class RouteExport
                 case "eta": s.Eta = D(v); break;
                 case "msg": s.Msg = v; break;
                 case "target": s.Target = v; break;
+                case "fleet": { var f = v.Split(','); if (f.Length == 3) { s.Leading = true; s.Fleet = (int)D(f[0]); s.FleetShare = D(f[1]); s.FleetCap = D(f[2]); } break; }
             }
         }
         return s;
@@ -401,7 +402,7 @@ public static class RouteExport
         public readonly List<(V3 Pos, string From, string To)> Borders = new List<(V3, string, string)>();
     }
 
-    /// <summary>What the PB reports: state = idle | flying | braking | prograde | retrograde | arrived | override | stopped | error.</summary>
+    /// <summary>What the PB reports: state = idle | flying | braking | prograde | retrograde | approach | match | formation | arrived | override | stopped | error.</summary>
     public sealed class Status
     {
         public string State = "idle", Msg = "", Target = "";
@@ -413,6 +414,11 @@ public static class RouteExport
         /// <summary>The pilot took over a route: the PB has let go but holds the route until manual control is
         /// confirmed (or the route resumes).</summary>
         public bool Manual => State == "manual";
+        /// <summary>Leading a formation (the PB's lead command): the ships in it, the share of this ship's thrust the
+        /// slowest of them holds it to (0 = no limit) and the lowest speed cap among them (m/s, 0 = none).</summary>
+        public bool Leading; public int Fleet; public double FleetShare, FleetCap;
+        /// <summary>Holding a slot in someone's formation (the PB's form command).</summary>
+        public bool InFormation => State == "formation";
     }
 }
 
