@@ -174,8 +174,6 @@ Everything is kept in `%AppData%\SpaceEngineers\Storage\SDX2_SystemMap.ini` (the
   panel's last limits; the first pair of caps is the burn);
 - `PreviewLeft`, `PreviewSize` (0.5–1.5);
 - `FixSpeedometer` (on): the HUD speed dial shows Flip and Burn's real speed, so it doesn't flicker to 150 m/s;
-- `SteadyController` (on): the game stays in controller mode when it would switch to keyboard/mouse with no key, mouse
-  button, movement or scroll behind it (a phantom key from a driver or hotkey tool), so controller icons and menus don't flicker;
 - `Pip`, `PipCorner` (`TR`, `TL`, `BR`, `BL`), `PipSize` (0.5–2): the pinned picture-in-picture map (Alt+M, Q in the full map);
 - `SecondScreen` (off), `SecondScreenMonitor` (0 = the first screen that isn't the main one, else 1, 2...),
   `KeySecondScreen` (`Ctrl+Alt+M`): the [map on a second screen](#map-on-a-second-screen-touch);

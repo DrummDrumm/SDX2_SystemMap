@@ -34,6 +34,9 @@ public sealed class RoutePlan
     public double Distance, ClosingSpeed, LateralSpeed;
     public bool HasBurnPlan, TooFastToStop;
     public double PeakSpeed, BurnTime, CoastTime, BrakeTime, Eta;
+    /// <summary>Seconds the drives burn and brake in all, for the water: BurnTime and BrakeTime, plus on a curved leg the
+    /// slowing for each bend and the speeding up after it.</summary>
+    public double FuelBurn, FuelBrake;
     public double FlipAt, CoastAt;     // metres along the line where the coast starts and the flip (brake) starts
     public double StopDistance;        // metres needed to stop from the current closing speed
     public V3 Dir;
@@ -122,6 +125,7 @@ public sealed class RoutePlan
     /// </summary>
     private void SolveBurn()
     {
+        vAt = tAt = vPk = null; lead = 0;
         if (Curve != null && MaxAccel > 0.01) LimitCorners();
         double a = MaxAccel, b = B, u = ClosingSpeed, dist = Distance;
         double w = Math.Max(0, Math.Min(EndSpeed, MaxSpeed));
@@ -184,12 +188,29 @@ public sealed class RoutePlan
             FlipAt = Math.Max(CoastAt, dist - brkD);
         }
         Eta = BurnTime + CoastTime + BrakeTime;
+        FuelBurn = BurnTime; FuelBrake = BrakeTime;
+        if (vAt == null) return;
+        // a curved leg: the time by the speed each bend allows, where that is longer than the plain burn. The burn and
+        // the brake are the plain ones; the time held down for bends counts as coasting.
+        lead = turnTime;
+        double bent = tAt[tAt.Length - 1] + turnTime;
+        if (bent <= Eta) { vAt = tAt = vPk = null; return; }
+        Eta = bent;
+        PeakSpeed = 0;
+        for (int i = 1; i < vPk.Length; i++) PeakSpeed = Math.Max(PeakSpeed, vPk[i]);
+        BurnTime = Math.Min(BurnTime, Eta); BrakeTime = Math.Min(BrakeTime, Eta - BurnTime);
+        CoastTime = Eta - BurnTime - BrakeTime;
+        // the water counts every speeding up and slowing down along the bends, not only the first burn and the last brake
+        FuelBurn = turnTime; FuelBrake = 0;
+        for (int i = 1; i < vPk.Length; i++) { FuelBurn += (vPk[i] - vAt[i - 1]) / MaxAccel; FuelBrake += (vPk[i] - vAt[i]) / B; }
     }
 
     /// <summary>
     /// A curved leg's speed limit: the slowest bend the plain burn plan would take faster than it can turn
-    /// (<see cref="RouteCurve.CornerSpeed"/>). The plan then coasts at that speed (the autopilot itself only slows for
-    /// the bend it's at, so it's usually a little quicker).
+    /// (<see cref="RouteCurve.CornerSpeed"/>). Like the autopilot, the plan slows only for the bend it's at: each point
+    /// of the curve gets the speed its bend allows, lowered to what the burn can reach from the point before and the
+    /// brake can shed before the point after, and the time is summed between them. (One tight bend beside the dock
+    /// used to hold the whole leg to its speed: 52 hours for a 34,000 km flight that takes 20 minutes.)
     /// </summary>
     private void LimitCorners()
     {
@@ -201,7 +222,50 @@ public sealed class RoutePlan
             if (vPlan > vc) lim = Math.Min(lim, vc);
         }
         CornerSpeed = lim;
-        if (lim < MaxSpeed) MaxSpeed = Math.Max(lim, 1);
+        if (double.IsInfinity(lim)) return; // no bend binds: the plain burn plan
+
+        int n = Curve.Count;
+        double top = Math.Max(MaxSpeed, u);
+        var v = new double[n];
+        v[0] = u; v[n - 1] = Math.Max(0, Math.Min(EndSpeed, MaxSpeed));
+        for (int i = 1; i + 1 < n; i++)
+            v[i] = Math.Min(top, Math.Max(1, RouteCurve.CornerSpeed(RouteCurve.Radius(Curve[i - 1], Curve[i], Curve[i + 1]), a)));
+        for (int i = 1; i < n; i++) v[i] = Math.Min(v[i], Math.Sqrt(v[i - 1] * v[i - 1] + 2 * a * (cum[i] - cum[i - 1])));
+        for (int i = n - 2; i >= 0; i--) v[i] = Math.Min(v[i], Math.Sqrt(v[i + 1] * v[i + 1] + 2 * b * (cum[i + 1] - cum[i])));
+        if (v[0] < u - 0.5) return; // already too fast for the first bend: the plain plan's overshoot
+        var t = new double[n]; var pk = new double[n];
+        for (int i = 1; i < n; i++)
+        {
+            double ds = cum[i] - cum[i - 1], v0 = v[i - 1], v1 = v[i];
+            double vp = Math.Min(top, Math.Sqrt((2 * a * b * ds + b * v0 * v0 + a * v1 * v1) / (a + b)));
+            vp = Math.Max(vp, Math.Max(v0, v1));
+            double rest = Math.Max(0, ds - (vp * vp - v0 * v0) / (2 * a) - (vp * vp - v1 * v1) / (2 * b));
+            pk[i] = vp;
+            t[i] = t[i - 1] + (vp - v0) / a + (vp - v1) / b + (vp > 0.01 ? rest / vp : 0);
+        }
+        vAt = v; tAt = t; vPk = pk;
+    }
+
+    // a curved leg held down by its bends: the speed at each point of the curve, the time to it, and the top speed
+    // between it and the point before; lead is the time spent turning round first
+    private double[] vAt, tAt, vPk;
+    private double lead;
+
+    private double BentAlong(double time)
+    {
+        time -= lead;
+        if (time <= 0) return 0;
+        int n = tAt.Length;
+        if (time >= tAt[n - 1]) return Distance;
+        int i = 1;
+        while (i < n - 1 && tAt[i] < time) i++;
+        double a = MaxAccel, b = B, v0 = vAt[i - 1], v1 = vAt[i], vp = vPk[i], ds = cum[i] - cum[i - 1];
+        double x = time - tAt[i - 1], t1 = (vp - v0) / a, d1 = (vp * vp - v0 * v0) / (2 * a), d3 = (vp * vp - v1 * v1) / (2 * b);
+        double dc = Math.Max(0, ds - d1 - d3), tc = vp > 0.01 ? dc / vp : 0, s;
+        if (x <= t1) s = v0 * x + a * x * x / 2;
+        else if (x <= t1 + tc) s = d1 + vp * (x - t1);
+        else { x -= t1 + tc; s = d1 + dc + vp * x - b * x * x / 2; }
+        return cum[i - 1] + Math.Max(0, Math.Min(ds, s));
     }
 
     /// <summary>Sector changes along the line, sampled every ~1/600 of its length (and at least every 25 km).</summary>
@@ -270,6 +334,7 @@ public sealed class RoutePlan
         if (!HasBurnPlan) return Math.Min(Distance, Math.Max(0, ClosingSpeed) * t);
         double a = MaxAccel, b = B, u = Math.Max(0, ClosingSpeed);
         if (TooFastToStop) return Math.Min(Distance, u * t - b * t * t / 2);
+        if (vAt != null) return BentAlong(t);
         if (t <= BurnTime) return Math.Min(FlipAt, u * t + a * t * t / 2);
         t -= BurnTime;
         if (t <= CoastTime) return Math.Min(FlipAt, CoastAt + PeakSpeed * t);

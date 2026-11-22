@@ -256,3 +256,29 @@ Virtual Displays (its own `IN-GAME-TESTS.md` holds the detail)
       list is titled ADD WAYPOINT. With no route the list shows alone (no "pick a destination first" note). CLOSE
       hides the list until ROUTE PLAN is tapped again. Taps on the list don't reach the map; the side buttons move
       clear of it.
+
+- [ ] **Separate stops** (three ships flew into each other at one station's stop, 2026-11-20): send two or three
+  ships to the same station one after another. The second and third confirmation say "Another ship stops there: yours
+  stops 500 m to the side" (1 km for a place further out), and the ships come to rest apart. Also with a ship already
+  at rest at the stop and no route kept for it.
+- [ ] **Vesta's hills** (a frigate flew into them, 2026-11-20): from another sector, a route to Vesta Station. The
+  confirmation says it stops 3 km straight above it (a ground facility on Vesta); the route stays over Vesta's hills
+  (12 km from its centre) until it comes down from above the station. No "stop raised" line in the turn log.
+
+- [ ] **Routes stay with their ship**: set a destination in one ship, then take the seat of another. The second ship shows no route and a note says the route stays with the last one. A ship whose autopilot is already flying still shows its own route when you sit in it.
+- [ ] **Arrival time on a curved route**: plan a long parabolic route that leaves a dock (BlackWing to a station thousands of km away). The arrival time is minutes, close to the autopilot's own countdown, not tens of hours; the ship routes layer shows the same.
+
+## Water range ring
+
+- [ ] Plot a route that needs more water than the tanks hold (or drain the tanks to a few percent). A red ring labelled "WATER RANGE <distance>" appears round the ship on the side map and the full map, and the destination lies near or outside it.
+- [ ] Fill the tanks (or pick a nearer destination) so the route leaves more than 10 %: the ring goes away.
+- [ ] Press ENGAGE on the short-of-water route: the "Low water" pop-up asks before anything starts.
+- [ ] Parabolic route with several bends on a ship with small tanks: the WATER line and the pop-up now count the slowing and speeding up at each bend (the estimate is higher than for the straight flip-and-burn route).
+
+## Low-water brake (autopilot script)
+
+Recompile the programmable block first.
+
+- [ ] Fly a route with the tanks nearly empty (ENGAGE ANYWAY at the pop-up). While it burns, the autopilot flips and brakes to rest by itself and says "Low water: N left, about what stopping from X burns. Braking to a stop"; it ends at rest with the dampeners on and a little water left, not coasting dry at speed.
+- [ ] Fly a route with plenty of water: no low-water brake at any point, and it arrives as before.
+- [ ] `LowWater=0` in `[SDX2 Autopilot Config]`: the brake is off.

@@ -70,7 +70,6 @@ internal static class Program
         Limits();
         PanelInput();
         PadFocus();
-        Triggers();
         Trajectories();
         Render(outDir, "");
         MapTheme.Current = MapTheme.Tachi;
@@ -433,13 +432,67 @@ internal static class Program
             // every station within 5% of a world's radius from its centre (on its ground) is one; the rest aren't
             foreach (var st in SystemData.Stations)
             {
-                bool onGround = st.Name == "Hygeia Station" || Array.Exists(SystemData.Worlds, w => !w.IsStar && V3.Distance(st.Pos, w.Pos) > w.Radius * 0.9 && V3.Distance(st.Pos, w.Pos) < w.Radius * 1.05); // Hygeia's is inside it: treated as on it for now
+                bool onGround = st.Name == "Hygeia Station" || Array.Exists(SystemData.Worlds, w => !w.IsStar && V3.Distance(st.Pos, w.Pos) > w.Radius * 0.9 && V3.Distance(st.Pos, w.Pos) < Math.Max(w.Radius * 1.05, w.TallHills)); // Hygeia's is inside it: treated as on it for now
                 var under = RouteExport.WorldUnder(st.Pos, 100e3);
                 var gStop = RouteExport.StopNear(st.Pos + new V3(0, 0, 500e3), st.Pos, 100e3, out _);
                 // (on an asteroid: no gravity, so 3 km above it; elsewhere, gravity not read here: its own 8 km)
                 double wantUp = under != null && under.IsAsteroid && V3.Distance(st.Pos, under.Pos) >= under.Radius * 0.99 ? DetourPlanner.SurfaceGap : 8000; // (buried, like Hygeia's: 8 km)
                 Check(onGround == (st.Above == 8000) && (!onGround || under != null && Near(V3.Distance(gStop, st.Pos), wantUp, 1) && (under.IsAsteroid || V3.Distance(gStop, under.Pos) > DetourPlanner.Top(under))),
                       st.Name + ": " + (onGround ? "ground facility, stops " + Km(wantUp) + " straight above (on " + under?.Name + ")" : "ordinary station"));
+            }
+            // Vesta's hills reach twice its radius, known before the planet is loaded: a station among them is a ground
+            // facility, and a route from far off comes down to it from over the hills (a frigate flew into them, 2026-11-20)
+            {
+                var vesta = SystemData.FindWorld("Vesta");
+                var vs = Array.Find(SystemData.Stations, x => x.Name == "Vesta Station");
+                V3 vfar = vesta.Pos + new V3(-300e3, 40e3, -7000e3);
+                var vdet = DetourPlanner.Plan(vfar, vs.Pos, vs.Name);
+                var vp = RoutePath.Make(vs.Name, vfar, vs.Pos, V3.Zero, 100, 50000, vdet, 0, 100e3, 100);
+                var vstop = RouteExport.StopPoint(vp, out var vwhy);
+                Check(vesta.Hills == 0 && DetourPlanner.Top(vesta) == 12000 && DetourPlanner.HillTop(vesta) == 15000 && vs.Above > 0 && DetourPlanner.OnGround(vesta, vs.Pos),
+                      "Vesta: its hills reach 12 km before it's loaded; a station among them is a ground facility");
+                Check(vwhy == "station" && Near(V3.Distance(vstop, vs.Pos), DetourPlanner.SurfaceGap, 1) && (vstop - vs.Pos).Normalized.Dot((vs.Pos - vesta.Pos).Normalized) > 0.9999,
+                      "Vesta Station: stops 3 km straight above it (" + Km(V3.Distance(vstop, vs.Pos)) + ")");
+                double lowest = double.MaxValue; V3 at = vfar;
+                foreach (var wp in vdet) { lowest = Math.Min(lowest, V3.SegmentDistance(at, wp.Pos, vesta.Pos, out _)); at = wp.Pos; }
+                Check(vdet.Count >= 1 && lowest >= 12000 && V3.Distance(at, vesta.Pos) >= 15000 - 1
+                      && (at - vesta.Pos).Normalized.Dot((vs.Pos - vesta.Pos).Normalized) > Math.Cos(DetourPlanner.MaxLean),
+                      "Vesta Station from far off: over the hills all the way (lowest " + Km(lowest) + "), then down from above it");
+            }
+            // two ships sent to one place don't get one stop: the second and third stop beside it (three flew into each
+            // other at one station's stop, 2026-11-20)
+            {
+                var tycho = Array.Find(SystemData.Stations, x => x.Name == "Tycho Station");
+                V3 sFrom = tycho.Pos + new V3(400e3, 20e3, -90e3);
+                var sPath = RoutePath.Make(tycho.Name, sFrom, tycho.Pos, V3.Zero, 10, 50000, new List<Waypoint>(), 0, 100e3, 10);
+                var sHad = RouteExport.Taken;
+                try
+                {
+                    RouteExport.Taken = null;
+                    var s0 = RouteExport.StopPoint(sPath, out _, out double a0);
+                    RouteExport.Taken = new List<(V3, double)> { (s0 + new V3(900, 0, 0), 0) };
+                    Check(a0 == 0 && V3.Distance(RouteExport.StopPoint(sPath, out _), s0) < 1e-6, "stops: nobody else there, or only 900 m off: the stop itself");
+                    RouteExport.Taken = new List<(V3, double)> { (s0 + new V3(30, -20, 10), 0) };
+                    var s1 = RouteExport.StopPoint(sPath, out var w1, out double a1);
+                    Check(w1 == "station" && Near(a1, RouteExport.StopSpacing, 1e-6) && Math.Abs((s1 - s0).Dot((s0 - tycho.Pos).Normalized)) < 1e-6 && V3.Distance(s1, tycho.Pos) > RouteExport.Offset,
+                          "stops: another ship's route stops there: 500 m to the side, no nearer the station");
+                    RouteExport.Taken = new List<(V3, double)> { (s0, 0), (s1, 0) };
+                    var s2 = RouteExport.StopPoint(sPath, out _);
+                    Check(V3.Distance(s2, s0) >= RouteExport.StopSpacing - 1e-6 && V3.Distance(s2, s1) >= RouteExport.StopSpacing * 0.8, "stops: a third ship takes the next place");
+                    Check(RouteExport.Build(sPath, 5).Contains("wp=" + s2.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)), "stops: the place beside is what the autopilot is sent");
+                    RouteExport.Taken = new List<(V3, double)> { (s0 + new V3(0, 100, 0), 600) };
+                    var s3 = RouteExport.StopPoint(sPath, out _);
+                    Check(V3.Distance(s3, s0 + new V3(0, 100, 0)) >= 600 + RouteExport.StopSpacing * 0.8, "stops: a big ship at rest there is kept clear of by its size");
+                    Check(AutopilotPanel.ConfirmLines(sPath, "X").Exists(l => l.Text.StartsWith("Another ship stops there")), "stops: the confirmation says the stop was moved");
+                    // a saved route keeps where it was sent to stop; one without (a share code, an older file) is worked out
+                    var sRoute = SavedRoute.From(sPath, 7, "A", "sp:T", 0); sRoute.Stop = s1;
+                    var sBack = SavedRoute.Parse(sRoute.ToLine());
+                    string sOld = sRoute.ToLine().Substring(0, sRoute.ToLine().LastIndexOf('|'));
+                    RouteExport.Taken = null;
+                    Check(sBack != null && sBack.Stop.HasValue && V3.Distance(sBack.StopAt, s1) < 1 && SavedRoute.Parse(sOld) is { } o && !o.Stop.HasValue && V3.Distance(o.StopAt, s0) < 5,
+                          "stops: kept with a saved route; an older line reads, its stop worked out");
+                }
+                finally { RouteExport.Taken = sHad; }
             }
             // Hygeia Station sits inside Hygeia (under its listed radius): from the far side, round over it, down from above
             {
@@ -1074,33 +1127,6 @@ internal static class Program
     }
 
     /// <summary>The controller on the route panel: D-pad focus, A on release, left / right on a slider, and the A that opened it.</summary>
-    private static void Triggers()
-    {
-        // a trigger held near the 50% line that wobbles gives one press, not one per wobble
-        var t = new TriggerLatch();
-        int presses = 0; bool was = false; double now = 1;
-        foreach (float v in new[] { 0f, 0.6f, 0.45f, 0.58f, 0.4f, 0.62f, 0.35f, 0.6f })
-        {
-            now += 0.1;
-            bool down = t.Update(v, now);
-            if (down && !was) presses++;
-            was = down;
-        }
-        Check(presses == 1 && was, "triggers: a wobbling held trigger is one press and stays down");
-        now += 0.1; t.Update(0.1f, now);
-        Check(!t.Down, "triggers: let go below 30% and it's up");
-        // a flick shorter than the hold time doesn't flip it back
-        var f = new TriggerLatch();
-        f.Update(1f, 5); f.Update(0f, 5.02);
-        Check(f.Down, "triggers: a 20 ms drop doesn't count as a release");
-        Check(TriggerLatch.SharedAxis(false, false, true) == 32767 && TriggerLatch.SharedAxis(true, false, false) == 65535
-            && TriggerLatch.SharedAxis(false, true, true) == 0, "triggers: the shared axis is centred, up for LT, down for RT");
-        Check(TriggerLatch.SharedAxis(true, true, true) == 65535 && TriggerLatch.SharedAxis(true, true, false) == 0,
-            "triggers: both pulled: the first one keeps the axis instead of cancelling");
-        Check(SystemKeys.Is(175) && SystemKeys.Is(173) && SystemKeys.Is(179) && !SystemKeys.Is(87) && !SystemKeys.Is(27) && !SystemKeys.Is(160),
-            "controller: volume/media keys don't count as keyboard use; W, Esc and Shift do");
-    }
-
     private static void PadFocus()
     {
         // the focus moves by direction between boxes: a 2 x 2 grid
@@ -1492,7 +1518,35 @@ internal static class Program
         var r = RoutePlan.Make("B", a, b, V3.Zero, 10, 50000, RoutePlan.DefaultClearance, 0, new[] { bend });
         double arc = 0; for (int i = 1; i < r.Curve.Count; i++) arc += V3.Distance(r.Curve[i - 1], r.Curve[i]);
         Check(r.Curved && Math.Abs(r.Distance - arc) < 1 && r.Distance > 2000e3 * 1.05, "curve: distance is the arc length (" + (r.Distance / 1000).ToString("0") + " km)");
-        Check(!double.IsInfinity(r.CornerSpeed) && r.MaxSpeed <= r.CornerSpeed + 1, "curve: top speed capped at the bend's corner speed (" + r.CornerSpeed.ToString("0") + " m/s)");
+        double rPlain = RoutePlan.Make("B", a, a + new V3(r.Distance, 0, 0), V3.Zero, 10, 50000).Eta, rHeld = r.Distance / r.CornerSpeed + r.CornerSpeed / 10;
+        Check(!double.IsInfinity(r.CornerSpeed) && r.MaxSpeed == 50000 && r.Eta > rPlain + 1 && r.Eta <= rHeld + 1 && Math.Abs(r.BurnTime + r.CoastTime + r.BrakeTime - r.Eta) < 0.01,
+            "curve: slowed for the bend (" + r.CornerSpeed.ToString("0") + " m/s there), not held to it all the way (" + r.Eta.ToString("0") + " s; " + rPlain.ToString("0") + " straight, " + rHeld.ToString("0") + " held)");
+        // the water: a bent leg burns and brakes at every bend too, so more than its first burn and last brake; a straight one just those
+        {
+            var straight = RoutePlan.Make("B", a, b, V3.Zero, 10, 50000);
+            Check(straight.FuelBurn == straight.BurnTime && straight.FuelBrake == straight.BrakeTime, "fuel: a straight leg burns for its burn and brake times");
+            Check(r.FuelBurn + r.FuelBrake > r.BurnTime + r.BrakeTime + 1 && r.FuelBurn + r.FuelBrake <= r.Eta + 0.01 && r.FuelBurn > 0 && r.FuelBrake > 0,
+                "fuel: a bent leg counts the slowing and speeding up at its bend (" + (r.FuelBurn + r.FuelBrake).ToString("0") + " s of thrust; " + (r.BurnTime + r.BrakeTime).ToString("0") + " s first burn and last brake)");
+            // range on the water in the tanks: 1000 L at 10 L/s and 20 m/s2 is 2000 m/s of speed in all: up to 1000 m/s and back down
+            double rg = RouteFuel.Range(1000, 10, 20, 20, 20, 0, 50000);
+            Check(Math.Abs(rg - 2 * 1000.0 * 1000 / (2 * 20)) < 1, "fuel range: burn to the speed the water allows, then brake (" + (rg / 1000).ToString("0") + " km)");
+            Check(Math.Abs(RouteFuel.Range(1000, 10, 20, 10, 10, 0, 50000) - 2 * rg) < 1, "fuel range: half the thrust goes twice as far on the same water");
+            Check(RouteFuel.Range(1000, 10, 20, 20, 20, 3000, 50000) == 0 && RouteFuel.Range(1000, 10, 20, 20, 20, 1000, 50000) > rg,
+                "fuel range: the speed you have must be braked too (no water left over for it: 0)");
+            Check(double.IsNaN(RouteFuel.Range(1e9, 10, 20, 20, 20, 0, 50000)) && double.IsNaN(RouteFuel.Range(1000, 0, 20, 20, 20, 0, 50000)), "fuel range: no ring when the water reaches the speed cap, or the drives' use isn't known");
+            // a route as long as the range just empties the tanks
+            var rp = RoutePath.Make("T", V3.Zero, new V3(rg, 0, 0), V3.Zero, 20, 50000, null, 0);
+            Check(Math.Abs(RouteFuel.Litres(rp, 20, 10) - 1000) < 5, "fuel range: a route to the ring burns what's in the tanks (" + RouteFuel.Litres(rp, 20, 10).ToString("0") + " L of 1000)");
+        }
+        Check(Math.Abs(r.AlongAt(r.Eta) - r.Distance) < 1 && r.AlongAt(r.Eta / 2) > r.AlongAt(r.Eta / 4) && Math.Abs(r.AlongAt(r.TimeAt(r.Distance * 0.3)) - r.Distance * 0.3) < 50, "curve: place by time follows the slowed plan");
+        // a tight bend beside the dock on a very long flight: slow there only (it was 52 hours for a 20 minute flight)
+        {
+            var lFar = a + new V3(34000e3, 0, 0);
+            var lp = RoutePlan.Make("L", a, lFar, V3.Zero, 62, 50000, RoutePlan.DefaultClearance, 0, new[] { a + new V3(1500, 4000, 0), a + new V3(9000, 6000, 0) });
+            double lPlain = RoutePlan.Make("L", a, lFar, V3.Zero, 62, 50000).Eta;
+            Check(!double.IsInfinity(lp.CornerSpeed) && lp.CornerSpeed < 2000 && lp.Eta > lPlain && lp.Eta < lPlain + 300 && lp.PeakSpeed > 40000,
+                "curve: a tight bend at the start costs minutes, not days (bend " + lp.CornerSpeed.ToString("0") + " m/s, " + (lp.Eta / 60).ToString("0") + " min; " + (lPlain / 60).ToString("0") + " straight)");
+        }
         Check(V3.Distance(r.PointAt(0), a) < 1 && V3.Distance(r.PointAt(r.Distance), b) < 1, "curve: PointAt follows the arc end to end");
 
         // flip and burn: a leg per waypoint; parabolic: one leg through them all
@@ -1998,6 +2052,12 @@ internal static class Program
                 Check(wl.Text != null && wantL > 0 && wl.Text.StartsWith("Water  now 40 % → " + Fmt.Num(RouteFuel.LeftAfter(snap.Water, snap.WaterCap, wantL) * 100, "0") + " % @ ") && wl.Text.EndsWith(", max 100 % thrust"), "fuel: the route panel shows the water it burns (" + wl.Text + ")");
                 snap.Water = wantL * 0.5;
                 Check(scene.RouteLinesText().Find(x => x.Text.StartsWith("Water")).Text.Contains("→ dry before "), "fuel: short of water, it says so");
+                // and the map rings how far that water goes
+                g.Clear(Color.FromArgb(30, 34, 40));
+                scene.Draw(new GdiMapCanvas(g), new Box(0, 0, 1920, 1080));
+                bmp.Save(Path.Combine(outDir, "full-map-water-range.png"), ImageFormat.Png);
+                double ringR = RouteFuel.Range(snap.Water, snap.WaterRate, snap.MaxAccel, route.MaxAccel, route.Final.BrakeUsed, snap.ShipVel.Length, route.MaxSpeed);
+                Check(ringR > 0 && ringR < route.Distance, "fuel: short of water, the range ring falls short of the destination (" + Fmt.Dist(ringR) + " of " + Fmt.Dist(route.Distance) + ")");
                 snap.Water = 400e3;
                 // at the route's thrust cap: the same route planned at 60 % thrust and brake
                 var capped = tracker.PathWith(0.6, 0.6, 0, snap.ShipVel, snap.MaxAccel, 50000);

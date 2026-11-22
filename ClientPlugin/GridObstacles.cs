@@ -38,11 +38,18 @@ internal static class GridObstacles
         next = now + Interval;
         list.Clear();
         foreach (var s in SystemData.Stations) list.Add(SystemData.Obstacle(s.Name, s.Pos, StationRadius, station: true));
-        try { AddGrids(); } catch (Exception e) { Plugin.LogThrottled("grid obstacles: " + e.Message); }
+        var taken = new List<(V3 Pos, double R)>();
+        try { AddGrids(taken); } catch (Exception e) { Plugin.LogThrottled("grid obstacles: " + e.Message); }
         DetourPlanner.Merge(list);
+        // where a route's stop is moved aside: your other ships' stops, and your and your faction's ships at rest
+        FleetRoutes.Stops(taken, AutopilotLink.FlownShip);
+        RouteExport.Taken = taken;
     }
 
-    private static void AddGrids()
+    /// <summary>A ship slower than this (m/s) is at rest: a route doesn't stop on it.</summary>
+    private const double AtRest = 5;
+
+    private static void AddGrids(List<(V3 Pos, double R)> ships)
     {
         var session = MySession.Static;
         if (session == null) return;
@@ -52,9 +59,16 @@ internal static class GridObstacles
         var seen = new HashSet<long>();
         foreach (var e in MyEntities.GetEntities())
         {
-            if (!(e is MyCubeGrid g) || !g.IsStatic || g.Physics == null || g.IsPreview || g.MarkedForClose || g.BlocksCount < MinBlocks) continue;
+            if (!(e is MyCubeGrid g) || g.Physics == null || g.IsPreview || g.MarkedForClose || g.BlocksCount < MinBlocks) continue;
             if (g == ship) continue; // sitting in the base's own seat: it's not in your way
             if (!Ours(g, me, myFaction, session)) continue;
+            if (!g.IsStatic)
+            {
+                // a ship at rest (not one joined to yours: docked, or on a rotor or piston of it)
+                if (g.Physics.LinearVelocity.Length() < AtRest && (ship == null || !MyCubeGridGroups.Static.Physical.HasSameGroup(ship, g)))
+                { var sv = g.PositionComp.WorldVolume; ships.Add((new V3(sv.Center.X, sv.Center.Y, sv.Center.Z), sv.Radius)); }
+                continue;
+            }
             seen.Add(g.EntityId);
             if (!HasBaseCore(g)) continue;
             var v = g.PositionComp.WorldVolume;

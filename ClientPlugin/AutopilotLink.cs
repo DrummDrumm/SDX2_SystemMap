@@ -45,12 +45,26 @@ internal static class AutopilotLink
 
     public static void Reset()
     {
-        autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; sentIds.Clear(); lastCommand = null; sentAt = -1; nextScan = 0;
+        autopilots.Clear(); Status = null; Route = null; gridId = 0; lastId = 0; shipWas = null; sentIds.Clear(); lastCommand = null; sentAt = -1; nextScan = 0;
     }
 
     /// <summary>The ship you fly (0: none), and whether its autopilot has answered and isn't on a route.</summary>
     public static long FlownShip => ControlledGrid()?.EntityId ?? 0;
     public static bool FlownIdle => Status != null && !Pending && !Status.Flying && !Status.Manual;
+
+    /// <summary>
+    /// You took a seat in another ship than the one you last flew (not another seat of the same ship, or one on a rotor
+    /// or piston part of it; a ship docked to it is another ship). True once, as it happens.
+    /// </summary>
+    public static bool ChangedShip()
+    {
+        var g = ControlledGrid();
+        if (g == null || g == shipWas) return false;
+        var was = shipWas; shipWas = g;
+        if (was == null || was.MarkedForClose) return false;
+        try { return !MyCubeGridGroups.Static.Mechanical.HasSameGroup(was, g); } catch { return true; }
+    }
+    private static MyCubeGrid shipWas;
 
     private static MyCubeGrid ControlledGrid() =>
         Sandbox.Game.World.MySession.Static?.ControlledEntity?.Entity?.GetTopMostParent() as MyCubeGrid;

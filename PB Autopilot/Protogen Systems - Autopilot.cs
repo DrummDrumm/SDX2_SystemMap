@@ -91,6 +91,9 @@
 //      BurnLead=2        seconds the braking burn starts early at speed (fading out slow), so it needs a little less thrust
 //      TakeoverAfter=5   seconds of your input on a route before it pauses and asks; shorter, it takes the ship back.
 //                        Also held back before each flip, so a short takeover doesn't cost the stop
+//      LowWater=1        0 = off. On a route, when the tanks are down to about what stopping from the ship's speed
+//                        burns (learned from what the drives use as they burn), it brakes to rest there and then,
+//                        rather than fly on and run dry at speed
 //      TurnLog=1         0 = off. While flying, a line every 3 s in a [SDX2 Turn Log] section of Custom Data (the last
 //                        100 kept): clock time, mode, point, speed, which way the drives face against the travel
 //                        (+1 along it, -1 braking), the turn rate asked for, what the gyros are set to, the ship's real
@@ -106,9 +109,13 @@ readonly List<IMyGyro> gyros = new List<IMyGyro>();
 readonly List<IMyThrust> thrusters = new List<IMyThrust>(), drives = new List<IMyThrust>();
 readonly List<Nav.Wp> route = new List<Nav.Wp>();
 readonly Nav.VelocityEstimator velocity = new Nav.VelocityEstimator();
+// low water: the drives' tanks, what the drives burn (learned as they burn), and when it was last looked at
+readonly List<IMyGasTank> tanks = new List<IMyGasTank>();
+readonly Nav.WaterMeter water = new Nav.WaterMeter();
+double waterAt, flownAt; float lastThr;
 readonly Nav.Settings settings = new Nav.Settings();
 string target = "", lastCd, state = "idle", msg = "", lastStatus;
-bool wasOver;
+bool wasOver, lowWater = true;
 int lastId, idx, runs;
 double time, routeMax = 50000, startedAt, thrustCap = 1, brakeCap = 1;
 // FULL STOP hands over to the dampeners below this speed (m/s)
@@ -314,6 +321,7 @@ void ReadSettings(string cd)
         else if (k == "TakeoverAfter") settings.Reserve = takeoverAfter = Math.Max(0, Math.Min(v, 60));
         else if (k == "BurnLead") settings.BurnLead = Math.Max(0, Math.Min(v, 30));
         else if (k == "TurnLog") logOn = v != 0;
+        else if (k == "LowWater") lowWater = v != 0;
     }
 }
 
@@ -321,7 +329,9 @@ void ReadSettings(string cd)
 
 bool Blocks()
 {
-    controllers.Clear(); gyros.Clear(); thrusters.Clear(); drives.Clear();
+    controllers.Clear(); gyros.Clear(); thrusters.Clear(); drives.Clear(); tanks.Clear();
+    // the drives' water: SDX2's water tanks, and the vanilla hydrogen tanks it fills with water
+    GridTerminalSystem.GetBlocksOfType(tanks, b => b.IsSameConstructAs(Me) && b.IsFunctional && (b.BlockDefinition.SubtypeId.Contains("Water") || b.BlockDefinition.SubtypeId.Contains("Hydrogen")));
     GridTerminalSystem.GetBlocksOfType(controllers, b => b.IsSameConstructAs(Me) && b.IsFunctional && b.CanControlShip);
     GridTerminalSystem.GetBlocksOfType(gyros, b => b.IsSameConstructAs(Me) && b.IsFunctional);
     GridTerminalSystem.GetBlocksOfType(thrusters, b => b.IsSameConstructAs(Me) && b.IsFunctional);
@@ -371,7 +381,7 @@ void Engage()
     c.DampenersOverride = false; // dampeners on = the pilot taking over
     mode = "route";
     flying = true; paused = false; handStart = -1; state = "flying"; msg = Heading(route[idx]); startedAt = time;
-    velocity.Reset();
+    velocity.Reset(); water.Reset(); waterAt = flownAt = time; lastThr = 0;
     settings.Observed = 0; settings.Stuck = 0;
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
     Log("engage route to " + target + ", point " + (idx + 1) + " of " + route.Count, true);
@@ -679,6 +689,22 @@ void Fly()
     foreach (var t in drives) if (t.IsWorking) thrust += t.MaxEffectiveThrust;
     if (mass <= 0 || thrust <= 0) { Release("error", "No working drives", true); return; }
     double aFull = thrust / mass; // the route panel's caps are shares of this (burn, brake)
+    // low water (a route only; LowWater=0 turns it off): every 2 s, what the tanks hold against what stopping from this
+    // speed burns. Down to that with a little over, it brakes to rest now, while it still can
+    water.Burnt(lastThr, time - flownAt); flownAt = time;
+    if (mode == "route" && lowWater && tanks.Count > 0 && time - waterAt >= 2)
+    {
+        waterAt = time;
+        double litres = 0;
+        foreach (var k in tanks) litres += k.FilledRatio * k.Capacity;
+        if (water.Low(litres, v.Length(), aFull))
+        {
+            string why = "Low water: " + Nav.Litres(litres) + " left, about what stopping from " + Nav.Kms(v.Length()) + " burns. Braking to a stop";
+            Turn("brake");
+            if (flying) { msg = why; Log(why, true); lastStatus = null; WriteStatus(); }
+            return;
+        }
+    }
     var drive = drives[0].WorldMatrix.Backward; // thrusters push the grid along their Backward
     // learn how fast the ship really turns (weak RCS gyros), so it flips early enough
     if (last.W.Length() >= settings.TurnRate * 0.99 && !settings.Kicking)
@@ -794,6 +820,7 @@ void Fly()
     // really changes: unrounded, nearly every run sent one update per drive and per gyro.
     float thr = Nav.Throttle(last.Throttle);
     foreach (var t in drives) t.ThrustOverridePercentage = thr;
+    lastThr = thr;
     curP = p; curV = v; curDrive = drive; curAcc = drive * (thr * aFull); curRun = runs; // what a formation is told
     foreach (var gy in gyros)
     {
@@ -1478,6 +1505,40 @@ public static class Nav
     /// True speed: above the vanilla limit Flip and Burn moves the grid itself (physics velocity stays capped), so it
     /// comes from position over the last ~2 s; below it, from physics.
     /// </summary>
+    public static string Litres(double l) { return l >= 1000 ? (l / 1000).ToString("0.0") + " kL" : l.ToString("0") + " L"; }
+    public static string Kms(double v) { return v >= 1000 ? (v / 1000).ToString("0.0") + " km/s" : v.ToString("0") + " m/s"; }
+
+    /// <summary>
+    /// What the drives burn, learned in flight: the litres the tanks lose against the seconds of full thrust flown
+    /// (Burnt each run, Low every couple of seconds with the tanks' litres). A m/s of speed costs Rate / aFull litres,
+    /// so stopping from v takes v / aFull * Rate. Low: the tanks hold no more than that and Reserve over.
+    /// </summary>
+    public class WaterMeter
+    {
+        /// <summary>Kept over what the stop needs (the flip burns nothing, but the stop is never exact).</summary>
+        public const double Reserve = 1.1;
+        /// <summary>Seconds of full thrust, and litres, seen before the rate is trusted.</summary>
+        public const double MinSeconds = 5, MinLitres = 1;
+        /// <summary>Slower than this (m/s) it never brakes for water: the dampeners can stop that.</summary>
+        public const double MinSpeed = 100;
+        double last = -1, pending, secs, used;
+        /// <summary>Litres a second at full thrust (0 = not known yet).</summary>
+        public double Rate { get { return secs >= MinSeconds && used >= MinLitres ? used / secs : 0; } }
+        public void Reset() { last = -1; pending = secs = used = 0; }
+        /// <summary>The drives ran at this throttle (0..1) for dt seconds.</summary>
+        public void Burnt(double throttle, double dt) { if (throttle > 0 && dt > 0 && dt < 5) pending += throttle * dt; }
+        /// <summary>The tanks hold this now; whether that is down to what stopping from speed burns.</summary>
+        public bool Low(double litres, double speed, double aFull)
+        {
+            // tanks filled since (docked, or a transfer): that stretch says nothing about the drives
+            if (last >= 0 && litres <= last) { secs += pending; used += last - litres; }
+            pending = 0; last = litres;
+            double rate = Rate;
+            if (rate <= 0 || aFull <= 0 || speed < MinSpeed) return false;
+            return litres <= speed / aFull * rate * Reserve;
+        }
+    }
+
     public class VelocityEstimator
     {
         readonly Queue<Vector3D> pos = new Queue<Vector3D>();

@@ -92,7 +92,6 @@ public class Plugin : IPlugin
         {
             harmony = new Harmony(Id);
             harmony.PatchAll(typeof(Plugin).Assembly);
-            TriggerFix.Apply(harmony);
             DestinationView.Init();
         }
         catch (Exception e) { Log("patching failed, the map won't draw: " + e); }
@@ -102,7 +101,6 @@ public class Plugin : IPlugin
     {
         try
         {
-            ControllerGuard.Hook();
             if (Sandbox.Game.World.MySession.Static == null) return;
             CheckShip();
             SettingsScreen.CheckHotkey();

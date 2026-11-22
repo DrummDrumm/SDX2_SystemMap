@@ -135,6 +135,7 @@ public sealed partial class MapScene
         if (Opt.Routes) OtherRoutes();
         if (Original != null && Original.Length > 1) OriginalRoute();
         if (Path != null) PathLines();
+        if (Path != null) WaterRange();
         TrackLines();
         AsteroidMarkers();
         Ship();
@@ -1396,6 +1397,29 @@ public sealed partial class MapScene
         c.Rect(b.Right - len, b.Y, len, w, col); c.Rect(b.Right - w, b.Y, w, len, col);
         c.Rect(b.X, b.Bottom - w, len, w, col); c.Rect(b.X, b.Bottom - len, w, len, col);
         c.Rect(b.Right - len, b.Bottom - w, len, w, col); c.Rect(b.Right - w, b.Bottom - len, w, len, col);
+    }
+
+    /// <summary>
+    /// The water range ring: when the route would leave less than <see cref="RouteFuel.WarnBelow"/> in the tanks (or
+    /// run them dry), a dashed ring round the ship at the distance the water takes it (<see cref="RouteFuel.Range"/>),
+    /// so a destination near or outside it shows as out of reach.
+    /// </summary>
+    private void WaterRange()
+    {
+        if (!Snap.HasShip || !(Snap.WaterRate > 0) || !(Snap.WaterCap > 0) || !(Snap.MaxAccel > 0)) return;
+        double used = double.IsNaN(Snap.WaterUse) ? RouteFuel.Litres(Path, Snap.MaxAccel, Snap.WaterRate) : Snap.WaterUse;
+        if (!RouteFuel.Low(Snap.Water, Snap.WaterCap, used)) return;
+        double r = RouteFuel.Range(Snap.Water, Snap.WaterRate, Snap.MaxAccel, Path.MaxAccel, Path.Final.BrakeUsed, Snap.ShipVel.Length, Path.MaxSpeed);
+        if (double.IsNaN(r) || r < 1) return;
+        double depth = Cam.Depth(Snap.ShipPos);
+        if (depth < Cam.Near || !P(Snap.ShipPos, out var x, out var y)) return;
+        float pr = (float)(r * Cam.PixelsPerMetre(depth));
+        if (pr < 8 * u || pr > 6 * Math.Max(view.W, view.H)) return;
+        var col = WarnCol;
+        float w = Math.Max(1f, 1.2f * u);
+        ScreenCircle(x, y, pr, w, col.WithAlpha(0.85f), 128);
+        DashedRing3(Snap.ShipPos, r, 120, w, col.WithAlpha(0.45f), 3, 2);
+        if (Opt.Labels) Label("WATER RANGE " + Fmt.Dist(r), x, y - pr, 2, col, 30, 10 * u);
     }
 
     /// <summary>A horizontal circle drawn as dashes: on segments, then off segments.</summary>

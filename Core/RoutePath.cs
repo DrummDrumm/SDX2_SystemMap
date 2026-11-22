@@ -31,7 +31,7 @@ public static class DetourPlanner
     public const double Slack = 1.15;
 
     /// <summary>Above this distance from a world's centre a point is clear of its ground (hills reach a few % of the radius).</summary>
-    public static double Top(SystemData.World w) => !w.IsObstacle && w.Hills > w.Radius ? w.Hills : w.Radius * (w.IsObstacle ? 1.05 : 1.1);
+    public static double Top(SystemData.World w) => w.IsObstacle ? w.Radius * 1.05 : w.Hills > w.Radius ? w.Hills : Math.Max(w.Radius * 1.1, w.TallHills);
 
     /// <summary>A pick of the world itself (its centre), not of a point on it: a route there stops at the clearance and never goes round it.</summary>
     public static bool IsCore(SystemData.World w, V3 p) => V3.Distance(p, w.Pos) < w.Radius * 0.5 && !AtGroundFacility(p);
@@ -276,7 +276,7 @@ public static class DetourPlanner
     }
 
     /// <summary>How far from a world's centre a leg low over its ground is kept: over its highest hills (<see cref="Top"/>), 5% more.</summary>
-    public static double HillTop(SystemData.World w) => !w.IsObstacle && w.Hills > w.Radius ? w.Hills + SurfaceGap : Top(w) * 1.05;
+    public static double HillTop(SystemData.World w) => !w.IsObstacle && (w.Hills > w.Radius || w.TallHills > w.Radius) ? Top(w) + SurfaceGap : Top(w) * 1.05;
 
     /// <summary>Largest angle (rad, round the world's centre) between points of a hop over the hills: the legs between stay over Top.</summary>
     private const double HillStep = 0.5;

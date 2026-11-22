@@ -92,7 +92,6 @@ public sealed class MapSettings
         SDX2_SystemMap.BurnGuide.NoseOverride = NoseOverride;
     }
     /// <summary>Keep the game on controller mode (glyphs, menus) when it would flip to keyboard/mouse with no key, button, movement or scroll behind it.</summary>
-    public bool SteadyController = true;
     /// <summary>PiP corner: TR, TL, BR or BL.</summary>
     public string PipCorner = "TR";
     /// <summary>PiP size factor (0.5 to 2).</summary>
@@ -184,7 +183,6 @@ public sealed class MapSettings
                     case "FixSpeedometer": s.FixSpeedometer = B(v, true); break;
                     case "BurnGuide": s.BurnGuide = B(v, true); break;
                     case "HideCrosshair": s.HideCrosshair = B(v, false); break;
-                    case "SteadyController": s.SteadyController = B(v, true); break;
                     case "PipCorner": s.PipCorner = SideLayout.Corner(v) ?? "TR"; break;
                     case "PipSize": s.PipSize = (float)D(v, 1); break;
                     case "DestView": s.DestView = B(v, true); break;
@@ -273,7 +271,7 @@ public sealed class MapSettings
         L("KeyMap", KeyMap); L("KeyAutopilot", KeyAutopilot); L("KeyPin", KeyPin); L("KeySteer", KeySteer); L("KeySettings", KeySettings); L("KeyCursor", KeyCursor); L("KeyPanel", KeyPanel); L("KeySecondScreen", KeySecondScreen); L("PanelRight", PanelRight);
         L("SecondScreen", SecondScreen); L("SecondScreenMonitor", SecondScreenMonitor);
         L("OnlyInCockpit", OnlyInCockpit); L("FollowHeading", FollowHeading); L("ShipIconFromShip", ShipIconFromShip); L("ShipIconSide", ShipIconSide); L("PerShip", PerShip); L("Ultra", Ultra); L("DefaultGridKm", DefaultGridKm); L("ShowMapWithNav", ShowMapWithNav); L("KeepNavOpen", KeepNavOpen); L("PreviewLeft", PreviewLeft); L("PreviewSize", PreviewSize); L("Theme", Theme);
-        L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("BurnGuide", BurnGuide); L("HideCrosshair", HideCrosshair); L("SteadyController", SteadyController); L("PipCorner", PipCorner); L("PipSize", PipSize); L("DestView", DestView); L("DestViewCorner", DestViewCorner); L("DestViewSize", DestViewSize); L("DestViewRangeKm", DestViewRangeKm); L("DestViewReplacesMap", DestViewReplacesMap); L("FeedNoise", FeedNoise); L("HudX", HudX); L("HudY", HudY); L("HudSize", HudSize);
+        L("Pip", Pip); L("FixSpeedometer", FixSpeedometer); L("BurnGuide", BurnGuide); L("HideCrosshair", HideCrosshair); L("PipCorner", PipCorner); L("PipSize", PipSize); L("DestView", DestView); L("DestViewCorner", DestViewCorner); L("DestViewSize", DestViewSize); L("DestViewRangeKm", DestViewRangeKm); L("DestViewReplacesMap", DestViewReplacesMap); L("FeedNoise", FeedNoise); L("HudX", HudX); L("HudY", HudY); L("HudSize", HudSize);
         L("AvoidBodies", AvoidBodies); L("AvoidFields", AvoidFields); L("OffsetKm", OffsetKm); L("AutopilotAutoSend", AutopilotAutoSend);
         L("ApMaxSpeed", Limits.MaxSpeed); L("ApBySignature", Limits.BySignature); L("ApParabolic", Limits.Parabolic); L("ApThrustPct", Limits.ThrustPct); L("ApConeSignatureKm", Limits.SignatureKm);
         L("ApBrakePct", Limits.BrakePct); L("ApBrakeConeSignatureKm", Limits.BrakeSignatureKm);

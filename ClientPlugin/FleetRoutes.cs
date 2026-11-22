@@ -148,11 +148,24 @@ internal static class FleetRoutes
         {
             if (MySession.Static == null || shipId == 0) return;
             var r = SavedRoute.From(path, shipId, ship, World, Stamp);
-            if (r != null) r.Code = ShareCode.Make(path, shipId, r.Ship, ShareCode.Now) ?? "";
+            if (r != null) { r.Code = ShareCode.Make(path, shipId, r.Ship, ShareCode.Now) ?? ""; r.Stop = RouteExport.StopPoint(path, out _); }
             string w = World;
             All.RemoveAll(x => x.ShipId == shipId && x.World == w);
             if (r != null) All.Add(r);
             Write();
+        }
+        catch (Exception e) { Plugin.LogThrottled("ship routes: " + e.Message); }
+    }
+
+    /// <summary>Where the other ships' routes stop (yours and the shared ones, in this world, layer shown or not), for
+    /// RouteExport.Taken: not the flown ship's own.</summary>
+    public static void Stops(List<(V3 Pos, double R)> into, long flownShip)
+    {
+        try
+        {
+            if (MySession.Static == null) return;
+            string w = World;
+            foreach (var r in All) if (r.World == w && r.ShipId != flownShip) into.Add((r.StopAt, 0));
         }
         catch (Exception e) { Plugin.LogThrottled("ship routes: " + e.Message); }
     }

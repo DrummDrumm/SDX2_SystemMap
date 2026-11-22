@@ -558,6 +558,31 @@ namespace PbCheck
                 Check(o1.Length() > 2000 && (o1 - o2).Length() > 3999 && (o1 - o3).Length() > 2000 && Math.Abs(Vector3D.Reject(o1 - o3, new Vector3D(1, 0, 0)).Length() - 2000) < 1, "formation: slots are a spacing or more apart, each in its own lane");
             }
 
+            {
+                // low water: a ship of 20 m/s2 burning 10 L/s at full thrust; a m/s costs half a litre
+                Func<double, double, bool, double[]> fly = (tank, upTo, refill) =>
+                {
+                    var m = new Nav.WaterMeter(); double v = 0, w = tank, braked = -1;
+                    for (int i = 0; i < 60000 && braked < 0; i++)
+                    {
+                        double thr = v < upTo ? 1 : 0, dt = 1 / 6.0;
+                        m.Burnt(thr, dt); v += 20 * thr * dt; w = Math.Max(0, w - 10 * thr * dt);
+                        if (refill && i == 300) w += 5000;
+                        if (i % 12 == 11 && m.Low(w, v, 20)) braked = v;
+                    }
+                    return new[] { braked, w, m.Rate };
+                };
+                var ok = fly(10000, 5000, false);   // 5 km/s costs 2500 L up and 2500 L down of 10 kL
+                Check(ok[0] < 0 && Math.Abs(ok[2] - 10) < 0.2, "low water: enough in the tanks, flies on (rate learned: " + ok[2].ToString("0.0") + " L/s)");
+                var dry = fly(4000, 5000, false);   // 4 kL can't take it to 5 km/s and back: brakes near 4 km/s
+                Check(dry[0] > 3300 && dry[0] < 4000 && dry[1] >= dry[0] / 20 * 10, "low water: brakes while the tanks still hold the stop (at " + dry[0].ToString("0") + " m/s with " + dry[1].ToString("0") + " L; the stop burns " + (dry[0] / 20 * 10).ToString("0") + " L)");
+                var fill = fly(4000, 2500, true);   // topped up on the way: the refill isn't taken for burn, and it flies on
+                Check(fill[0] < 0 && Math.Abs(fill[2] - 10) < 0.5, "low water: a refill in flight doesn't upset the rate");
+                var slow = new Nav.WaterMeter(); slow.Low(100, 0, 20); slow.Burnt(1, 3); slow.Low(70, 50, 20); slow.Burnt(1, 3);
+                Check(!slow.Low(40, 50, 20) && slow.Rate > 0, "low water: under 100 m/s it leaves the stop to the dampeners");
+                var full = new Nav.WaterMeter(); full.Low(0, 0, 20); full.Burnt(1, 4); full.Low(0, 2000, 20); full.Burnt(1, 4);
+                Check(!full.Low(0, 5000, 20), "low water: tanks that never drop (creative, or none read) never brake it");
+            }
             Console.WriteLine(string.Format("{0}/{1} sim checks passed", checks - fails, checks));
             return fails == 0 ? 0 : 1;
         }

@@ -32,6 +32,23 @@ public sealed class SavedRoute
     public readonly List<(double T, V3 P)> Track = new List<(double, V3)>();
 
     /// <summary>The plan's flight time (s).</summary>
+    /// <summary>Where the route was sent to stop (short of the destination, the last track point); null = not kept
+    /// (a share code, an older file): see <see cref="StopAt"/>.</summary>
+    public V3? Stop;
+    /// <summary>Where the ship stops: as sent, else worked out from the way it comes in to the destination.</summary>
+    public V3 StopAt
+    {
+        get
+        {
+            if (Stop.HasValue) return Stop.Value;
+            // (from far enough back on the way in that it isn't taken for a ship already there)
+            var from = Track.Count > 0 ? Track[0].P : End;
+            double back = Math.Max(10e3, RouteExport.Offset * 2);
+            for (int i = Track.Count - 2; i >= 0; i--) if (V3.Distance(Track[i].P, End) > back) { from = Track[i].P; break; }
+            return RouteExport.StopNear(from, End, RoutePlan.DefaultClearance, out _, RouteExport.Offset);
+        }
+    }
+
     public double Eta => Track.Count > 0 ? Track[Track.Count - 1].T : 0;
     public V3 End => Track.Count > 0 ? Track[Track.Count - 1].P : default(V3);
 
@@ -78,7 +95,7 @@ public sealed class SavedRoute
     private static string N(double d) => d.ToString("R", Inv);
     private static double D(string s) => double.TryParse(s, NumberStyles.Float, Inv, out var d) ? d : double.NaN;
 
-    /// <summary>One line: ship id | start | world | ship | target | t,x,y,z;... | share code | shared by</summary>
+    /// <summary>One line: ship id | start | world | ship | target | t,x,y,z;... | share code | shared by | stop x,y,z</summary>
     public string ToLine()
     {
         var sb = new StringBuilder();
@@ -90,17 +107,23 @@ public sealed class SavedRoute
             sb.Append(Math.Round(t, 3).ToString(Inv)).Append(',').Append(Math.Round(p.X).ToString(Inv)).Append(',').Append(Math.Round(p.Y).ToString(Inv)).Append(',').Append(Math.Round(p.Z).ToString(Inv));
         }
         sb.Append('|').Append(Clean(Code)).Append('|').Append(Clean(By));
+        if (Stop is { } st) sb.Append('|').Append(Math.Round(st.X).ToString(Inv)).Append(',').Append(Math.Round(st.Y).ToString(Inv)).Append(',').Append(Math.Round(st.Z).ToString(Inv));
         return sb.ToString();
     }
 
     public static SavedRoute Parse(string line)
     {
         var f = (line ?? "").Split('|');
-        if (f.Length < 6 || f.Length > 8 || !long.TryParse(f[0], NumberStyles.Integer, Inv, out long id)) return null;
+        if (f.Length < 6 || f.Length > 9 || !long.TryParse(f[0], NumberStyles.Integer, Inv, out long id)) return null;
         var r = new SavedRoute { ShipId = id, Start = D(f[1]), World = f[2], Ship = f[3], Target = f[4] };
         if (double.IsNaN(r.Start)) return null;
         if (f.Length > 6) r.Code = f[6];
         if (f.Length > 7) r.By = f[7];
+        if (f.Length > 8)
+        {
+            var q = f[8].Split(',');
+            if (q.Length == 3 && !double.IsNaN(D(q[0])) && !double.IsNaN(D(q[1])) && !double.IsNaN(D(q[2]))) r.Stop = new V3(D(q[0]), D(q[1]), D(q[2]));
+        }
         foreach (var s in f[5].Split(';'))
         {
             var q = s.Split(',');

@@ -46,9 +46,59 @@ public static class RouteExport
     public static double Offset = StationStandoff;
     public const double MinOffset = 500;
 
-    /// <summary>Where the autopilot should stop at the end of the route (<see cref="Offset"/> short): see <see cref="StopNear"/>.</summary>
-    public static V3 StopPoint(RoutePath p, out string why) =>
-        StopNear(p.Waypoints.Count > 0 ? p.Waypoints[p.Waypoints.Count - 1].Pos : p.Start, p.Target, p.Clearance, out why, Offset);
+    /// <summary>Where the autopilot should stop at the end of the route (<see cref="Offset"/> short): see <see cref="StopNear"/>;
+    /// moved aside when another ship stops or sits there (<see cref="Spread"/>).</summary>
+    public static V3 StopPoint(RoutePath p, out string why) => StopPoint(p, out why, out _);
+
+    /// <summary>The stop, and how far aside it was moved for another ship (0 = not moved).</summary>
+    public static V3 StopPoint(RoutePath p, out string why, out double aside)
+    {
+        var from = p.Waypoints.Count > 0 ? p.Waypoints[p.Waypoints.Count - 1].Pos : p.Start;
+        var raw = StopNear(from, p.Target, p.Clearance, out why, Offset);
+        var axis = raw - p.Target;
+        var stop = Spread(raw, axis.Length > 1 ? axis : raw - from);
+        aside = V3.Distance(raw, stop);
+        return stop;
+    }
+
+    /// <summary>
+    /// Where other ships stop or sit, set by the plugin (swapped whole; null = none known): the stops of the routes
+    /// your other ships and your faction's shared ones were sent on, and your own and your faction's ships at rest
+    /// nearby (R = the ship's own radius, 0 for a route's stop). Three ships sent to one station were all given the
+    /// same stop and flew into each other there, 2026-11-20.
+    /// </summary>
+    public static IList<(V3 Pos, double R)> Taken;
+    /// <summary>Stops are kept this far apart (m).</summary>
+    public const double StopSpacing = 500;
+
+    /// <summary>
+    /// The stop, or the nearest free place beside it when another ship stops or sits within <see cref="StopSpacing"/>:
+    /// on rings round it, <see cref="StopSpacing"/> apart, square to <paramref name="axis"/> (the line from the
+    /// destination to the stop, so every place is as far from a station, and as high over a world, as the stop itself).
+    /// The places are the same for every ship, so each takes the first one the others left.
+    /// </summary>
+    public static V3 Spread(V3 stop, V3 axis)
+    {
+        var taken = Taken;
+        if (taken == null || taken.Count == 0 || IsFree(taken, stop)) return stop;
+        var n = axis.Length > 1e-6 ? axis.Normalized : new V3(0, 1, 0);
+        var u = n.Cross(Math.Abs(n.Y) < 0.9 ? new V3(0, 1, 0) : new V3(1, 0, 0)).Normalized;
+        var v = n.Cross(u);
+        for (int ring = 1; ring <= 6; ring++)
+            for (int k = 0, slots = ring * 6; k < slots; k++)
+            {
+                double a = 2 * Math.PI * k / slots;
+                var c = stop + (u * Math.Cos(a) + v * Math.Sin(a)) * (ring * StopSpacing);
+                if (IsFree(taken, c)) return c;
+            }
+        return stop;
+    }
+
+    private static bool IsFree(IList<(V3 Pos, double R)> taken, V3 c)
+    {
+        for (int i = 0; i < taken.Count; i++) if (V3.Distance(c, taken[i].Pos) < taken[i].R + StopSpacing * 0.8) return false;
+        return true;
+    }
 
     /// <summary>Where to stop when flying from <paramref name="from"/> to <paramref name="to"/>: short of a station,
     /// above a base or a world, or <paramref name="offset"/> short of the point (a waypoint on the way: -1, on it).</summary>

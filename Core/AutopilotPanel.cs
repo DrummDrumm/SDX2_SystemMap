@@ -42,7 +42,7 @@ public static class AutopilotPanel
         int user = p.UserAhead, det = p.DetoursAhead - user;
         string via = (det > 0 ? "   " + det + (det == 1 ? " detour" : " detours") : "") + (user > 0 ? "   " + user + (user == 1 ? " waypoint" : " waypoints") : "");
         l.Add((Fmt.Dist(p.Distance) + "   ETA " + (double.IsNaN(p.Eta) ? "unknown" : Fmt.Time(p.Eta)) + via, Text));
-        var stopAt = RouteExport.StopPoint(p, out var why);
+        var stopAt = RouteExport.StopPoint(p, out var why, out double aside);
         double above = V3.Distance(stopAt, p.Target);
         var station = SystemData.StationNear(p.Target, RouteExport.StationRange);
         var under = why == "station" ? RouteExport.WorldUnder(p.Target, p.Clearance) : null;
@@ -55,6 +55,7 @@ public static class AutopilotPanel
             : why == "offset" ? "Stops " + Fmt.Dist(above) + " short of the point"
             : "Stops on the point";
         l.Add((stop, Text));
+        if (aside > 1) l.Add(("Another ship stops there: yours stops " + Fmt.Dist(aside) + " to the side", Text));
         int bent = 0; double corner = double.PositiveInfinity;
         foreach (var leg in p.Legs) if (leg.Curved) { bent++; corner = Math.Min(corner, leg.CornerSpeed); }
         if (p.Curved && p.DetoursAhead > 0)

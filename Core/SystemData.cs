@@ -31,6 +31,12 @@ public static class SystemData
         /// (g = surface × (r / Hills)^-falloff), and the radius its highest hills reach (the gravity's full-strength radius).
         /// </summary>
         public double SurfaceG, Falloff, Hills;
+        /// <summary>
+        /// How far from its centre its highest hills reach, where that is far more than the 10% routes allow for a
+        /// world that isn't loaded yet (Vesta's reach twice its radius: SDX2 Planets, Vesta.sbc, HillParams Max 1). 0 = the
+        /// usual. A frigate planned from far off flew into Vesta's hills on 2026-11-20.
+        /// </summary>
+        public double TallHills;
         /// <summary>Where its atmosphere ends (metres from the centre, set by the plugin); 0 = none, or not known. Routes keep above it.</summary>
         public double Atmosphere;
         public bool IsPlanet => Parent == "";
@@ -104,8 +110,8 @@ public static class SystemData
         return Sectors[Sectors.Length - 1];
     }
 
-    private static World W(string n, string parent, double x, double y, double z, double r, int rgb = 0x9AA4AE) =>
-        new World { Name = n, Parent = parent, Pos = new V3(x, y, z), Radius = r, Color = MapColor.Rgb(rgb) };
+    private static World W(string n, string parent, double x, double y, double z, double r, int rgb = 0x9AA4AE, double tallHills = 0) =>
+        new World { Name = n, Parent = parent, Pos = new V3(x, y, z), Radius = r, Color = MapColor.Rgb(rgb), TallHills = tallHills };
 
     public const string ObstacleParent = "(obstacle)", StationParent = "(station)", FieldParent = "(field)";
 
@@ -165,7 +171,7 @@ public static class SystemData
         W("Phobos", "Mars", -3512331.5, -584041.5, 5893632.5, 4000),
         W("Deimos", "Mars", -3291698.5, -658710.5, 6234091.5, 3000),
         W("Ceres", "", 9447958.5, 993020.5, 0.5, 15000, 0xFFDAB9),
-        W("Vesta", "Belt", -8183475.5, -152009.5, -2978540.5, 6000, 0x7FD8C4),
+        W("Vesta", "Belt", -8183475.5, -152009.5, -2978540.5, 6000, 0x7FD8C4, 12000),
         W("Pallas", "Belt", 6035013.5, -298040.5, 6035013.5, 5000, 0x7FD8C4),
         W("Hygeia", "Belt", 5875162.5, 145029.5, -5875161.5, 4000, 0x7FD8C4),
         W("Eros", "Belt", 0.5, 300136.5, 8594761.5, 1000, 0x7FD8C4),
@@ -223,7 +229,8 @@ public static class SystemData
 
     /// <summary>
     /// Sets the stations you know from your GPS points (name, position); the others are ignored. One within 5% of a
-    /// world's radius of its ground (or inside it) is a ground facility. Null or empty forgets them all.
+    /// world's radius of its ground (or inside it, or among its hills where they reach far higher:
+    /// <see cref="World.TallHills"/>) is a ground facility. Null or empty forgets them all.
     /// </summary>
     public static void SetKnownStations(IEnumerable<KeyValuePair<string, V3>> gps)
     {
@@ -235,7 +242,7 @@ public static class SystemData
                 if (!IsStationGps(g.Key, out var title) || list.Exists(x => x.Gps == g.Key.Trim())) continue;
                 var s = new Station { Gps = g.Key.Trim(), Name = title, Pos = g.Value };
                 foreach (var w in Worlds)
-                    if (!w.IsStar && !w.IsField && !w.IsObstacle && V3.Distance(s.Pos, w.Pos) < w.Radius * 1.05) { s.Above = GroundAbove; break; }
+                    if (!w.IsStar && !w.IsField && !w.IsObstacle && V3.Distance(s.Pos, w.Pos) < Math.Max(w.Radius * 1.05, w.TallHills)) { s.Above = GroundAbove; break; }
                 list.Add(s);
                 sb.Append(s.Gps).Append('|').Append(Math.Round(s.Pos.X)).Append(',').Append(Math.Round(s.Pos.Y)).Append(',').Append(Math.Round(s.Pos.Z)).Append(';');
             }

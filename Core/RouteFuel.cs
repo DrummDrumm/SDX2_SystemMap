@@ -20,9 +20,28 @@ public static class RouteFuel
         foreach (var l in p.Legs)
         {
             if (!l.HasBurnPlan || double.IsNaN(l.Eta)) continue;
-            s += l.BurnTime * Math.Min(1, l.MaxAccel / fullAccel) + l.BrakeTime * Math.Min(1, l.BrakeUsed / fullAccel);
+            s += l.FuelBurn * Math.Min(1, l.MaxAccel / fullAccel) + l.FuelBrake * Math.Min(1, l.BrakeUsed / fullAccel);
         }
         return s * rate;
+    }
+
+    /// <summary>
+    /// How far the water in the tanks takes the ship, ending at rest: burning up to the speed the water allows, then
+    /// braking from it, with no coast (a coast costs no water, so past the speed cap the range has no end: NaN). stored
+    /// in litres, rate = the drives' use at 100 % (L/s), fullAccel = the ship's acceleration at 100 %, accel and brake =
+    /// what the route burns and brakes with, speed = the ship's speed now (it has to be braked too). 0 when the water
+    /// doesn't even stop the ship.
+    /// </summary>
+    public static double Range(double stored, double rate, double fullAccel, double accel, double brake, double speed, double maxSpeed)
+    {
+        if (!(stored >= 0) || !(rate > 0) || !(fullAccel > 0) || !(accel > 0)) return double.NaN;
+        if (!(brake > 0)) brake = accel;
+        // a m/s of speed costs rate / fullAccel litres, gained or lost, whatever the thrust share
+        double dv = stored * fullAccel / rate, u = Math.Max(0, speed);
+        if (dv < u) return 0;
+        double v = (dv + u) / 2;
+        if (maxSpeed > 0 && v >= maxSpeed) return double.NaN;
+        return (v * v - u * u) / (2 * accel) + v * v / (2 * brake);
     }
 
     /// <summary>The share of the tanks left after burning used (NaN with no tanks; below 0 = runs dry).</summary>

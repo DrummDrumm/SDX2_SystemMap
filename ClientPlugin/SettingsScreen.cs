@@ -260,7 +260,6 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         Check("Load plans into the autopilot", "Send each new route to the autopilot without flying it (ENGAGE starts it).", s.AutopilotAutoSend, v => s.AutopilotAutoSend = v);
         Section("CONTROLS");
         Check("Steady speed dial", "Show Flip and Burn's real speed on the HUD speed dial so it doesn't flicker to 150 m/s.", s.FixSpeedometer, v => s.FixSpeedometer = v);
-        Check("Steady controller", "Stop icons and menus flickering between controller and keyboard/mouse when a driver or hotkey tool sends phantom keys.", s.SteadyController, v => s.SteadyController = v);
         EndColumn();
 
         Column(rightL, rightC, top);
@@ -501,7 +500,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         s.ShipIconFromShip = d.ShipIconFromShip; MapScene.ShipIconFromShip = d.ShipIconFromShip; s.ShipIconSide = d.ShipIconSide; OwnShipIcon.Refresh(); s.Ultra = d.Ultra; SidePreview.ApplyQuality(d.Ultra);
         s.PipCorner = d.PipCorner; s.PipSize = d.PipSize; SidePreview.SetPip(d.Pip);
         s.DestView = d.DestView; s.DestViewCorner = d.DestViewCorner; s.DestViewSize = d.DestViewSize; s.DestViewRangeKm = d.DestViewRangeKm; s.DestViewReplacesMap = d.DestViewReplacesMap; s.FeedNoise = d.FeedNoise; s.Overlays.Clear();
-        s.AvoidBodies = d.AvoidBodies; s.AvoidFields = d.AvoidFields; s.OffsetKm = d.OffsetKm; RouteExport.Offset = d.OffsetKm * 1000; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer; s.BurnGuide = d.BurnGuide; s.HideCrosshair = d.HideCrosshair; s.SteadyController = d.SteadyController;
+        s.AvoidBodies = d.AvoidBodies; s.AvoidFields = d.AvoidFields; s.OffsetKm = d.OffsetKm; RouteExport.Offset = d.OffsetKm * 1000; s.AutopilotAutoSend = d.AutopilotAutoSend; s.FixSpeedometer = d.FixSpeedometer; s.BurnGuide = d.BurnGuide; s.HideCrosshair = d.HideCrosshair;
         s.HudX = d.HudX; s.HudY = d.HudY; s.HudSize = d.HudSize;
         s.KeyMap = d.KeyMap; s.KeyAutopilot = d.KeyAutopilot; s.KeyPin = d.KeyPin; s.KeySteer = d.KeySteer; s.KeySettings = d.KeySettings; s.KeyCursor = d.KeyCursor; s.KeyPanel = d.KeyPanel; s.KeySecondScreen = d.KeySecondScreen; s.SecondScreenMonitor = d.SecondScreenMonitor; SecondScreen.Set(d.SecondScreen); s.PanelRight = d.PanelRight;
         Replan();

@@ -3,9 +3,9 @@
   <!-- The ID of your plugin, never change this -->
   <Id>9486EC98-8DC5-4BDC-940E-CD37E27AFCE4</Id>
   <!-- GitHub repository: owner/repo -->
-  <RepoId>ryancrimsonrd-ux/SDX2_SystemMap</RepoId>
+  <RepoId>DrummDrumm/SDX2_SystemMap</RepoId>
   <FriendlyName>SDX2 System Map</FriendlyName>
-  <Author>ryancrimsonrd-ux</Author>
+  <Author>DrummDrumm</Author>
   <Tooltip>3D system map for SDX2 that plans routes from Flip and Burn's N list and your saved GPS points, with an optional PB autopilot hand-off.</Tooltip>
   <Description>
     A 3D map of the Sigma Draconis Expanse 2 (SDX2) system built round Flip and Burn's N list. It plans routes to the destinations in that list and to your saved GPS points, so places you have discovered yourself can be routed to as well. Pick one and the map beside the list plots the route: burn, coast and brake legs, the flip point, the ETA from Flip and Burn's own acceleration, Nexus sector borders crossed, and detours round planets and moons. Shift+M cycles the map window, a full-screen map and off; Alt+M pins a small map while you fly. M alone stays the game's symmetry key, and every key can be rebound in the settings.

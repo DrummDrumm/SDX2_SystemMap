@@ -145,6 +145,7 @@ internal static class SidePreview
         KeepNavOpen.Intercept = null;
         GameState.Fill(Snap, now);
         AutopilotLink.Update(now);
+        if (AutopilotLink.ChangedShip()) NewShip();
         FleetRoutes.Update(now, Snap, Plugin.Settings.Options.Routes, AutopilotLink.FlownShip, AutopilotLink.FlownIdle);
         if (now >= nextRoute)
         {
@@ -194,6 +195,7 @@ internal static class SidePreview
         if (!navOpen && !mapPanel && now > panelGrace && !listHidden) { routePanel = false; adding = false; }
 
         AutopilotLink.Update(now);
+        if (AutopilotLink.ChangedShip()) NewShip();
         FleetRoutes.Update(now, Snap, Plugin.Settings.Options.Routes, AutopilotLink.FlownShip, AutopilotLink.FlownIdle);
         GridObstacles.Update(now);
         Tracker.Obstacles = GridObstacles.Current;
@@ -1125,6 +1127,20 @@ internal static class SidePreview
         string name = Tracker.TargetName;
         DropRoute();
         return "Route cleared" + (name != null ? ": " + name : "");
+    }
+
+    /// <summary>
+    /// You sat down in another ship: the route planned in the last one (and Flip and Burn's pick, which the game keeps
+    /// for you, not for the ship) stays behind. The last ship's autopilot flies on if it was flying. A ship whose
+    /// autopilot is flying a route gets that route back from it (RestoreRoute).
+    /// </summary>
+    private static void NewShip()
+    {
+        if (Tracker.TargetName == null && Tracker.UserPoints.Count == 0 && Snap.FnbTargetName == null) return;
+        string was = Tracker.TargetName ?? Snap.FnbTargetName;
+        DropRoute();
+        flyingTarget = null; restoredId = -1; manualTarget = null; nextRestore = 0;
+        Notify("Another ship: the route" + (was != null ? " to " + MapScene.ShortName(was) : "") + " stays with the last one.", false);
     }
 
     /// <summary>The route is gone: cleared, or flown to the end.</summary>
