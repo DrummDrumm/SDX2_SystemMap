@@ -120,9 +120,9 @@ internal sealed class SettingsScreen : MyGuiScreenBase
 
     public override string GetFriendlyName() => "SDX2SystemMapSettings";
 
-    /// <summary>The page shown (kept while the game runs): 0 map, 1 keys, 2 route and HUD, 3 look, 4 destination view.</summary>
+    /// <summary>The page shown (kept while the game runs): 0 map, 1 keys, 2 route and HUD, 3 look, 4 destination view, 5 help.</summary>
     private static int page;
-    private static readonly string[] Pages = { "Map", "Keys", "Route and HUD", "Look", "Destination view" };
+    private static readonly string[] Pages = { "Map", "Keys", "Route and HUD", "Look", "Destination view", "Help" };
     /// <summary>The colour being edited on the Look page (a <see cref="MapTheme.Slots"/> index).</summary>
     private static int colorSlot;
     private bool syncing;
@@ -177,6 +177,7 @@ internal sealed class SettingsScreen : MyGuiScreenBase
                 break;
             case 2: RoutePage(s, top, leftL, leftC, rightL, rightC); break;
             case 4: DestPage(s, top, leftL, leftC, rightL, rightC); break;
+            case 5: HelpPage(top); break;
             default: LookPage(s, top, leftL, leftC, rightL, rightC); break;
         }
 
@@ -209,6 +210,32 @@ internal sealed class SettingsScreen : MyGuiScreenBase
         note = null;
         Controls.Add(new MyGuiControlLabel(new Vector2(0, bottom - 0.052f), text: foot,
             textScale: 0.7f, originAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_BOTTOM) { ColorMask = new Vector4(0.7f, 0.7f, 0.7f, 1) });
+    }
+
+    /// <summary>The Help tab: the topics of <see cref="MapHelp"/> in a scrolling box, above the window's bottom rows.</summary>
+    private void HelpPage(float top)
+    {
+        float h = H / 2 - 0.025f - 0.115f - top;
+        var box = new MyGuiControlMultilineText(new Vector2(-W / 2 + 0.03f, top), new Vector2(W - 0.06f, h), textScale: 0.75f,
+            textAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP, drawScrollbarV: true, drawScrollbarH: false,
+            textBoxAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP);
+        box.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP;
+        var heading = new Vector4(1f, 0.75f, 0.35f, 1);
+        var body = new Vector4(0.9f, 0.9f, 0.9f, 1);
+        bool first = true;
+        foreach (var (title, text) in MapHelp.Topics)
+        {
+            if (!first) box.AppendLine();
+            first = false;
+            box.AppendText(title, "White", 0.8f, heading);
+            box.AppendLine();
+            foreach (var line in text.Split('\n'))
+            {
+                box.AppendText(line, "Blue", 0.72f, body);
+                box.AppendLine();
+            }
+        }
+        Controls.Add(box);
     }
 
     private void MapPage(MapSettings s, float top, float leftL, float leftC, float rightL, float rightC)
