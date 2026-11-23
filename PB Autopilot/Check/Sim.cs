@@ -24,7 +24,7 @@ namespace PbCheck
         /// <summary>Game ticks between PB runs: 10 is Update10 (the script). SIM_RUN_TICKS=60 tries once a second.</summary>
         static readonly int RunTicks = int.Parse(Environment.GetEnvironmentVariable("SIM_RUN_TICKS") ?? "10");
 
-        class Result { public bool Arrived; public int Kicks, Reversals, Toggles, Flips; public double OverTime, FlipTime, MaxFace = -1, CruiseSwing, Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
+        class Result { public double CoastTime; public bool Arrived; public int Kicks, Reversals, Toggles, Flips; public double OverTime, FlipTime, MaxFace = -1, CruiseSwing, Time, FinalDist, FinalSpeed, MaxSpeed, ClosestTo, SpeedAtClosest, MaxBurn, MaxBrake; public Vector3D End; }
 
         /// <summary>Seconds the pilot holds the controls once the flip to brake starts (0 = never); when it began.</summary>
         static double HandFor, handFrom = -1;
@@ -70,6 +70,10 @@ namespace PbCheck
                     if (handFrom >= 0 && t < handFrom + HandFor) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; }
                 }
                 idx = cmd.Idx;
+                // the script's pace: every 100 ticks on a long coast (nothing to steer or burn, nothing due for 30 s)
+                bool slow = Environment.GetEnvironmentVariable("SIM_NO_COAST") == null && cmd.Throttle == 0 && cmd.W == Vector3D.Zero && !s.Kicking && cmd.Quiet > 30 && g.LengthSquared() < 1e-6;
+                int ticks = slow ? 100 : RunTicks;
+                if (slow) r.CoastTime += ticks / 60.0;
                 if (Environment.GetEnvironmentVariable("SIM_TRACE") != null && Vector3D.Distance(p, watch) < 40e3) Console.WriteLine("  t " + t.ToString("0") + " d " + Vector3D.Distance(p, watch).ToString("0") + " v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
                 if (Environment.GetEnvironmentVariable("SIM_LONG_TRACE") != null && (int)(t / dt) % (int)(10 / dt) == 0) Console.WriteLine("  t " + t.ToString("0") + " rem " + (cmd.Remaining / 1000).ToString("0") + " km to " + (Vector3D.Distance(p, watch) / 1000).ToString("0") + " km v " + v.Length().ToString("0") + " idx " + idx + " thr " + cmd.Throttle.ToString("0.00") + " drive.v " + (v.Length() > 1 ? Vector3D.Dot(drive, v) / v.Length() : 0).ToString("0.00"));
                 if (cmd.Over > 0) r.OverTime += dt;
@@ -95,7 +99,7 @@ namespace PbCheck
                     if (Vector3D.Dot(drive, v) < 0) r.MaxBrake = Math.Max(r.MaxBrake, cmd.Throttle);
                     else r.MaxBurn = Math.Max(r.MaxBurn, cmd.Throttle);
                 }
-                for (int k = 0; k < RunTicks; k++) // physics ticks between PB runs
+                for (int k = 0; k < ticks; k++) // physics ticks between PB runs
                 {
                     double h = 1.0 / 60;
                     var dw = want - w;
@@ -136,7 +140,7 @@ namespace PbCheck
                     if (flipStart < 0 && r.FlipTime == 0 && fc < 0.9 && cmd.W.Length() > 0.03) flipStart = t;
                     if (flipStart >= 0 && fc < -0.98) { r.FlipTime = t - flipStart; flipStart = -1; }
                 }
-                t += dt;
+                t += ticks / 60.0;
             }
             r.Time = t; r.End = p;
             r.FinalDist = Vector3D.Distance(p, route[route.Count - 1].Pos);
@@ -243,6 +247,7 @@ namespace PbCheck
             r = Fly(route, Vector3D.Zero, new Vector3D(0, 0, 1), 20, 0.6, Vector3D.Zero, 12000, none);
             Report("200,000 km", r);
             Check(r.Arrived && r.MaxSpeed > 45000, "long haul: reaches the speed cap and stops");
+            Check(r.Arrived && r.FinalDist < 500 && r.CoastTime > 600, "long haul: coasts at the slow run rate (" + r.CoastTime.ToString("0") + " s of " + r.Time.ToString("0") + " s) and still stops within 500 m (" + r.FinalDist.ToString("0") + " m)");
 
             // 3) detour then target (60 degree bend): stops at the detour, turns, goes on
             var detour = new Vector3D(500e3, 0, 0);

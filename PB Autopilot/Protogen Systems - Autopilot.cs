@@ -192,6 +192,9 @@ public Program()
 // hotbar turns and a place in a formation aren't resumed; leading is
 public void Save() { Storage = lastId + "|" + (flying && mode == "route" ? "1" : paused ? "2" : "0") + "|" + idx + "|" + (leading ? "1" : "0") + "|" + formSpacing.ToString("0"); }
 
+double statusAt = -10, echoAt = -10;
+string echoState, echoMsg;
+
 public void Main(string arg, UpdateType source)
 {
     time += Runtime.TimeSinceLastRun.TotalSeconds;
@@ -230,7 +233,11 @@ public void Main(string arg, UpdateType source)
     Hear();
     if (flying) Fly();
     if (leading) Cast();
-    if (flying && runs % 10 == 0 || lastStatus == null) WriteStatus();
+    // status about every 1.7 s in flight, whatever the run rate (a long coast runs at Update100)
+    if (flying && time - statusAt >= 1.6 || lastStatus == null) { statusAt = time; WriteStatus(); }
+    // the terminal readout: once a second, or at once when a command came in or the state or message changed
+    if (arg == "" && time - echoAt < 1 && state == echoState && msg == echoMsg) return;
+    echoAt = time; echoState = state; echoMsg = msg;
     Echo("Protogen Systems - Autopilot\n" + state.ToUpperInvariant() + ((mode == "approach" || mode == "match") && flying ? " - " + apName : mode == "form" && flying ? " - " + leadName : target != "" ? " - " + target : "") + "\n" + msg
          + (leading ? "\nLeading " + members.Count + " ship" + (members.Count == 1 ? "" : "s") + ", " + Nav.Km(formSpacing) + " apart" + (fleetShare > 0 && fleetShare < 0.995 ? ", thrust held to " + (fleetShare * 100).ToString("0") + "%" : "") : "")
          + (flying && mode == "route" ? "\nPoint " + (idx + 1) + " of " + route.Count + "\n" + Nav.Km(last.Dist) + "  " + Nav.Speed(last.SpeedNow) : "")
@@ -642,12 +649,14 @@ void Fly()
             if (s.RotationIndicator.LengthSquared() > 0.01) turning = true;
         }
         turnTicks = turning ? turnTicks + 1 : 0;
-        input |= turnTicks >= 2 || turning && handStart >= 0;
+        // on a slow coast the runs are 1.7 s apart: turn input seen once is the pilot's
+        input |= turnTicks >= 2 || turning && (handStart >= 0 || Runtime.UpdateFrequency == UpdateFrequency.Update100);
     }
     else turnTicks = 0;
     bool damp = c.DampenersOverride && time - startedAt > 0.5 && mode != "prograde" && mode != "retrograde";
     if (input && mode != "route") { turnTicks = 0; Release("override", "Pilot took the controls", false); return; }
     if (damp && mode != "route") { Release("override", "Dampeners switched on: pilot has the controls", false); return; }
+    if (input || damp || handStart >= 0) Pace(false);
     if (input || damp)
     {
         // a route: let go while the pilot flies. Held TakeoverAfter s (or the dampeners switched on) it's a takeover,
@@ -829,6 +838,21 @@ void Fly()
         gy.Pitch = -Nav.Rate(local.X); gy.Yaw = -Nav.Rate(local.Y); gy.Roll = -Nav.Rate(local.Z);
     }
     if (++logRuns >= LogEvery) { logRuns = 0; Sample(c, v, drive, thr); }
+    // a long coast on a route: nothing to steer or burn and nothing due for CoastQuiet s, so run at Update100 until
+    // then. Not while leading (the formation is told where this ship is every few runs) or in gravity
+    Pace(mode == "route" && !leading && thr == 0 && last.W == Vector3D.Zero && !settings.Kicking
+        && last.Quiet > CoastQuiet && g.LengthSquared() < 1e-6);
+}
+
+const double CoastQuiet = 30; // s: back to Update10 this long before the flip, a bend or the next point
+
+/// <summary>Flying: every 100 ticks on a long coast (slow), else every 10.</summary>
+void Pace(bool slow)
+{
+    var f = slow ? UpdateFrequency.Update100 : UpdateFrequency.Update10;
+    if (Runtime.UpdateFrequency == f) return;
+    Runtime.UpdateFrequency = f;
+    Log(slow ? "coast: Update100, " + last.Quiet.ToString("0") + " s clear" : "coast over: Update10", false);
 }
 
 // ------------------------------------------------------------------ turn log
@@ -1105,6 +1129,7 @@ public static class Nav
         public int Idx;         // waypoint being flown to
         public bool Arrived;
         public double Dist, Remaining, SpeedNow, Eta;
+        public double Quiet;    // coasting with nothing to do: seconds until the flip, a bend or the next point is due (0 = busy)
         public double Over;     // braking above the route's brake cap to make the stop: the share in use (0 = within the cap)
     }
 
@@ -1191,6 +1216,8 @@ public static class Nav
         double vStop = aStop * (-tFlip + Math.Sqrt(tFlip * tFlip + 2 * sAvail / aStop));
         double vFlipped = aStop * (-tFull + Math.Sqrt(tFull * tFull + 2 * sAvail / aStop)); // after turning round to face ahead
         double speed = Math.Min(cap, vStop);
+        // how long a coast at this speed stays one: to the next point, to where the stop's flip is due
+        double quiet = vIn > 1 ? Math.Min(d / cmd.SpeedNow, (sAvail - vIn * tFlip - vIn * vIn / (2 * aStop)) / vIn) : 0;
         // Faster than the capped brake can stop from (engaged at speed, or the route changed): brake above the cap,
         // as hard as the stop needs and no harder, and back under it once the speed is down to the plan. Kept to the
         // cap, a route engaged at 24.7 km/s 2,700 km from Deimos braked at 54%, and went 230 km past (2026-11-19).
@@ -1223,6 +1250,7 @@ public static class Nav
             else vL = Math.Sqrt(TurnShare * aPlan * Radius(q, route[j].Pos, route[j + 1].Pos));
             double allow = Math.Max(vL, a * (-tFlip + Math.Sqrt(tFlip * tFlip + (2 * D + vL * vL / a) / a)));
             speed = Math.Min(speed, allow);
+            if (vIn > 1) quiet = Math.Min(quiet, (D - vIn * tFlip - Math.Max(0, vIn * vIn - vL * vL) / (2 * a)) / vIn); // to slowing or turning for it
         }
         if (wp.Kind == "pass" && cmd.SpeedNow > 1)
         {
@@ -1271,7 +1299,7 @@ public static class Nav
         bool braking = cmd.SpeedNow > 1 && Vector3D.Dot(acc, v) < 0;
         double capNow = braking ? brakeNow : burnCap;
         double band = Math.Max(aFull * capNow * 0.01, cmd.SpeedNow * 0.004 / 3.0) * (s.Burning ? 0.33 : 1);
-        if (am < band) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; s.Burning = false; }
+        if (am < band) { cmd.W = Vector3D.Zero; cmd.Throttle = 0; s.Burning = false; cmd.Quiet = Math.Max(0, quiet); }
         else
         {
             s.Burning = true;
@@ -1541,16 +1569,17 @@ public static class Nav
 
     public class VelocityEstimator
     {
-        readonly Queue<Vector3D> pos = new Queue<Vector3D>();
-        readonly Queue<double> at = new Queue<double>();
+        readonly List<Vector3D> pos = new List<Vector3D>();
+        readonly List<double> at = new List<double>();
         public void Reset() { pos.Clear(); at.Clear(); }
         public Vector3D Update(Vector3D p, Vector3D physics, double t)
         {
-            pos.Enqueue(p); at.Enqueue(t);
-            while (at.Count > 2 && t - at.Peek() > 2.0) { pos.Dequeue(); at.Dequeue(); }
-            double dt = t - at.Peek();
+            pos.Add(p); at.Add(t);
+            // (the next one must span 0.4 s too: runs 1.7 s apart on a coast, then 0.17 s)
+            while (at.Count > 2 && t - at[0] > 2.0 && t - at[1] >= 0.4) { pos.RemoveAt(0); at.RemoveAt(0); }
+            double dt = t - at[0];
             if (physics.Length() < 90 || dt < 0.4) return physics;
-            var fromPos = (p - pos.Peek()) / dt;
+            var fromPos = (p - pos[0]) / dt;
             return fromPos.Length() > physics.Length() ? fromPos : physics;
         }
     }
