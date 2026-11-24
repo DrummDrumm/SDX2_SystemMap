@@ -2095,7 +2095,8 @@ internal static class Program
                 scene.Cam.Target = scene.Cam.GoalTarget = keepT; scene.Cam.Distance = scene.Cam.GoalDistance = keepD;
             }
         }
-        // the autopilot PB's script-browser thumbnail (512 x 512): the map on the route, with the autopilot status line
+        // the autopilot PB's script-browser thumbnail (512 x 512): the map on the route, with the autopilot status line,
+        // over the Protogen Systems logo (Docs/images/protogen-systems-logo.png, 3.2 : 1)
         if (sfx == "-hud")
             using (var bmp = new Bitmap(512, 512))
             using (var g = Graphics.FromImage(bmp))
@@ -2105,12 +2106,18 @@ internal static class Program
                 var c = new GdiMapCanvas(g);
                 var scene = new MapScene { Snap = snap, Path = route, Compact = true, Mini = true, Help = "" };
                 scene.Cam.Yaw = 0.9; scene.Cam.Pitch = 0.62;
-                scene.Cam.Setup(0, 0, 512, 512);
+                scene.Cam.Setup(0, 0, 512, 372);
                 scene.FrameDefault(true);
                 scene.MouseX = float.NaN;
-                scene.Draw(c, new Box(0, 0, 512, 512));
+                scene.Draw(c, new Box(0, 0, 512, 372));
                 var st = new RouteExport.Status { State = "flying", Wp = 0, Count = 2, Dist = route.Distance * 0.9, Speed = 31200, Eta = 1860, Msg = "Flying to " + route.Waypoints[0].Name };
                 AutopilotPanel.StatusLine(c, 512, 30, 14, route.TargetName, st, "Ctrl+M");
+                using (var band = new SolidBrush(Color.FromArgb(2, 7, 11))) g.FillRectangle(band, 0, 372, 512, 140);
+                using (var logo = Image.FromFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Docs", "images", "protogen-systems-logo.png"))))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.DrawImage(logo, 32, 372, 448, 140);
+                }
                 bmp.Save(Path.Combine(outDir, "pb-autopilot-thumb.png"), ImageFormat.Png);
             }
 

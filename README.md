@@ -1,3 +1,5 @@
+<p align="center"><img src="Docs/images/protogen-systems-logo.png" alt="Protogen Systems" width="720"></p>
+
 # SDX2 System Map
 
 A standalone Pulsar client plugin: a 3D map of the Sigma Draconis Expanse 2 system that plans routes to the
@@ -204,3 +206,10 @@ dotnet run -c Release --project "PB Autopilot\Check"     # compiles the PB scrip
   and gravity.
 
 Client plugins on SDX2 must come from Pulsar or be approved by staff: ask in #sigma-support before using it there.
+
+## Disclaimer
+
+Protogen Systems is an unofficial fan project. I made these plugins for my own personal use on the Sigma Draconis
+Expanse 2 server; they are free, and anyone is welcome to use and enjoy them. The name is a nod to *The Expanse*.
+This project is not affiliated with, endorsed by or sponsored by the creators or rights holders of *The Expanse*,
+Keen Software House (Space Engineers), or the Sigma Draconis server. All trademarks belong to their respective owners.
